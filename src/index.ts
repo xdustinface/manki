@@ -153,12 +153,14 @@ async function runFullReview(
 
     if (isDiffTooLarge(diff, config.max_diff_lines)) {
       core.warning(`Diff too large (${diff.totalAdditions + diff.totalDeletions} lines > ${config.max_diff_lines} max)`);
-      await updateProgressComment(octokit, owner, repo, progressCommentId, {
-        verdict: 'COMMENT',
+      const result = {
+        verdict: 'COMMENT' as const,
         summary: `Diff too large for automated review (${diff.totalAdditions + diff.totalDeletions} lines). Please request a manual review.`,
         findings: [],
         highlights: [],
-      });
+      };
+      await postReview(octokit, owner, repo, prNumber, commitSha, result);
+      await updateProgressComment(octokit, owner, repo, progressCommentId, result);
       return;
     }
 
@@ -167,12 +169,15 @@ async function runFullReview(
 
     if (filteredFiles.length === 0) {
       core.info('No reviewable files in diff');
-      await updateProgressComment(octokit, owner, repo, progressCommentId, {
-        verdict: 'APPROVE',
+      const result = {
+        verdict: 'APPROVE' as const,
         summary: 'No reviewable files in this PR (all filtered out by config).',
         findings: [],
         highlights: [],
-      });
+      };
+      await dismissPreviousReviews(octokit, owner, repo, prNumber);
+      await postReview(octokit, owner, repo, prNumber, commitSha, result);
+      await updateProgressComment(octokit, owner, repo, progressCommentId, result);
       return;
     }
 
