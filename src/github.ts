@@ -7,7 +7,6 @@ import { isLineInDiff, findClosestDiffLine } from './diff';
 type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki-bot -->';
-const LEGACY_BOT_MARKER = '<!-- claude-review-bot -->';
 
 /**
  * Fetch the raw diff for a PR.
@@ -146,7 +145,7 @@ export async function dismissPreviousReviews(
   });
 
   for (const review of reviews) {
-    if ((review.body?.includes(BOT_MARKER) || review.body?.includes(LEGACY_BOT_MARKER)) && review.state === 'CHANGES_REQUESTED') {
+    if (review.body?.includes(BOT_MARKER) && review.state === 'CHANGES_REQUESTED') {
       try {
         await octokit.rest.pulls.dismissReview({
           owner,
@@ -424,4 +423,4 @@ export async function reactToReviewComment(
   }
 }
 
-export { formatFindingComment, mapVerdictToEvent, BOT_MARKER, LEGACY_BOT_MARKER };
+export { formatFindingComment, mapVerdictToEvent, BOT_MARKER };

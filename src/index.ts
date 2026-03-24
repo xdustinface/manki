@@ -152,9 +152,6 @@ async function runFullReview(
       configContent = await fetchConfigFile(octokit, owner, repo, baseRef, configPathInput);
     } else {
       configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.manki.yml');
-      if (!configContent) {
-        configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.claude-review.yml');
-      }
     }
     const config = loadConfig(configContent ?? undefined);
 
@@ -341,9 +338,6 @@ async function handleReviewStateCheck(): Promise<void> {
     configContent = await fetchConfigFile(octokit, owner, repo, pr.base.ref, configPathInput);
   } else {
     configContent = await fetchConfigFile(octokit, owner, repo, pr.base.ref, '.manki.yml');
-    if (!configContent) {
-      configContent = await fetchConfigFile(octokit, owner, repo, pr.base.ref, '.claude-review.yml');
-    }
   }
   const config = loadConfig(configContent ?? undefined);
 
@@ -363,7 +357,7 @@ function isReviewRequest(): boolean {
   if (!comment) return false;
 
   const body = comment.body?.toLowerCase() ?? '';
-  return (body.includes('@manki') || body.includes('@claude')) && body.includes('review');
+  return body.includes('@manki') && body.includes('review');
 }
 
 function hasBotMention(): boolean {
@@ -371,7 +365,7 @@ function hasBotMention(): boolean {
   if (!comment) return false;
 
   const body = comment.body?.toLowerCase() ?? '';
-  return (body.includes('@manki') || body.includes('@claude')) && !body.includes('review');
+  return body.includes('@manki') && !body.includes('review');
 }
 
 async function handleInteraction(): Promise<void> {
@@ -401,9 +395,6 @@ async function handleInteraction(): Promise<void> {
     configContent = await fetchConfigFile(octokit, owner, repo, baseRef, configPathInput);
   } else {
     configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.manki.yml');
-    if (!configContent) {
-      configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.claude-review.yml');
-    }
   }
   const config = loadConfig(configContent ?? undefined);
 
@@ -420,14 +411,14 @@ async function handleReviewCommentInteraction(): Promise<void> {
   if (!comment) return;
 
   // Don't respond to our own comments
-  if (comment.user?.type === 'Bot' || comment.body?.includes('<!-- manki') || comment.body?.includes('<!-- claude-review')) {
+  if (comment.user?.type === 'Bot' || comment.body?.includes('<!-- manki')) {
     return;
   }
 
-  // Only respond if this is a reply to a bot comment or mentions @manki/@claude
+  // Only respond if this is a reply to a bot comment or mentions @manki
   const body = comment.body?.toLowerCase() ?? '';
   const isReplyToBot = !!comment.in_reply_to_id; // handleReviewCommentReply will verify it's actually our comment
-  const mentionsBot = body.includes('@manki') || body.includes('@claude');
+  const mentionsBot = body.includes('@manki');
 
   if (!isReplyToBot && !mentionsBot) {
     core.info('Review comment is not a reply to bot or @manki mention — skipping');
@@ -447,9 +438,6 @@ async function handleReviewCommentInteraction(): Promise<void> {
     configContent = await fetchConfigFile(octokit, owner, repo, baseRef, configPathInput);
   } else {
     configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.manki.yml');
-    if (!configContent) {
-      configContent = await fetchConfigFile(octokit, owner, repo, baseRef, '.claude-review.yml');
-    }
   }
   const config = loadConfig(configContent ?? undefined);
 

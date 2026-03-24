@@ -150,10 +150,12 @@ jobs:
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' &&
-       (contains(github.event.comment.body, '@manki') || contains(github.event.comment.body, '@claude')) &&
-       contains(github.event.comment.body, 'review') &&
+       contains(github.event.comment.body, '@manki') &&
        github.event.issue.pull_request)
     runs-on: ubuntu-latest
+    concurrency:
+      group: manki-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

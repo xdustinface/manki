@@ -13,7 +13,6 @@ interface MemoryConfig {
 }
 
 const BOT_MARKER = '<!-- manki -->';
-const LEGACY_BOT_MARKER = '<!-- claude-review -->';
 
 /**
  * Handle a reply to one of our review comments.
@@ -195,7 +194,7 @@ interface ParsedCommand {
 
 function parseCommand(body: string): ParsedCommand {
   const lower = body.toLowerCase();
-  const match = lower.match(/@(?:manki|claude)\s+(explain|dismiss|help|remember|forget|check)(?:\s+(.*))?/);
+  const match = lower.match(/@manki\s+(explain|dismiss|help|remember|forget|check)(?:\s+(.*))?/);
 
   if (match) {
     return {
@@ -336,7 +335,7 @@ async function handleRemember(
     await octokit.rest.issues.createComment({
       owner, repo,
       issue_number: prNumber,
-      body: `${BOT_MARKER}\nMemory is not enabled for this repo. Add \`memory.enabled: true\` to \`.claude-review.yml\` to use this feature.`,
+      body: `${BOT_MARKER}\nMemory is not enabled for this repo. Add \`memory.enabled: true\` to \`.manki.yml\` to use this feature.`,
     });
     return;
   }
@@ -408,7 +407,7 @@ function buildReplyContext(
   line?: number | null,
 ): string {
   let context = '## Original Review Comment\n\n';
-  context += originalComment.replace(BOT_MARKER, '').replace(LEGACY_BOT_MARKER, '').trim();
+  context += originalComment.replace(BOT_MARKER, '').trim();
 
   if (filePath) {
     context += `\n\nFile: \`${filePath}\``;
@@ -421,12 +420,12 @@ function buildReplyContext(
 }
 
 function isBotComment(body: string): boolean {
-  return body.includes('<!-- manki') || body.includes('<!-- claude-review');
+  return body.includes('<!-- manki');
 }
 
 function hasBotMention(body: string): boolean {
   const lower = body.toLowerCase();
-  return lower.includes('@manki') || lower.includes('@claude');
+  return lower.includes('@manki');
 }
 
-export { parseCommand, buildReplyContext, ParsedCommand, BOT_MARKER, LEGACY_BOT_MARKER, isBotComment, hasBotMention };
+export { parseCommand, buildReplyContext, ParsedCommand, BOT_MARKER, isBotComment, hasBotMention };

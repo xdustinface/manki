@@ -68,21 +68,10 @@ describe('parseCommand', () => {
     expect(result).toEqual<ParsedCommand>({ type: 'check', args: 'memory' });
   });
 
-  it('recognizes legacy @claude commands', () => {
-    const result = parseCommand('@claude explain the error handling');
-    expect(result).toEqual<ParsedCommand>({ type: 'explain', args: 'the error handling' });
-  });
-
-  it('recognizes legacy @claude help', () => {
-    const result = parseCommand('@claude help');
-    expect(result).toEqual<ParsedCommand>({ type: 'help', args: '' });
-  });
 });
 
 describe('buildReplyContext', () => {
   const BOT_MARKER = '<!-- manki -->';
-  const LEGACY_BOT_MARKER = '<!-- claude-review -->';
-
   it('builds context with file path and line number', () => {
     const result = buildReplyContext(
       `${BOT_MARKER}\nThis variable could be null.`,
@@ -145,15 +134,6 @@ describe('buildReplyContext', () => {
     expect(result).toContain('Actual review content here');
   });
 
-  it('strips legacy bot marker from original comment', () => {
-    const result = buildReplyContext(
-      `${LEGACY_BOT_MARKER}\nActual review content here`,
-      'Reply',
-    );
-
-    expect(result).not.toContain(LEGACY_BOT_MARKER);
-    expect(result).toContain('Actual review content here');
-  });
 });
 
 describe('isBotComment', () => {
@@ -161,16 +141,8 @@ describe('isBotComment', () => {
     expect(isBotComment('<!-- manki -->\nsome content')).toBe(true);
   });
 
-  it('detects legacy claude-review bot marker', () => {
-    expect(isBotComment('<!-- claude-review -->\nsome content')).toBe(true);
-  });
-
   it('detects new manki metadata marker', () => {
     expect(isBotComment('content <!-- manki:blocking:test -->')).toBe(true);
-  });
-
-  it('detects legacy claude-review metadata marker', () => {
-    expect(isBotComment('content <!-- claude-review:blocking:test -->')).toBe(true);
   });
 
   it('returns false for unrelated comments', () => {
@@ -183,16 +155,11 @@ describe('hasBotMention', () => {
     expect(hasBotMention('@manki explain this')).toBe(true);
   });
 
-  it('detects legacy @claude mention', () => {
-    expect(hasBotMention('@claude explain this')).toBe(true);
-  });
-
   it('returns false for unrelated text', () => {
     expect(hasBotMention('just a comment')).toBe(false);
   });
 
   it('is case-insensitive', () => {
     expect(hasBotMention('@MANKI help')).toBe(true);
-    expect(hasBotMention('@Claude review')).toBe(true);
   });
 });
