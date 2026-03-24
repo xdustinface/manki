@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -73,9 +73,9 @@ export class ClaudeClient {
     const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}`;
     const cliPath = await this.ensureCLI();
 
-    try {
-      const { stdout } = await execFileAsync(cliPath, [
-        '-p', fullPrompt,
+    return new Promise((resolve, reject) => {
+      const child = spawn(cliPath, [
+        '-p',
         '--output-format', 'text',
         '--model', this.model,
       ], {
@@ -83,21 +83,37 @@ export class ClaudeClient {
           ...process.env,
           CLAUDE_CODE_OAUTH_TOKEN: this.oauthToken,
         },
-        maxBuffer: 50 * 1024 * 1024,
+        stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 300000,
       });
 
-      const content = stdout.trim();
-      core.startGroup('Claude CLI response');
-      core.info(content);
-      core.endGroup();
+      let stdout = '';
+      let stderr = '';
 
-      return { content };
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      core.warning(`Claude CLI failed: ${msg}`);
-      throw new Error(`Claude CLI invocation failed: ${msg}`);
-    }
+      child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+      child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+      child.on('close', (code) => {
+        if (code !== 0) {
+          const msg = `exit ${code}: ${stderr.slice(0, 500)}`;
+          core.warning(`Claude CLI failed (${msg})`);
+          reject(new Error(`Claude CLI invocation failed (${msg})`));
+          return;
+        }
+        const content = stdout.trim();
+        core.startGroup('Claude CLI response');
+        core.info(content);
+        core.endGroup();
+        resolve({ content });
+      });
+
+      child.on('error', (error) => {
+        reject(new Error(`Claude CLI spawn failed: ${error.message}`));
+      });
+
+      child.stdin.write(fullPrompt);
+      child.stdin.end();
+    });
   }
 
   private async sendViaAPI(systemPrompt: string, userMessage: string): Promise<ClaudeResponse> {
