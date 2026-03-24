@@ -6,7 +6,7 @@ import { loadConfig } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handlePRComment } from './interaction';
 import { loadMemory, buildMemoryContext, applySuppressions, RepoMemory } from './memory';
-import { fetchRecapState, deduplicateFindings, buildRecapSummary } from './recap';
+import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads } from './recap';
 import { runReview, determineVerdict } from './review';
 import {
   fetchPRDiff,
@@ -208,6 +208,17 @@ async function runFullReview(
     }
 
     const recap = await fetchRecapState(octokit, owner, repo, prNumber);
+
+    if (recap.previousFindings.length > 0) {
+      const autoResolved = await resolveAddressedThreads(
+        octokit, claude, owner, repo, prNumber,
+        recap.previousFindings, diff,
+      );
+      if (autoResolved > 0) {
+        core.info(`Auto-resolved ${autoResolved} findings addressed in latest push`);
+      }
+    }
+
     const fullContext = [repoContext, memoryContext, recap.recapContext].filter(Boolean).join('\n\n');
 
     await dismissPreviousReviews(octokit, owner, repo, prNumber);
