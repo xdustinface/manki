@@ -9,7 +9,7 @@ Manki runs three specialist reviewers in parallel, then consolidates their findi
 - **Multi-agent review** -- Security, Architecture, and Testing specialists review every PR independently, then a consolidation agent merges and validates findings
 - **Smart verdicts** -- Blocking issues get `REQUEST_CHANGES`. Nits get `APPROVE` with suggestions. She won't hold up your PRs over style nitpicks
 - **Self-learning memory** -- Teach her with `@manki remember`. She stores learnings, tracks patterns, and gets smarter over time
-- **No external dependencies** -- Runs on GitHub Actions with your Claude API tokens. No third-party services, no rate limits from someone else's infrastructure, no waiting in queue behind other repos
+- **No external dependencies** -- Runs on GitHub Actions with your Claude Max subscription. No third-party services, no external rate limits, no waiting in queue
 - **Review lifecycle** -- Tracks conversations, auto-resolves addressed findings, creates issues from nits for later triage
 
 ## Quick start
