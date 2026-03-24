@@ -24,6 +24,27 @@ export interface ReviewResult {
 export interface ReviewerAgent {
   name: string;
   focus: string;
+  systemPrompt?: string;
+}
+
+export type ReviewLevel = 'auto' | 'small' | 'medium' | 'large';
+
+export interface ReviewThresholds {
+  small: number;
+  medium: number;
+}
+
+export interface AgentVote {
+  agentName: string;
+  findingIndex: number;
+  vote: 'agree' | 'disagree' | 'escalate';
+  reason: string;
+}
+
+export interface TeamRoster {
+  level: ReviewLevel;
+  agents: ReviewerAgent[];
+  lineCount: number;
 }
 
 export interface ReviewConfig {
@@ -36,6 +57,8 @@ export interface ReviewConfig {
   max_diff_lines: number;
   reviewers: ReviewerAgent[];
   instructions: string;
+  review_level: ReviewLevel;
+  review_thresholds: ReviewThresholds;
   memory: {
     enabled: boolean;
     repo: string;

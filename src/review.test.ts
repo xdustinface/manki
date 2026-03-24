@@ -6,8 +6,10 @@ import {
   buildReviewerSystemPrompt,
   buildReviewerUserMessage,
   mergeIndividualFindings,
+  selectTeam,
+  tallyVotes,
 } from './review';
-import { Finding, ReviewerAgent, ReviewConfig } from './types';
+import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, AgentVote } from './types';
 
 const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   model: 'claude-opus-4-6',
@@ -19,7 +21,26 @@ const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   max_diff_lines: 10000,
   reviewers: [],
   instructions: '',
+  review_level: 'auto',
+  review_thresholds: { small: 100, medium: 500 },
   memory: { enabled: false, repo: '' },
+  ...overrides,
+});
+
+const makeDiff = (overrides: Partial<ParsedDiff> = {}): ParsedDiff => ({
+  files: [],
+  totalAdditions: 0,
+  totalDeletions: 0,
+  ...overrides,
+});
+
+const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
+  severity: 'suggestion',
+  title: 'Test finding',
+  file: 'src/a.ts',
+  line: 10,
+  description: 'A test finding.',
+  reviewers: ['Reviewer A'],
   ...overrides,
 });
 
@@ -284,16 +305,6 @@ describe('buildReviewerUserMessage', () => {
 });
 
 describe('mergeIndividualFindings', () => {
-  const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
-    severity: 'suggestion',
-    title: 'Test finding',
-    file: 'src/a.ts',
-    line: 10,
-    description: 'A test finding.',
-    reviewers: ['Reviewer A'],
-    ...overrides,
-  });
-
   it('collects findings from multiple reviewers', () => {
     const result = mergeIndividualFindings([
       { reviewer: 'Security', findings: [makeFinding({ title: 'Bug A', file: 'a.ts', line: 1 })] },
@@ -382,5 +393,165 @@ describe('parseFindings with extractJSON', () => {
     const findings = parseFindings(input, 'Test');
     expect(findings).toHaveLength(1);
     expect(findings[0].title).toBe('Bug');
+  });
+});
+
+describe('selectTeam', () => {
+  it('selects small team for diffs under small threshold', () => {
+    const diff = makeDiff({ totalAdditions: 30, totalDeletions: 20 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config);
+    expect(roster.level).toBe('small');
+    expect(roster.agents).toHaveLength(3);
+    expect(roster.lineCount).toBe(50);
+  });
+
+  it('selects medium team for diffs between small and medium thresholds', () => {
+    const diff = makeDiff({ totalAdditions: 150, totalDeletions: 100 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config);
+    expect(roster.level).toBe('medium');
+    expect(roster.agents).toHaveLength(5);
+  });
+
+  it('selects large team for diffs above medium threshold', () => {
+    const diff = makeDiff({ totalAdditions: 300, totalDeletions: 300 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config);
+    expect(roster.level).toBe('large');
+    expect(roster.agents).toHaveLength(7);
+  });
+
+  it('auto level picks correct size based on line count', () => {
+    const config = makeConfig({ review_level: 'auto', review_thresholds: { small: 50, medium: 200 } });
+
+    const small = selectTeam(makeDiff({ totalAdditions: 10, totalDeletions: 10 }), config);
+    expect(small.level).toBe('small');
+
+    const medium = selectTeam(makeDiff({ totalAdditions: 60, totalDeletions: 60 }), config);
+    expect(medium.level).toBe('medium');
+
+    const large = selectTeam(makeDiff({ totalAdditions: 150, totalDeletions: 100 }), config);
+    expect(large.level).toBe('large');
+  });
+
+  it('always includes core agents (Security, Architecture, Correctness)', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config);
+    expect(roster.agents.map(a => a.name)).toContain('Security & Safety');
+    expect(roster.agents.map(a => a.name)).toContain('Architecture & Design');
+    expect(roster.agents.map(a => a.name)).toContain('Correctness & Logic');
+  });
+
+  it('includes custom reviewers in pool and gives them a scoring boost', () => {
+    const custom: ReviewerAgent = { name: 'Protocol Expert', focus: 'protocol compliance' };
+    const diff = makeDiff({
+      totalAdditions: 300,
+      totalDeletions: 300,
+      files: [{ path: 'src/main.ts', changeType: 'modified', hunks: [] }],
+    });
+    const config = makeConfig({ review_level: 'large' });
+    const roster = selectTeam(diff, config, [custom]);
+    expect(roster.agents.map(a => a.name)).toContain('Protocol Expert');
+  });
+
+  it('respects fixed review_level override', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig({ review_level: 'large' });
+    const roster = selectTeam(diff, config);
+    expect(roster.level).toBe('large');
+    expect(roster.agents).toHaveLength(7);
+  });
+});
+
+describe('tallyVotes', () => {
+  const findingA = { ...makeFinding({ title: 'Bug A', severity: 'suggestion' }), index: 0 };
+  const findingB = { ...makeFinding({ title: 'Bug B', severity: 'suggestion' }), index: 1 };
+
+  it('keeps finding when majority agrees', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'C', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Bug A');
+  });
+
+  it('drops finding when majority disagrees', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'disagree', reason: 'false positive' },
+      { agentName: 'B', findingIndex: 0, vote: 'disagree', reason: 'false positive' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(0);
+  });
+
+  it('escalates to blocking when all voters unanimously agree', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('blocking');
+  });
+
+  it('downgrades to suggestion on split vote', () => {
+    const finding = { ...makeFinding({ title: 'Mixed', severity: 'blocking' }), index: 0 };
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+      { agentName: 'C', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+      { agentName: 'D', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      // 2 agree, 2 disagree out of 5 total team — neither reaches majority (3)
+    ];
+    const results = tallyVotes([finding], votes, 5);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('suggestion');
+  });
+
+  it('keeps finding as-is when no votes are cast', () => {
+    const results = tallyVotes([findingA], [], 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Bug A');
+    expect(results[0].severity).toBe('suggestion');
+  });
+
+  it('escalates to blocking when escalate vote present with majority agree', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'escalate', reason: 'worse than reported' },
+      { agentName: 'C', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('blocking');
+  });
+
+  it('collects agreeing voter names in reviewers array', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'Alpha', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'Beta', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'Gamma', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results[0].reviewers).toEqual(['Alpha', 'Beta']);
+  });
+
+  it('handles multiple findings independently', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'A', findingIndex: 1, vote: 'disagree', reason: 'nah' },
+      { agentName: 'B', findingIndex: 1, vote: 'disagree', reason: 'nah' },
+    ];
+    const results = tallyVotes([findingA, findingB], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('Bug A');
   });
 });

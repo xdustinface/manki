@@ -30,6 +30,8 @@ describe('config', () => {
       expect(typeof DEFAULT_CONFIG.memory).toBe('object');
       expect(typeof DEFAULT_CONFIG.memory.enabled).toBe('boolean');
       expect(typeof DEFAULT_CONFIG.memory.repo).toBe('string');
+      expect(DEFAULT_CONFIG.review_level).toBe('auto');
+      expect(DEFAULT_CONFIG.review_thresholds).toEqual({ small: 100, medium: 500 });
     });
 
     it('has three default reviewers with name and focus', () => {

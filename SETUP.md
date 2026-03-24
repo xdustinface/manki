@@ -221,16 +221,18 @@ exclude_paths:
 # Maximum diff size before skipping (default: 10000 lines)
 max_diff_lines: 10000
 
+# Team sizing: auto (default), small (3 agents), medium (5), large (7)
+review_level: auto
+review_thresholds:
+  small: 100   # diffs under this many lines get a small team
+  medium: 500  # diffs under this many lines get a medium team
+
 # Additional context for reviewers
 instructions: |
   This is a Rust project. Focus on ownership and error handling.
 
-# Custom reviewer agents (replaces defaults)
+# Custom reviewer agents (added to the built-in pool)
 reviewers:
-  - name: "Security & Correctness"
-    focus: "bugs, vulnerabilities, memory safety"
-  - name: "Architecture & Quality"
-    focus: "design, simplicity, maintainability"
   - name: "Protocol Compliance"
     focus: "DIP compliance, consensus rules"
 

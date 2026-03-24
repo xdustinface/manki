@@ -2,11 +2,12 @@
 
 **Your tokens, your rules.** Self-hosted AI code review that runs on your own GitHub runners and learns from your team.
 
-Manki runs three specialist reviewers in parallel, then consolidates their findings into one clean review. She's curious, thorough, and remembers what you teach her.
+Manki assembles a dynamic review team from a pool of seven specialist agents, sized to your diff, then runs a deliberation round where every agent votes on every finding. She's curious, thorough, and remembers what you teach her.
 
 ## What Manki does
 
-- **Multi-agent review** -- Security, Architecture, and Testing specialists review every PR independently, then a consolidation agent merges and validates findings (with a fallback merger if consolidation fails)
+- **Dynamic review teams** -- A pool of seven specialist agents (Security, Architecture, Correctness, Testing, Performance, Maintainability, Dependencies) with automatic team sizing: 3 agents for small diffs, 5 for medium, 7 for large. Core agents (Security, Architecture, Correctness) always participate; additional agents are selected by content relevance
+- **Deliberation voting** -- After the review round, every team member votes on every finding (agree/disagree/escalate). Majority-disagree drops false positives, unanimous-agree escalates to blocking, split votes become suggestions
 - **Smart verdicts** -- Blocking issues get `REQUEST_CHANGES`. Nits get `APPROVE` with suggestions. Failures fall back to `COMMENT`. She won't hold up your PRs over style nitpicks
 - **Review recap** -- On subsequent pushes, Manki deduplicates against previous findings and tracks which ones were resolved
 - **Auto-resolve with validation** -- When a new push touches code near an open finding, Claude validates whether the fix actually addresses it and auto-resolves the thread
@@ -96,6 +97,12 @@ auto_review: true
 auto_approve: true
 exclude_paths: ["*.lock"]
 
+# Team sizing: auto (default), small (3), medium (5), large (7)
+review_level: auto
+review_thresholds:
+  small: 100
+  medium: 500
+
 # Teach Manki about your project
 instructions: |
   This is a Rust project. Focus on ownership and error handling.
@@ -111,9 +118,10 @@ See [`.manki.yml.example`](.manki.yml.example) for all options.
 ## How it works
 
 1. PR opened -- Manki wakes up
-2. Three specialist agents review the diff in parallel (Security, Architecture, Testing)
-3. A consolidation agent merges findings, removes duplicates, validates line numbers (falls back to a simpler merger on failure)
-4. Clean review posted -- blocking issues get `REQUEST_CHANGES`, nits get `APPROVE`
+2. A dynamic team is assembled from the agent pool (3/5/7 agents depending on diff size)
+3. All team members review the diff in parallel
+4. A deliberation round runs -- every agent votes on every finding, majority rules
+5. Clean review posted -- blocking issues get `REQUEST_CHANGES`, nits get `APPROVE`
 5. Non-blocking findings become a GitHub issue with checkboxes and a `needs-human` label
 6. On new pushes, Manki checks which findings were addressed, auto-resolves validated threads, and deduplicates before reviewing again
 7. When all blocking threads are resolved, she approves

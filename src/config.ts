@@ -29,6 +29,8 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   max_diff_lines: 10000,
   reviewers: DEFAULT_REVIEWERS,
   instructions: '',
+  review_level: 'auto',
+  review_thresholds: { small: 100, medium: 500 },
   memory: {
     enabled: false,
     repo: '',
@@ -45,6 +47,8 @@ const KNOWN_KEYS = new Set([
   'max_diff_lines',
   'reviewers',
   'instructions',
+  'review_level',
+  'review_thresholds',
   'memory',
 ]);
 
@@ -104,6 +108,27 @@ function validateConfig(config: Record<string, unknown>): ConfigValidationResult
     }
   }
 
+  if ('review_level' in config) {
+    const valid = ['auto', 'small', 'medium', 'large'];
+    if (typeof config.review_level !== 'string' || !valid.includes(config.review_level)) {
+      errors.push('`review_level` must be one of: auto, small, medium, large');
+    }
+  }
+
+  if ('review_thresholds' in config) {
+    const thresholds = config.review_thresholds as Record<string, unknown>;
+    if (!thresholds || typeof thresholds !== 'object' || Array.isArray(thresholds)) {
+      errors.push('`review_thresholds` must be an object');
+    } else {
+      if ('small' in thresholds && (typeof thresholds.small !== 'number' || thresholds.small <= 0)) {
+        errors.push('`review_thresholds.small` must be a positive number');
+      }
+      if ('medium' in thresholds && (typeof thresholds.medium !== 'number' || thresholds.medium <= 0)) {
+        errors.push('`review_thresholds.medium` must be a positive number');
+      }
+    }
+  }
+
   if ('reviewers' in config) {
     if (!Array.isArray(config.reviewers)) {
       errors.push('`reviewers` must be an array');
@@ -153,6 +178,8 @@ function deepMerge(defaults: ReviewConfig, overrides: Record<string, unknown>): 
 
     if (key === 'memory' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
       result.memory = { ...defaults.memory, ...(value as Record<string, unknown>) } as ReviewConfig['memory'];
+    } else if (key === 'review_thresholds' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      result.review_thresholds = { ...defaults.review_thresholds, ...(value as Record<string, unknown>) } as ReviewConfig['review_thresholds'];
     } else {
       (result as Record<string, unknown>)[key] = value;
     }

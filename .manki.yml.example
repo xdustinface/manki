@@ -26,15 +26,19 @@
 # Maximum diff lines before skipping review (default: 10000)
 # max_diff_lines: 10000
 
-# Reviewer agents (defaults shown below)
-# Each agent reviews the diff independently, then findings are consolidated
+# Team sizing: auto (default), small (3 agents), medium (5), large (7)
+# review_level: auto
+# review_thresholds:
+#   small: 100   # diffs under this many lines get a small team
+#   medium: 500  # diffs under this many lines get a medium team
+
+# Custom reviewer agents (added to the built-in 7-agent pool)
+# The built-in pool covers: Security, Architecture, Correctness, Testing,
+# Performance, Maintainability, Dependencies. Custom reviewers get a scoring
+# boost during team selection.
 # reviewers:
-#   - name: "Security & Correctness"
-#     focus: "bugs, vulnerabilities, memory safety, data integrity, input validation"
-#   - name: "Architecture & Quality"
-#     focus: "design patterns, simplicity, maintainability, code reuse, naming, idioms"
-#   - name: "Testing & Edge Cases"
-#     focus: "test coverage, error paths, boundary conditions, race conditions"
+#   - name: "Protocol Compliance"
+#     focus: "DIP compliance, consensus rules, protocol-specific invariants"
 
 # Additional instructions injected into all reviewer prompts
 # instructions: |
