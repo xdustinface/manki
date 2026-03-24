@@ -183,7 +183,7 @@ export async function postReview(
 
   for (const f of result.findings) {
     if (!f.file || f.line <= 0) {
-      const safeFile = f.file?.replace(/`/g, "'") ?? '';
+      const safeFile = f.file?.replace(/`/g, "'").replace(/\n/g, ' ') ?? '';
       const location = f.file ? ` — \`${safeFile}\`` : '';
       const safeTitle = sanitizeMarkdown(f.title);
       const fullDesc = sanitizeMarkdown(f.description);
@@ -220,20 +220,20 @@ export async function postReview(
           } else {
             const desc = sanitizeMarkdown(f.description);
             const truncDesc = desc.length > 200 ? desc.slice(0, 200) + '...' : desc;
-            invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${sanitizeMarkdown(f.title)}** (\`${f.file.replace(/`/g, "'")}:${f.line}\`): ${truncDesc}`);
+            invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${sanitizeMarkdown(f.title)}** (\`${f.file.replace(/`/g, "'").replace(/\n/g, ' ')}:${f.line}\`): ${truncDesc}`);
           }
         }
       } else {
         const desc = sanitizeMarkdown(f.description);
         const truncDesc = desc.length > 200 ? desc.slice(0, 200) + '...' : desc;
-        invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${sanitizeMarkdown(f.title)}** (\`${f.file.replace(/`/g, "'")}:${f.line}\`): ${truncDesc}`);
+        invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${sanitizeMarkdown(f.title)}** (\`${f.file.replace(/`/g, "'").replace(/\n/g, ' ')}:${f.line}\`): ${truncDesc}`);
       }
     } else {
       validComments.push({ path: f.file, line: f.line, side: 'RIGHT', body: commentBody });
     }
   }
 
-  let body = `${BOT_MARKER}\n${result.summary}`;
+  let body = `${BOT_MARKER}\n${sanitizeMarkdown(result.summary)}`;
   if (generalFindings.length > 0) {
     body += `\n\n**General findings:**\n${generalFindings.map(c => `- ${c}`).join('\n')}`;
   }
@@ -273,7 +273,10 @@ export async function postReview(
     if (isLineError && validComments.length > 0) {
       core.warning('Inline comments rejected by GitHub (invalid lines). Posting review without inline comments.');
       const allAsBody = validComments.map(c => `- ${c.body.split('\n')[0]}`).join('\n');
-      const fallbackBody = `${body}\n\n**Inline comments could not be posted:**\n${allAsBody}`;
+      let lineErrFallbackBody = `${body}\n\n**Inline comments could not be posted:**\n${allAsBody}`;
+      if (lineErrFallbackBody.length > MAX_BODY_LENGTH) {
+        lineErrFallbackBody = lineErrFallbackBody.slice(0, MAX_BODY_LENGTH) + '\n\n*(Review body truncated)*';
+      }
 
       const { data: review } = await octokit.rest.pulls.createReview({
         owner,
@@ -281,7 +284,7 @@ export async function postReview(
         pull_number: prNumber,
         commit_id: commitSha,
         event,
-        body: fallbackBody,
+        body: lineErrFallbackBody,
         comments: [],
       });
 
@@ -302,7 +305,10 @@ export async function postReview(
       const firstLine = c.body.split('\n')[0];
       return `- ${firstLine} (\`${c.path}:${c.line}\`)`;
     }).join('\n');
-    const fallbackBody = `${body}\n\n**Findings (could not post inline):**\n${findingSummary}`;
+    let fallbackBody = `${body}\n\n**Findings (could not post inline):**\n${findingSummary}`;
+    if (fallbackBody.length > MAX_BODY_LENGTH) {
+      fallbackBody = fallbackBody.slice(0, MAX_BODY_LENGTH) + '\n\n*(Review body truncated)*';
+    }
 
     const { data: review } = await octokit.rest.pulls.createReview({
       owner,
@@ -335,8 +341,9 @@ function getSeverityLabel(severity: FindingSeverity): string {
 
 function sanitizeMarkdown(text: string): string {
   return text
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')   // HTML comments (including unclosed)
-    .replace(/<\/?[a-z][^>]*(?:>|$)/gi, '')  // HTML tags (including unclosed)
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')          // HTML comments (including unclosed)
+    .replace(/<[a-z][a-z0-9]*\s[^>]*(?:>|$)/gi, '') // Tags with attributes (dangerous)
+    .replace(/<\/?(script|iframe|style|object|embed|form|input|button|select|textarea|meta|link|base)[^>]*>/gi, '') // Known dangerous tags
     // Insert zero-width space after @ to prevent GitHub from resolving mentions.
     // Lookbehind avoids matching email addresses (which have chars before @).
     // Also handles @org/team patterns.
@@ -364,7 +371,7 @@ function formatFindingComment(finding: Finding): string {
     comment += `\n\n<details>\n<summary>Suggested fix</summary>\n\n${fence}suggestion\n${finding.suggestedFix}\n${fence}\n</details>`;
   }
 
-  const safeFile = finding.file.replace(/`/g, "'");
+  const safeFile = finding.file.replace(/`/g, "'").replace(/\n/g, ' ');
   comment += '\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n';
   comment += `**File:** \`${safeFile}\`\n`;
   comment += `**Line:** ${finding.line}\n`;
