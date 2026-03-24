@@ -321,6 +321,16 @@ async function handleReviewCommentInteraction(): Promise<void> {
     return;
   }
 
+  // Only respond if this is a reply to a bot comment or mentions @claude
+  const body = comment.body?.toLowerCase() ?? '';
+  const isReplyToBot = !!comment.in_reply_to_id; // handleReviewCommentReply will verify it's actually our comment
+  const mentionsClaude = body.includes('@claude');
+
+  if (!isReplyToBot && !mentionsClaude) {
+    core.info('Review comment is not a reply to bot or @claude mention — skipping');
+    return;
+  }
+
   const githubToken = core.getInput('github_token', { required: true });
   const oauthToken = core.getInput('claude_code_oauth_token');
   const apiKey = core.getInput('anthropic_api_key');
