@@ -15,6 +15,7 @@ import {
   updateProgressComment,
   dismissPreviousReviews,
   postReview,
+  createNitIssue,
 } from './github';
 import { checkAndAutoApprove } from './state';
 
@@ -213,6 +214,14 @@ async function runFullReview(
     }
 
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, result);
+
+    if (result.verdict === 'APPROVE' && result.findings.length > 0) {
+      try {
+        await createNitIssue(octokit, owner, repo, prNumber, result.findings);
+      } catch (error) {
+        core.warning(`Failed to create nit issue: ${error}`);
+      }
+    }
 
     await updateProgressComment(octokit, owner, repo, progressCommentId, result);
 

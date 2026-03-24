@@ -1,4 +1,4 @@
-import { formatFindingComment, mapVerdictToEvent, BOT_MARKER } from './github';
+import { formatFindingComment, mapVerdictToEvent, BOT_MARKER, buildNitIssueBody } from './github';
 import { Finding } from './types';
 
 describe('formatFindingComment', () => {
@@ -90,5 +90,80 @@ describe('mapVerdictToEvent', () => {
 describe('BOT_MARKER', () => {
   it('is an HTML comment', () => {
     expect(BOT_MARKER).toMatch(/^<!--.*-->$/);
+  });
+});
+
+describe('buildNitIssueBody', () => {
+  const suggestion: Finding = {
+    severity: 'suggestion',
+    title: 'Use const instead of let',
+    file: 'src/utils.ts',
+    line: 10,
+    description: 'Variable is never reassigned.',
+    reviewers: ['Style'],
+  };
+
+  const question: Finding = {
+    severity: 'question',
+    title: 'Is this timeout intentional?',
+    file: 'src/client.ts',
+    line: 55,
+    description: 'The timeout of 60s seems high for this endpoint.',
+    reviewers: ['Performance'],
+  };
+
+  const blocking: Finding = {
+    severity: 'blocking',
+    title: 'Null dereference',
+    file: 'src/main.ts',
+    line: 1,
+    description: 'Will crash at runtime.',
+    reviewers: ['Security'],
+  };
+
+  it('filters to only suggestion and question findings', () => {
+    const body = buildNitIssueBody(42, [blocking, suggestion, question], 'myorg');
+    expect(body).toContain('Use const instead of let');
+    expect(body).toContain('Is this timeout intentional?');
+    expect(body).not.toContain('Null dereference');
+  });
+
+  it('formats checklist items with file and line', () => {
+    const body = buildNitIssueBody(42, [suggestion], 'myorg');
+    expect(body).toContain('- [ ]');
+    expect(body).toContain('`src/utils.ts:10`');
+    expect(body).toContain('Variable is never reassigned.');
+  });
+
+  it('includes PR reference in header', () => {
+    const body = buildNitIssueBody(99, [suggestion], 'myorg');
+    expect(body).toContain('PR #99');
+  });
+
+  it('includes suggested fix when present', () => {
+    const withFix: Finding = { ...suggestion, suggestedFix: 'const x = 1;' };
+    const body = buildNitIssueBody(42, [withFix], 'myorg');
+    expect(body).toContain('**Suggested fix:**');
+    expect(body).toContain('`const x = 1;`');
+  });
+
+  it('omits suggested fix when not present', () => {
+    const body = buildNitIssueBody(42, [suggestion], 'myorg');
+    expect(body).not.toContain('Suggested fix');
+  });
+
+  it('truncates long suggested fixes to 100 chars', () => {
+    const longFix = 'a'.repeat(200);
+    const withFix: Finding = { ...suggestion, suggestedFix: longFix };
+    const body = buildNitIssueBody(42, [withFix], 'myorg');
+    expect(body).toContain('`' + 'a'.repeat(100) + '`');
+    expect(body).not.toContain('a'.repeat(101));
+  });
+
+  it('uses correct emoji for suggestion vs question', () => {
+    const body = buildNitIssueBody(42, [suggestion, question], 'myorg');
+    // suggestion gets lightbulb, question gets question mark
+    expect(body).toContain('\u{1F4A1} **Use const instead of let**');
+    expect(body).toContain('\u{2753} **Is this timeout intentional?**');
   });
 });
