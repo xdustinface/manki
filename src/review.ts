@@ -283,7 +283,7 @@ export function parseConsolidatedReview(responseText: string): ReviewResult {
   } catch (e) {
     core.warning(`Failed to parse consolidated review: ${e}`);
     return {
-      verdict: 'COMMENT',
+      verdict: determineVerdict(undefined, []),
       summary: 'Review consolidation failed — raw findings from individual reviewers may be incomplete.',
       findings: [],
       highlights: [],

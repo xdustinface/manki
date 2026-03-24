@@ -1,5 +1,5 @@
 import { Finding } from './types';
-import { deduplicateFindings, buildRecapSummary, PreviousFinding } from './recap';
+import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -119,6 +119,120 @@ describe('deduplicateFindings', () => {
     const result = deduplicateFindings(findings, previous);
     expect(result.unique).toHaveLength(0);
     expect(result.duplicates).toHaveLength(1);
+  });
+});
+
+describe('resolveAddressedThreads', () => {
+  it('is exported as a function', () => {
+    expect(typeof resolveAddressedThreads).toBe('function');
+  });
+
+  it('returns 0 when no client is provided and candidates exist', async () => {
+    const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
+    const findings = [makePrevious({
+      title: 'Missing null check',
+      file: 'src/foo.ts',
+      line: 10,
+      status: 'open',
+      threadId: 'thread-1',
+    })];
+    const diff = {
+      files: [{
+        path: 'src/foo.ts',
+        changeType: 'modified' as const,
+        hunks: [{ oldStart: 8, oldLines: 5, newStart: 8, newLines: 5, content: 'if (x != null) {}' }],
+      }],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    };
+
+    const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
+    expect(result).toBe(0);
+  });
+
+  it('returns 0 when no open findings match any hunks', async () => {
+    const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
+    const findings = [makePrevious({
+      title: 'Missing null check',
+      file: 'src/foo.ts',
+      line: 100,
+      status: 'open',
+      threadId: 'thread-1',
+    })];
+    const diff = {
+      files: [{
+        path: 'src/foo.ts',
+        changeType: 'modified' as const,
+        hunks: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, content: 'some code' }],
+      }],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    };
+
+    const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
+    expect(result).toBe(0);
+  });
+
+  it('resolves threads when Claude confirms findings are addressed', async () => {
+    const graphqlMock = jest.fn().mockResolvedValue({ thread: { isResolved: true } });
+    const mockOctokit = { graphql: graphqlMock } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+    const mockClient = {
+      sendMessage: jest.fn().mockResolvedValue({
+        content: '[{ "index": 0, "addressed": true, "reason": "null check added" }]',
+      }),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const findings = [makePrevious({
+      title: 'Missing null check',
+      file: 'src/foo.ts',
+      line: 10,
+      status: 'open',
+      threadId: 'thread-1',
+    })];
+    const diff = {
+      files: [{
+        path: 'src/foo.ts',
+        changeType: 'modified' as const,
+        hunks: [{ oldStart: 8, oldLines: 5, newStart: 8, newLines: 5, content: 'if (x != null) {}' }],
+      }],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    };
+
+    const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
+    expect(result).toBe(1);
+    expect(graphqlMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resolve threads when Claude says finding is not addressed', async () => {
+    const graphqlMock = jest.fn();
+    const mockOctokit = { graphql: graphqlMock } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+    const mockClient = {
+      sendMessage: jest.fn().mockResolvedValue({
+        content: '[{ "index": 0, "addressed": false, "reason": "only whitespace change" }]',
+      }),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const findings = [makePrevious({
+      title: 'Missing null check',
+      file: 'src/foo.ts',
+      line: 10,
+      status: 'open',
+      threadId: 'thread-1',
+    })];
+    const diff = {
+      files: [{
+        path: 'src/foo.ts',
+        changeType: 'modified' as const,
+        hunks: [{ oldStart: 8, oldLines: 5, newStart: 8, newLines: 5, content: '  // reformatted' }],
+      }],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    };
+
+    const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
+    expect(result).toBe(0);
+    expect(graphqlMock).not.toHaveBeenCalled();
   });
 });
 

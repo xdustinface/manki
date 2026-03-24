@@ -166,9 +166,9 @@ describe('parseConsolidatedReview', () => {
     expect(result.findings).toEqual([]);
   });
 
-  it('returns fallback for invalid JSON', () => {
+  it('returns fallback with APPROVE verdict for invalid JSON', () => {
     const result = parseConsolidatedReview('not json at all');
-    expect(result.verdict).toBe('COMMENT');
+    expect(result.verdict).toBe('APPROVE');
     expect(result.summary).toContain('consolidation failed');
     expect(result.findings).toEqual([]);
     expect(result.highlights).toEqual([]);

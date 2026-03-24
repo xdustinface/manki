@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { Finding } from './types';
+import { ClaudeClient } from './claude';
+import { Finding, ParsedDiff } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -228,4 +229,89 @@ function buildRecapSummary(
   return parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
 }
 
-export { PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary };
+/**
+ * Auto-resolve review threads whose findings were addressed in the new diff.
+ * Candidates are identified by hunk overlap, then validated by Claude to
+ * confirm the code change actually addresses the finding.
+ */
+async function resolveAddressedThreads(
+  octokit: Octokit,
+  client: ClaudeClient | null,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  previousFindings: PreviousFinding[],
+  diff: ParsedDiff,
+): Promise<number> {
+  let resolvedCount = 0;
+
+  const openFindings = previousFindings.filter(f => f.status === 'open' && f.threadId);
+
+  const candidates: Array<{ finding: PreviousFinding; hunkContent: string }> = [];
+
+  for (const finding of openFindings) {
+    const diffFile = diff.files.find(f => f.path === finding.file);
+    if (!diffFile) continue;
+
+    for (const hunk of diffFile.hunks) {
+      const hunkEnd = hunk.newStart + hunk.newLines - 1;
+      if (finding.line >= hunk.newStart - 3 && finding.line <= hunkEnd + 3) {
+        candidates.push({ finding, hunkContent: hunk.content });
+        break;
+      }
+    }
+  }
+
+  if (candidates.length === 0) return 0;
+
+  if (!client) {
+    core.info(`${candidates.length} findings may have been addressed but cannot validate without Claude client`);
+    return 0;
+  }
+
+  const prompt = candidates.map((c, i) =>
+    `### Finding ${i + 1}: "${c.finding.title}" at ${c.finding.file}:${c.finding.line} [${c.finding.severity}]\n\nNew code at that location:\n\`\`\`\n${c.hunkContent}\n\`\`\``
+  ).join('\n\n');
+
+  try {
+    const response = await client.sendMessage(
+      'You are checking if code review findings were addressed by new code changes. For each finding, respond with a JSON array where each element is: { "index": <number>, "addressed": true/false, "reason": "<brief reason>" }. Only mark as addressed if the code change ACTUALLY fixes the issue — not just cosmetic changes near the same lines. Respond with ONLY the JSON array.',
+      prompt,
+    );
+
+    let jsonText = response.content.trim();
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    const results = JSON.parse(jsonText) as Array<{ index: number; addressed: boolean; reason: string }>;
+
+    for (const result of results) {
+      if (result.addressed && result.index >= 0 && result.index < candidates.length) {
+        const candidate = candidates[result.index];
+        if (candidate.finding.threadId) {
+          try {
+            await octokit.graphql(`
+              mutation($threadId: ID!) {
+                resolveReviewThread(input: { threadId: $threadId }) {
+                  thread { isResolved }
+                }
+              }
+            `, { threadId: candidate.finding.threadId });
+
+            resolvedCount++;
+            core.info(`Auto-resolved: "${candidate.finding.title}" — ${result.reason}`);
+          } catch (error) {
+            core.debug(`Failed to resolve thread: ${error}`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    core.warning(`Failed to validate addressed findings: ${error}`);
+  }
+
+  return resolvedCount;
+}
+
+export { PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads };
