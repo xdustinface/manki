@@ -183,8 +183,7 @@ export async function postReview(
 
   for (const f of result.findings) {
     if (!f.file || f.line <= 0) {
-      const severityLabel = f.severity === 'blocking' ? 'Blocking' : f.severity === 'suggestion' ? 'Suggestion' : 'Question';
-      generalFindings.push(`**[${severityLabel}] ${f.title}**: ${f.description}`);
+      generalFindings.push(`**[${getSeverityLabel(f.severity)}] ${f.title}**: ${f.description}`);
       continue;
     }
 
@@ -200,13 +199,11 @@ export async function postReview(
           if (closest) {
             validComments.push({ path: f.file, line: closest, side: 'RIGHT', body: commentBody });
           } else {
-            const severityLabel = f.severity === 'blocking' ? 'Blocking' : f.severity === 'suggestion' ? 'Suggestion' : 'Question';
-            invalidComments.push(`**[${severityLabel}] ${f.title}** (\`${f.file}:${f.line}\`): ${f.description}`);
+            invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${f.title}** (\`${f.file}:${f.line}\`): ${f.description}`);
           }
         }
       } else {
-        const severityLabel = f.severity === 'blocking' ? 'Blocking' : f.severity === 'suggestion' ? 'Suggestion' : 'Question';
-        invalidComments.push(`**[${severityLabel}] ${f.title}** (\`${f.file}:${f.line}\`): ${f.description}`);
+        invalidComments.push(`**[${getSeverityLabel(f.severity)}] ${f.title}** (\`${f.file}:${f.line}\`): ${f.description}`);
       }
     } else {
       validComments.push({ path: f.file, line: f.line, side: 'RIGHT', body: commentBody });
@@ -302,9 +299,15 @@ function mapVerdictToEvent(verdict: ReviewVerdict): 'APPROVE' | 'COMMENT' | 'REQ
   }
 }
 
+function getSeverityLabel(severity: string): string {
+  if (severity === 'blocking') return 'Blocking';
+  if (severity === 'suggestion') return 'Suggestion';
+  return 'Question';
+}
+
 function formatFindingComment(finding: Finding): string {
   const severityEmoji = finding.severity === 'blocking' ? '🚫' : finding.severity === 'suggestion' ? '💡' : '❓';
-  const severityLabel = finding.severity === 'blocking' ? 'Blocking' : finding.severity === 'suggestion' ? 'Suggestion' : 'Question';
+  const severityLabel = getSeverityLabel(finding.severity);
 
   let comment = `${severityEmoji} **${severityLabel}**: ${finding.title}\n\n${finding.description}`;
 
@@ -484,4 +487,4 @@ export async function reactToReviewComment(
   }
 }
 
-export { formatFindingComment, mapVerdictToEvent, BOT_MARKER };
+export { formatFindingComment, getSeverityLabel, mapVerdictToEvent, BOT_MARKER };

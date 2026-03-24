@@ -174,7 +174,7 @@ export class ClaudeClient {
             }
           });
         } else {
-          child.stdin.end();
+          try { child.stdin.end(); } catch { /* stream may be destroyed */ }
         }
       } catch (err) {
         core.warning(`stdin write failed: ${(err as Error).message}`);
