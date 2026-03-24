@@ -88,10 +88,11 @@ export class ClaudeClient {
 
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
 
       const timer = setTimeout(() => {
+        timedOut = true;
         child.kill('SIGTERM');
-        reject(new Error('Claude CLI timed out after 300s'));
       }, 300000);
 
       child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
@@ -99,6 +100,10 @@ export class ClaudeClient {
 
       child.on('close', (code) => {
         clearTimeout(timer);
+        if (timedOut) {
+          reject(new Error('Claude CLI timed out after 300s'));
+          return;
+        }
         if (code !== 0) {
           const msg = `exit ${code}: ${stderr.slice(0, 500)}`;
           core.warning(`Claude CLI failed (${msg})`);

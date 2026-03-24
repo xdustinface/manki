@@ -463,6 +463,20 @@ describe('selectTeam', () => {
     expect(roster.level).toBe('large');
     expect(roster.agents).toHaveLength(7);
   });
+
+  it('scores testing agent higher when test files are in the diff', () => {
+    const diff = makeDiff({
+      totalAdditions: 300,
+      totalDeletions: 300,
+      files: [
+        { path: 'src/review.test.ts', changeType: 'modified', hunks: [] },
+        { path: 'src/review.ts', changeType: 'modified', hunks: [] },
+      ],
+    });
+    const config = makeConfig({ review_level: 'medium' });
+    const roster = selectTeam(diff, config);
+    expect(roster.agents.map(a => a.name)).toContain('Testing & Coverage');
+  });
 });
 
 describe('tallyVotes', () => {
@@ -584,5 +598,29 @@ describe('tallyVotes', () => {
     const results = tallyVotes([findingA, findingB], votes, 3);
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe('Bug A');
+  });
+
+  it('deduplicates votes from the same agent for the same finding', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'duplicate' },
+      { agentName: 'B', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+      { agentName: 'C', findingIndex: 0, vote: 'disagree', reason: 'nah' },
+    ];
+    // Without dedup, agree=2 >= majority(2), but with dedup agree=1 < majority(2)
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(0);
+  });
+
+  it('does not escalate suggestion to blocking when not all agents voted', () => {
+    // Team size 3 but only 2 agents voted (one failed)
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    // 2 agree out of team size 3 — majority but not unanimous
+    expect(results[0].severity).toBe('suggestion');
   });
 });

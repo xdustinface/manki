@@ -78,7 +78,7 @@ export function selectTeam(
 
       if (focus.includes('maintainab') && diff.files.length > 5) score += 2;
 
-      if (focus.includes('depend') && paths.some(p =>
+      if ((focus.includes('dependencies') || focus.includes('dependency')) && paths.some(p =>
         p.includes('package.json') || p.includes('cargo.toml') || p.includes('requirements')
       )) score += 3;
 
@@ -213,7 +213,14 @@ async function runDeliberation(
   for (let i = 0; i < voteResults.length; i++) {
     const result = voteResults[i];
     if (result.status === 'fulfilled') {
-      allVotes.push(...result.value);
+      // Deduplicate: only keep the first vote from each agent per finding
+      const seen = new Set<number>();
+      for (const vote of result.value) {
+        if (!seen.has(vote.findingIndex)) {
+          seen.add(vote.findingIndex);
+          allVotes.push(vote);
+        }
+      }
     } else {
       core.warning(`${team.agents[i].name} deliberation failed: ${result.reason}`);
     }
@@ -289,7 +296,15 @@ export function tallyVotes(
   const majority = Math.ceil(teamSize / 2);
 
   for (const finding of findings) {
-    const findingVotes = votes.filter(v => v.findingIndex === finding.index);
+    // Deduplicate: only count the first vote from each agent per finding
+    const seenAgents = new Set<string>();
+    const findingVotes = votes.filter(v => {
+      if (v.findingIndex !== finding.index) return false;
+      const key = v.agentName;
+      if (seenAgents.has(key)) return false;
+      seenAgents.add(key);
+      return true;
+    });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { index, originalReviewer, ...cleanFinding } = finding;
 
@@ -310,7 +325,7 @@ export function tallyVotes(
     if (agreeCount >= majority) {
       let severity = finding.severity;
 
-      if (agreeCount === findingVotes.length && finding.severity === 'suggestion') {
+      if (agreeCount === teamSize && finding.severity === 'suggestion') {
         severity = 'blocking';
       } else if (escalateCount > 0 && agreeCount >= majority) {
         severity = 'blocking';
