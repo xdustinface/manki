@@ -421,8 +421,7 @@ function buildReplyContext(
 }
 
 function isBotComment(body: string): boolean {
-  return body.includes(BOT_MARKER) || body.includes(LEGACY_BOT_MARKER) ||
-    body.includes('manki:') || body.includes('claude-review:');
+  return body.includes('<!-- manki') || body.includes('<!-- claude-review');
 }
 
 function hasBotMention(body: string): boolean {
