@@ -160,7 +160,11 @@ async function runFullReview(
         highlights: [],
       };
       // Dismiss stale CHANGES_REQUESTED reviews before posting the skip comment
-      await dismissPreviousReviews(octokit, owner, repo, prNumber);
+      try {
+        await dismissPreviousReviews(octokit, owner, repo, prNumber);
+      } catch (error) {
+        core.warning(`Failed to dismiss previous reviews: ${error}`);
+      }
       await postReview(octokit, owner, repo, prNumber, commitSha, result);
       await updateProgressComment(octokit, owner, repo, progressCommentId, result);
       return;
