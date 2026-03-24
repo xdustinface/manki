@@ -3,7 +3,7 @@ import * as github from '@actions/github';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { minimatch } from 'minimatch';
 
-import { Finding } from './types';
+import { Finding, FindingSeverity } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -115,9 +115,13 @@ async function fetchTextFile(
   }
 }
 
+/** Severities that are allowed to be suppressed by stored suppressions. */
+const SUPPRESSIBLE_SEVERITIES: ReadonlySet<FindingSeverity> = new Set<FindingSeverity>(['suggestion', 'question']);
+
 /**
  * Filter findings against stored suppressions.
  * Returns findings that are NOT suppressed.
+ * Blocking-severity findings are never suppressed.
  */
 export function applySuppressions(
   findings: Finding[],
@@ -127,6 +131,11 @@ export function applySuppressions(
   const suppressed: Finding[] = [];
 
   for (const finding of findings) {
+    if (!SUPPRESSIBLE_SEVERITIES.has(finding.severity)) {
+      kept.push(finding);
+      continue;
+    }
+
     const match = suppressions.find(s => matchesSuppression(finding, s));
     if (match) {
       core.info(`Suppressed finding "${finding.title}" — matched suppression "${match.id}": ${match.reason}`);
@@ -156,6 +165,19 @@ export function matchesSuppression(finding: Finding, suppression: Suppression): 
   return true;
 }
 
+const MAX_MEMORY_FIELD_LENGTH = 500;
+const PROMPT_INJECTION_PATTERNS = /^---+$|^(system|user|assistant)\s*:/gmi;
+
+/**
+ * Sanitize a memory field: truncate to a reasonable length and strip
+ * potential prompt injection markers.
+ */
+export function sanitizeMemoryField(value: string): string {
+  let sanitized = value.slice(0, MAX_MEMORY_FIELD_LENGTH);
+  sanitized = sanitized.replace(PROMPT_INJECTION_PATTERNS, '');
+  return sanitized.trim();
+}
+
 /**
  * Build a context string from memory to inject into reviewer prompts.
  */
@@ -170,7 +192,7 @@ export function buildMemoryContext(memory: RepoMemory): string {
     parts.push('## Review Memory — Learnings\n');
     parts.push('The following learnings have been recorded from previous reviews. Consider them when reviewing:\n');
     for (const learning of memory.learnings) {
-      parts.push(`- ${learning.content}`);
+      parts.push(`- ${sanitizeMemoryField(learning.content)}`);
     }
   }
 
@@ -179,7 +201,7 @@ export function buildMemoryContext(memory: RepoMemory): string {
     parts.push('The following patterns are intentional and should NOT be flagged:\n');
     for (const s of memory.suppressions) {
       const scope = s.file_glob ? ` (files matching ${s.file_glob})` : '';
-      parts.push(`- "${s.pattern}"${scope}: ${s.reason}`);
+      parts.push(`- "${sanitizeMemoryField(s.pattern)}"${scope}: ${sanitizeMemoryField(s.reason)}`);
     }
   }
 
@@ -272,6 +294,25 @@ export async function updatePattern(
   return pattern;
 }
 
+async function getFileSha(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
+    if ('sha' in data) {
+      return data.sha;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const DEFAULT_MAX_RETRIES = 3;
+
 async function writeFile(
   octokit: Octokit,
   owner: string,
@@ -279,23 +320,28 @@ async function writeFile(
   path: string,
   content: string,
   message: string,
+  maxRetries: number = DEFAULT_MAX_RETRIES,
 ): Promise<void> {
-  let sha: string | undefined;
-  try {
-    const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
-    if ('sha' in data) {
-      sha = data.sha;
-    }
-  } catch {
-    // File doesn't exist yet
-  }
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const sha = await getFileSha(octokit, owner, repo, path);
 
-  await octokit.rest.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path,
-    message,
-    content: Buffer.from(content).toString('base64'),
-    sha,
-  });
+    try {
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path,
+        message,
+        content: Buffer.from(content).toString('base64'),
+        sha,
+      });
+      return;
+    } catch (error: unknown) {
+      const status = (error as { status?: number }).status;
+      if (status === 409 && attempt < maxRetries - 1) {
+        core.info(`Write conflict on ${path}, retrying (attempt ${attempt + 2}/${maxRetries})`);
+        continue;
+      }
+      throw error;
+    }
+  }
 }
