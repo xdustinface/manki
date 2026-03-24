@@ -93,10 +93,22 @@ export class ClaudeClient {
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill('SIGTERM');
+        setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
       }, 300000);
 
-      child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-      child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+      const MAX_OUTPUT = 50 * 1024 * 1024; // 50 MB
+      child.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+        if (stdout.length > MAX_OUTPUT) {
+          child.kill('SIGTERM');
+        }
+      });
+      child.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+        if (stderr.length > MAX_OUTPUT) {
+          child.kill('SIGTERM');
+        }
+      });
 
       child.on('close', (code) => {
         clearTimeout(timer);
@@ -126,8 +138,17 @@ export class ClaudeClient {
         core.debug(`stdin write error: ${err.message}`);
       });
 
-      child.stdin.write(fullPrompt);
-      child.stdin.end();
+      try {
+        const canWrite = child.stdin.write(fullPrompt);
+        if (!canWrite) {
+          child.stdin.once('drain', () => child.stdin.end());
+        } else {
+          child.stdin.end();
+        }
+      } catch (err) {
+        core.debug(`stdin write failed: ${(err as Error).message}`);
+        child.stdin.end();
+      }
     });
   }
 

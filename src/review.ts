@@ -327,7 +327,7 @@ export function tallyVotes(
 
       if (agreeCount === teamSize && finding.severity === 'suggestion') {
         severity = 'blocking';
-      } else if (escalateCount > 0 && agreeCount >= majority) {
+      } else if (escalateCount >= 2 && agreeCount >= majority && finding.severity === 'suggestion') {
         severity = 'blocking';
       }
 

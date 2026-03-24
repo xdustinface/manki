@@ -451,9 +451,19 @@ describe('selectTeam', () => {
       totalDeletions: 300,
       files: [{ path: 'src/main.ts', changeType: 'modified', hunks: [] }],
     });
+    const config = makeConfig({ review_level: 'medium' });
+    const roster = selectTeam(diff, config, [custom]);
+    // The +1 scoring boost should place a custom reviewer among the top candidates
+    expect(roster.agents.map(a => a.name)).toContain('Protocol Expert');
+  });
+
+  it('does not duplicate when custom reviewer has same name as core agent', () => {
+    const custom: ReviewerAgent = { name: 'Security & Safety', focus: 'custom security focus' };
+    const diff = makeDiff({ totalAdditions: 300, totalDeletions: 300 });
     const config = makeConfig({ review_level: 'large' });
     const roster = selectTeam(diff, config, [custom]);
-    expect(roster.agents.map(a => a.name)).toContain('Protocol Expert');
+    const securityCount = roster.agents.filter(a => a.name === 'Security & Safety').length;
+    expect(securityCount).toBe(1);
   });
 
   it('respects fixed review_level override', () => {
@@ -543,13 +553,48 @@ describe('tallyVotes', () => {
     expect(result).not.toHaveProperty('originalReviewer');
   });
 
-  it('escalates to blocking when escalate vote present with majority agree', () => {
+  it('escalates suggestion to blocking when 2+ escalate votes with majority agree', () => {
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'escalate', reason: 'worse than reported' },
+      { agentName: 'B', findingIndex: 0, vote: 'escalate', reason: 'much worse' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('blocking');
+  });
+
+  it('does not escalate with only 1 escalate vote', () => {
     const votes: AgentVote[] = [
       { agentName: 'A', findingIndex: 0, vote: 'agree', reason: 'valid' },
       { agentName: 'B', findingIndex: 0, vote: 'escalate', reason: 'worse than reported' },
       { agentName: 'C', findingIndex: 0, vote: 'disagree', reason: 'nah' },
     ];
     const results = tallyVotes([findingA], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('suggestion');
+  });
+
+  it('does not escalate question findings via escalate votes', () => {
+    const questionFinding = { ...makeFinding({ title: 'Unclear', severity: 'question' as const }), index: 0, originalReviewer: 'R1' };
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'escalate', reason: 'serious' },
+      { agentName: 'B', findingIndex: 0, vote: 'escalate', reason: 'serious' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([questionFinding], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe('question');
+  });
+
+  it('does not escalate already-blocking findings via escalate votes', () => {
+    const blockingFinding = { ...makeFinding({ title: 'Bug', severity: 'blocking' as const }), index: 0, originalReviewer: 'R1' };
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 0, vote: 'escalate', reason: 'serious' },
+      { agentName: 'B', findingIndex: 0, vote: 'escalate', reason: 'serious' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([blockingFinding], votes, 3);
     expect(results).toHaveLength(1);
     expect(results[0].severity).toBe('blocking');
   });

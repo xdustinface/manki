@@ -227,7 +227,13 @@ export function loadConfigFromContent(content: string): ReviewConfig {
     throw new Error(`Invalid config: ${validation.errors.join('; ')}`);
   }
 
-  return deepMerge(DEFAULT_CONFIG, parsed);
+  const merged = deepMerge(DEFAULT_CONFIG, parsed);
+
+  if (merged.review_thresholds.small >= merged.review_thresholds.medium) {
+    throw new Error('Invalid config: `review_thresholds.small` must be less than `review_thresholds.medium`');
+  }
+
+  return merged;
 }
 
 export function loadConfigFromFile(filePath: string): ReviewConfig {
