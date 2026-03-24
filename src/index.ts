@@ -5,7 +5,8 @@ import { ClaudeClient } from './claude';
 import { loadConfig } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handlePRComment } from './interaction';
-import { runReview } from './review';
+import { loadMemory, buildMemoryContext, applySuppressions, RepoMemory } from './memory';
+import { runReview, determineVerdict } from './review';
 import {
   fetchPRDiff,
   fetchConfigFile,
@@ -177,9 +178,34 @@ async function runFullReview(
 
     const repoContext = await fetchRepoContext(octokit, owner, repo, baseRef);
 
+    let memory: RepoMemory | null = null;
+    let memoryContext = '';
+    if (config.memory.enabled) {
+      const memoryToken = core.getInput('memory_repo_token') || githubToken;
+      const memoryOctokit = github.getOctokit(memoryToken);
+      const memoryRepo = config.memory.repo || `${owner}/review-memory`;
+
+      try {
+        memory = await loadMemory(memoryOctokit, memoryRepo, repo);
+        memoryContext = buildMemoryContext(memory);
+        core.info(`Loaded memory: ${memory.learnings.length} learnings, ${memory.suppressions.length} suppressions`);
+      } catch (error) {
+        core.warning(`Failed to load review memory: ${error}`);
+      }
+    }
+
     await dismissPreviousReviews(octokit, owner, repo, prNumber);
 
-    const result = await runReview(claude, config, diff, rawDiff, repoContext);
+    const result = await runReview(claude, config, diff, rawDiff, repoContext, memoryContext);
+
+    if (memory && memory.suppressions.length > 0) {
+      const { kept, suppressed } = applySuppressions(result.findings, memory.suppressions);
+      if (suppressed.length > 0) {
+        core.info(`Suppressed ${suppressed.length} findings based on memory`);
+        result.findings = kept;
+        result.verdict = determineVerdict(null, result.findings);
+      }
+    }
 
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, result);
 

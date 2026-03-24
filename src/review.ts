@@ -9,13 +9,16 @@ export async function runReview(
   _diff: ParsedDiff,
   rawDiff: string,
   repoContext: string,
+  memoryContext?: string,
 ): Promise<ReviewResult> {
   const reviewerNames = config.reviewers.map(r => r.name).join(', ');
   core.info(`Running ${config.reviewers.length} reviewer agents in parallel: ${reviewerNames}`);
 
+  const fullContext = memoryContext ? `${repoContext}\n\n${memoryContext}` : repoContext;
+
   const agentResults = await Promise.allSettled(
     config.reviewers.map(reviewer =>
-      runReviewerAgent(client, config, reviewer, rawDiff, repoContext)
+      runReviewerAgent(client, config, reviewer, rawDiff, fullContext)
     )
   );
 
