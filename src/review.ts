@@ -271,14 +271,7 @@ Be concise. One sentence per reason. Vote on EVERY finding.`;
     systemPrompt += `\n\n## Additional Instructions\n\n${config.instructions}`;
   }
 
-  const maxLen = 50000;
-  let truncatedDiff = rawDiff;
-  if (rawDiff.length > maxLen) {
-    const cutoff = rawDiff.lastIndexOf('\n', maxLen);
-    truncatedDiff = rawDiff.slice(0, cutoff > 0 ? cutoff : maxLen) + '\n... (truncated)';
-  }
-
-  const userMessage = `## Findings to vote on\n\n${findingsSummary}\n\n## PR Diff (for context)\n\n\`\`\`diff\n${truncatedDiff}\n\`\`\``;
+  const userMessage = `## Findings to vote on\n\n${findingsSummary}\n\n## PR Diff (for context)\n\n\`\`\`diff\n${truncateDiff(rawDiff)}\n\`\`\``;
 
   const response = await client.sendMessage(systemPrompt, userMessage);
   const jsonText = extractJSON(response.content);
@@ -338,6 +331,9 @@ export function tallyVotes(
     if (agreeCount >= majority) {
       let severity = finding.severity;
 
+      // Uses teamSize (not voter count) so that true unanimity is required.
+      // If some agents failed to vote, we don't escalate — partial consensus
+      // shouldn't be treated as full agreement.
       if (agreeCount === teamSize && finding.severity === 'suggestion') {
         severity = 'blocking';
       } else if (escalateCount >= 2 && agreeCount >= majority && finding.severity === 'suggestion') {
@@ -433,14 +429,7 @@ export function buildReviewerUserMessage(rawDiff: string, repoContext: string): 
     message += `## Repository Context\n\n${repoContext}\n\n`;
   }
 
-  const maxDiff = 50000;
-  let truncatedDiff = rawDiff;
-  if (rawDiff.length > maxDiff) {
-    const cutoff = rawDiff.lastIndexOf('\n', maxDiff);
-    truncatedDiff = rawDiff.slice(0, cutoff > 0 ? cutoff : maxDiff) + '\n... (truncated)';
-  }
-
-  message += `## Pull Request Diff\n\n\`\`\`diff\n${truncatedDiff}\n\`\`\``;
+  message += `## Pull Request Diff\n\n\`\`\`diff\n${truncateDiff(rawDiff)}\n\`\`\``;
 
   return message;
 }
@@ -513,6 +502,16 @@ export function determineVerdict(claimed: unknown, findings: Finding[]): ReviewV
   return 'APPROVE';
 }
 
+export function truncateDiff(rawDiff: string, maxLength: number = 50000): string {
+  if (rawDiff.length <= maxLength) return rawDiff;
+  const cutoff = rawDiff.lastIndexOf('\n', maxLength);
+  return rawDiff.slice(0, cutoff > 0 ? cutoff : maxLength) + '\n... (truncated)';
+}
+
+// Intentionally loose substring matching for dedup. The 10-char minimum guards
+// against trivially short titles ("Bug", "Fix") matching everything. Beyond that,
+// we prefer false-positive dedup (merging two similar findings) over false-negative
+// dedup (reporting the same issue twice from different reviewers).
 export function titlesMatch(a: string, b: string): boolean {
   const aLower = a.toLowerCase();
   const bLower = b.toLowerCase();

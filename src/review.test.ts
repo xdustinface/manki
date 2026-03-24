@@ -9,6 +9,7 @@ import {
   selectTeam,
   tallyVotes,
   titlesMatch,
+  truncateDiff,
   AGENT_POOL,
 } from './review';
 import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, AgentVote } from './types';
@@ -743,5 +744,99 @@ describe('buildReviewerUserMessage truncation', () => {
     const message = buildReviewerUserMessage(shortDiff, '');
     expect(message).not.toContain('... (truncated)');
     expect(message).toContain(shortDiff);
+  });
+});
+
+describe('truncateDiff', () => {
+  it('returns original when under maxLength', () => {
+    const diff = 'short diff';
+    expect(truncateDiff(diff)).toBe(diff);
+  });
+
+  it('truncates at last newline before maxLength', () => {
+    const lines = 'line one\nline two\nline three\n';
+    const result = truncateDiff(lines, 15);
+    expect(result).toBe('line one\n... (truncated)');
+  });
+
+  it('truncates at maxLength when no newline found', () => {
+    const noNewlines = 'a'.repeat(100);
+    const result = truncateDiff(noNewlines, 50);
+    expect(result).toBe('a'.repeat(50) + '\n... (truncated)');
+  });
+
+  it('returns original when exactly at maxLength', () => {
+    const exact = 'a'.repeat(50);
+    expect(truncateDiff(exact, 50)).toBe(exact);
+  });
+});
+
+describe('titlesMatch boundary', () => {
+  it('rejects 9-char title as substring match', () => {
+    expect(titlesMatch('123456789', '123456789 extended with more text')).toBe(false);
+  });
+
+  it('accepts exactly 10-char title as substring match', () => {
+    expect(titlesMatch('1234567890', '1234567890 extended with more text')).toBe(true);
+  });
+
+  it('accepts 11-char title as substring match', () => {
+    expect(titlesMatch('12345678901', '12345678901 extended with more text')).toBe(true);
+  });
+});
+
+describe('selectTeam dependency file scoring', () => {
+  it('scores Dependencies agent higher when package.json is in the diff', () => {
+    const diff = makeDiff({
+      totalAdditions: 300,
+      totalDeletions: 300,
+      files: [
+        { path: 'package.json', changeType: 'modified', hunks: [] },
+        { path: 'src/index.ts', changeType: 'modified', hunks: [] },
+      ],
+    });
+    const config = makeConfig({ review_level: 'medium' });
+    const roster = selectTeam(diff, config);
+    expect(roster.agents.map(a => a.name)).toContain('Dependencies & Integration');
+  });
+
+  it('scores Dependencies agent higher when Cargo.toml is in the diff', () => {
+    const diff = makeDiff({
+      totalAdditions: 300,
+      totalDeletions: 300,
+      files: [
+        { path: 'Cargo.toml', changeType: 'modified', hunks: [] },
+      ],
+    });
+    const config = makeConfig({ review_level: 'medium' });
+    const roster = selectTeam(diff, config);
+    expect(roster.agents.map(a => a.name)).toContain('Dependencies & Integration');
+  });
+});
+
+describe('tallyVotes out-of-bounds filtering', () => {
+  it('ignores votes with negative findingIndex', () => {
+    const finding = { ...makeFinding({ title: 'Bug' }), index: 0, originalReviewer: 'R1' };
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: -1, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([finding], votes, 3);
+    expect(results).toHaveLength(1);
+    // Only 2 valid votes for finding 0
+    expect(results[0].reviewers).toEqual(['B', 'C']);
+  });
+
+  it('ignores votes with findingIndex beyond findings array', () => {
+    const finding = { ...makeFinding({ title: 'Bug' }), index: 0, originalReviewer: 'R1' };
+    const votes: AgentVote[] = [
+      { agentName: 'A', findingIndex: 99, vote: 'agree', reason: 'valid' },
+      { agentName: 'B', findingIndex: 0, vote: 'agree', reason: 'valid' },
+      { agentName: 'C', findingIndex: 0, vote: 'agree', reason: 'valid' },
+    ];
+    const results = tallyVotes([finding], votes, 3);
+    expect(results).toHaveLength(1);
+    expect(results[0].reviewers).toEqual(['B', 'C']);
   });
 });

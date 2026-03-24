@@ -74,6 +74,7 @@ export class ClaudeClient {
     const cliPath = await this.ensureCLI();
 
     return new Promise((resolve, reject) => {
+      // -p enables pipe mode — reads prompt from stdin when no argument follows
       const child = spawn(cliPath, [
         '-p',
         '--output-format', 'text',
@@ -169,6 +170,7 @@ export class ClaudeClient {
         }
       } catch (err) {
         core.warning(`stdin write failed: ${(err as Error).message}`);
+        child.kill('SIGTERM');
         child.stdin.end();
       }
     });
