@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 
 import { ClaudeClient } from './claude';
-import { writeSuppression, writeLearning, updatePatternDecision, sanitizeMemoryField } from './memory';
+import { writeSuppression, writeLearning, batchUpdatePatternDecisions, sanitizeMemoryField } from './memory';
 import { reactToIssueComment, reactToReviewComment } from './github';
 import { checkAndAutoApprove, fetchBotReviewThreads } from './state';
 import { ReviewConfig } from './types';
@@ -543,19 +543,15 @@ async function handleTriage(
       }
     }
 
-    for (const item of accepted) {
+    const decisions = [
+      ...accepted.map(item => ({ title: item.title, accepted: true })),
+      ...rejected.map(item => ({ title: item.title, accepted: false })),
+    ];
+    if (decisions.length > 0) {
       try {
-        await updatePatternDecision(memoryOctokit, memoryRepo, repo, item.title, true);
+        await batchUpdatePatternDecisions(memoryOctokit, memoryRepo, repo, decisions);
       } catch (error) {
-        core.debug(`Failed to update pattern for "${item.title}": ${error}`);
-      }
-    }
-
-    for (const item of rejected) {
-      try {
-        await updatePatternDecision(memoryOctokit, memoryRepo, repo, item.title, false);
-      } catch (error) {
-        core.debug(`Failed to update pattern for "${item.title}": ${error}`);
+        core.debug(`Failed to batch-update pattern decisions: ${error}`);
       }
     }
   }

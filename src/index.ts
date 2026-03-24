@@ -263,15 +263,15 @@ async function runFullReview(
       }
     }
 
-    if (memory && memory.patterns.length > 0) {
-      result.findings = applyEscalations(result.findings, memory.patterns);
-      result.verdict = determineVerdict(undefined, result.findings);
-    }
-
     const { unique, duplicates } = deduplicateFindings(result.findings, recap.previousFindings);
     if (duplicates.length > 0) {
       core.info(`Deduplicated ${duplicates.length} findings (already flagged in previous reviews)`);
       result.findings = unique;
+      result.verdict = determineVerdict(undefined, result.findings);
+    }
+
+    if (memory && memory.patterns.length > 0) {
+      result.findings = applyEscalations(result.findings, memory.patterns);
       result.verdict = determineVerdict(undefined, result.findings);
     }
 
