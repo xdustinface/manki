@@ -59,7 +59,7 @@ export function filterFiles(
   excludePaths: string[],
 ): DiffFile[] {
   return files.filter((file) => {
-    const matchOpts = { matchBase: true };
+    const matchOpts = { matchBase: true, dot: true };
 
     const included =
       includePaths.length === 0 ||
