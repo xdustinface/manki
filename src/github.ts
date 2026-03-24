@@ -330,9 +330,11 @@ export function buildNitIssueBody(
 
   const checklist = nits.map(f => {
     const icon = f.severity === 'suggestion' ? '\u{1F4A1}' : '\u{2753}';
+    const safeTitle = f.title.replace(/`/g, "'");
+    const safeDescription = f.description.replace(/<!--/g, '').replace(/-->/g, '');
 
-    let item = `- [ ] ${icon} **${f.title}** \u2014 \`${f.file}:${f.line}\`\n`;
-    item += `  \n  ${f.description}\n`;
+    let item = `- [ ] ${icon} **${safeTitle}** \u2014 \`${f.file}:${f.line}\`\n`;
+    item += `  \n  ${safeDescription}\n`;
 
     if (f.codeContext) {
       const ext = f.file.split('.').pop() || '';
@@ -348,9 +350,9 @@ export function buildNitIssueBody(
     item += `  \n  <details>\n  <summary>\u{1F916} Fix prompt</summary>\n\n`;
     item += `  **File:** \`${f.file}\`\n`;
     item += `  **Line:** ${f.line}\n`;
-    item += `  **Finding:** ${f.title}\n`;
+    item += `  **Finding:** ${safeTitle}\n`;
     item += `  **Severity:** ${f.severity}\n\n`;
-    item += `  **Description:**\n  ${f.description}\n`;
+    item += `  **Description:**\n  ${safeDescription}\n`;
     if (f.suggestedFix) {
       item += `  \n  **Suggested fix:**\n  \`\`\`\n  ${f.suggestedFix}\n  \`\`\`\n`;
     }

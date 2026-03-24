@@ -282,7 +282,11 @@ async function runFullReview(
             finding.line >= h.newStart && finding.line <= h.newStart + h.newLines - 1,
           );
           if (hunk) {
-            finding.codeContext = hunk.content;
+            const lines = hunk.content.split('\n');
+            const findingOffset = finding.line - hunk.newStart;
+            const start = Math.max(0, findingOffset - 5);
+            const end = Math.min(lines.length, findingOffset + 10);
+            finding.codeContext = lines.slice(start, end).join('\n');
           }
         }
       }
