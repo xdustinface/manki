@@ -178,7 +178,7 @@ async function runFullReview(
       } catch (error) {
         core.warning(`Failed to dismiss previous reviews: ${error}`);
       }
-      await postReview(octokit, owner, repo, prNumber, commitSha, result);
+      await postReview(octokit, owner, repo, prNumber, commitSha, result, diff);
       await updateProgressComment(octokit, owner, repo, progressCommentId, result);
       return;
     }
@@ -196,7 +196,7 @@ async function runFullReview(
         reviewComplete: true,
       };
       await dismissPreviousReviews(octokit, owner, repo, prNumber);
-      await postReview(octokit, owner, repo, prNumber, commitSha, result);
+      await postReview(octokit, owner, repo, prNumber, commitSha, result, diff);
       await updateProgressComment(octokit, owner, repo, progressCommentId, result);
       return;
     }
@@ -262,7 +262,7 @@ async function runFullReview(
     const recapSummary = buildRecapSummary(result.findings.length, duplicates.length, resolved, open);
     result.summary = `${result.summary}\n\n${recapSummary}`;
 
-    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, result);
+    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, result, diff);
 
     if (result.verdict === 'APPROVE' && result.findings.length > 0) {
       try {

@@ -1,7 +1,8 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { Finding, ReviewResult, ReviewVerdict } from './types';
+import { Finding, ParsedDiff, ReviewResult, ReviewVerdict } from './types';
+import { isLineInDiff, findClosestDiffLine } from './diff';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -171,21 +172,47 @@ export async function postReview(
   prNumber: number,
   commitSha: string,
   result: ReviewResult,
+  diff?: ParsedDiff,
 ): Promise<number> {
   const event = mapVerdictToEvent(result.verdict);
 
-  const comments = result.findings
-    .filter(f => f.file && f.line > 0)
-    .map(f => ({
-      path: f.file,
-      line: f.line,
-      side: 'RIGHT' as const,
-      body: formatFindingComment(f),
-    }));
+  // Validate and filter inline comments against the diff
+  const validComments: Array<{path: string; line: number; side: 'RIGHT'; body: string}> = [];
+  const invalidComments: string[] = [];
 
-  const body = `${BOT_MARKER}\n${result.summary}`;
+  for (const f of result.findings.filter(f => f.file && f.line > 0)) {
+    const commentBody = formatFindingComment(f);
 
-  core.info(`Posting review: ${event} with ${comments.length} inline comments`);
+    if (diff) {
+      const diffFile = diff.files.find(df => df.path === f.file);
+      if (diffFile) {
+        if (isLineInDiff(diffFile, f.line)) {
+          validComments.push({ path: f.file, line: f.line, side: 'RIGHT', body: commentBody });
+        } else {
+          const closest = findClosestDiffLine(diffFile, f.line);
+          if (closest) {
+            validComments.push({ path: f.file, line: closest, side: 'RIGHT', body: commentBody });
+          } else {
+            invalidComments.push(`**${f.title}** (${f.file}:${f.line}): ${f.description}`);
+          }
+        }
+      } else {
+        invalidComments.push(`**${f.title}** (${f.file}:${f.line}): ${f.description}`);
+      }
+    } else {
+      validComments.push({ path: f.file, line: f.line, side: 'RIGHT', body: commentBody });
+    }
+  }
+
+  let body = `${BOT_MARKER}\n${result.summary}`;
+  if (invalidComments.length > 0) {
+    body += `\n\n**Additional findings (not on changed lines):**\n${invalidComments.map(c => `- ${c}`).join('\n')}`;
+  }
+
+  if (invalidComments.length > 0) {
+    core.info(`Moved ${invalidComments.length} comments to review body (lines not in diff)`);
+  }
+  core.info(`Posting review: ${event} with ${validComments.length} inline comments`);
 
   try {
     const { data: review } = await octokit.rest.pulls.createReview({
@@ -195,12 +222,36 @@ export async function postReview(
       commit_id: commitSha,
       event,
       body,
-      comments,
+      comments: validComments,
     });
 
     core.info(`Posted review #${review.id} with verdict ${result.verdict}`);
     return review.id;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isLineError = errorMessage.includes('pull_request_review_thread.line') ||
+      errorMessage.includes('line must be part of the diff');
+
+    // If it's a line validation error, retry without inline comments
+    if (isLineError && validComments.length > 0) {
+      core.warning('Inline comments rejected by GitHub (invalid lines). Posting review without inline comments.');
+      const allAsBody = validComments.map(c => `- ${c.body.split('\n')[0]}`).join('\n');
+      const fallbackBody = `${body}\n\n**Inline comments could not be posted:**\n${allAsBody}`;
+
+      const { data: review } = await octokit.rest.pulls.createReview({
+        owner,
+        repo,
+        pull_number: prNumber,
+        commit_id: commitSha,
+        event,
+        body: fallbackBody,
+        comments: [],
+      });
+
+      core.info(`Posted review #${review.id} without inline comments (line validation failed)`);
+      return review.id;
+    }
+
     if (event === 'COMMENT') {
       throw error;
     }
@@ -217,7 +268,7 @@ export async function postReview(
       commit_id: commitSha,
       event: 'COMMENT',
       body,
-      comments,
+      comments: validComments,
     });
 
     core.info(`Posted fallback COMMENT review #${review.id} (original verdict: ${result.verdict})`);
