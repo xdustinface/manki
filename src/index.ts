@@ -401,7 +401,7 @@ async function handleInteraction(): Promise<void> {
   const memoryConfig = config.memory?.enabled ? config.memory : undefined;
   const memoryToken = config.memory?.enabled ? (core.getInput('memory_repo_token') || core.getInput('github_token', { required: true })) : undefined;
 
-  await handlePRComment(octokit, claude, memoryConfig, memoryToken);
+  await handlePRComment(octokit, claude, memoryConfig, memoryToken, config);
 }
 
 async function handleReviewCommentInteraction(): Promise<void> {
@@ -451,6 +451,13 @@ async function handleReviewCommentInteraction(): Promise<void> {
   const memoryToken = config.memory?.enabled ? (core.getInput('memory_repo_token') || core.getInput('github_token', { required: true })) : undefined;
 
   await handleReviewCommentReply(octokit, claude, memoryConfig, memoryToken);
+
+  if (config.auto_approve) {
+    const prNumber = payload.pull_request?.number;
+    if (prNumber) {
+      await checkAndAutoApprove(octokit, owner, repo, prNumber);
+    }
+  }
 }
 
 run();

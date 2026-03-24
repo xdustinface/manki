@@ -132,7 +132,8 @@ async function checkAndAutoApprove(
     core.warning(`Failed to dismiss previous reviews during auto-approve: ${error}`);
   }
 
-  const body = `${BOT_MARKER}\nAll blocking issues have been resolved. Auto-approving.`;
+  core.info('All blocking issues resolved — auto-approving');
+  const body = `${BOT_MARKER}\nAll blocking issues resolved. Approved.`;
 
   try {
     await octokit.rest.pulls.createReview({
