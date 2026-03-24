@@ -8,6 +8,7 @@ import {
   mergeIndividualFindings,
   selectTeam,
   tallyVotes,
+  titlesMatch,
   AGENT_POOL,
 } from './review';
 import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, AgentVote } from './types';
@@ -704,5 +705,43 @@ describe('tallyVotes', () => {
     expect(results).toHaveLength(1);
     // 2 agree out of team size 3 — majority but not unanimous
     expect(results[0].severity).toBe('suggestion');
+  });
+});
+
+describe('titlesMatch', () => {
+  it('matches exact equal titles', () => {
+    expect(titlesMatch('Null check missing', 'Null check missing')).toBe(true);
+  });
+
+  it('matches case-insensitively', () => {
+    expect(titlesMatch('Null Check Missing', 'null check missing')).toBe(true);
+  });
+
+  it('does not match short titles as substrings', () => {
+    expect(titlesMatch('Bug', 'Bug in error handling logic')).toBe(false);
+  });
+
+  it('matches long titles where one is a substring of the other', () => {
+    expect(titlesMatch('Null check missing in handler', 'Null check missing in handler for edge case')).toBe(true);
+  });
+
+  it('does not match completely different long titles', () => {
+    expect(titlesMatch('Memory leak in connection pool', 'SQL injection in query builder')).toBe(false);
+  });
+});
+
+describe('buildReviewerUserMessage truncation', () => {
+  it('truncates diff at newline boundary when exceeding 50000 chars', () => {
+    const longDiff = ('a'.repeat(99) + '\n').repeat(600); // 60000 chars
+    const message = buildReviewerUserMessage(longDiff, '');
+    expect(message).toContain('... (truncated)');
+    expect(message.length).toBeLessThan(longDiff.length);
+  });
+
+  it('does not truncate diff under 50000 chars', () => {
+    const shortDiff = 'short diff content';
+    const message = buildReviewerUserMessage(shortDiff, '');
+    expect(message).not.toContain('... (truncated)');
+    expect(message).toContain(shortDiff);
   });
 });

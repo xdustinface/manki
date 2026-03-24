@@ -92,6 +92,7 @@ export class ClaudeClient {
       let outputExceeded = false;
       let settled = false;
       let killTimer: NodeJS.Timeout | undefined;
+      let outputKillTimer: NodeJS.Timeout | undefined;
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -100,26 +101,25 @@ export class ClaudeClient {
       }, 300000);
 
       const MAX_OUTPUT = 50 * 1024 * 1024; // 50 MB
+      const killOnOutputExceeded = (): void => {
+        if (outputExceeded) return;
+        outputExceeded = true;
+        child.kill('SIGTERM');
+        outputKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
+      };
       child.stdout.on('data', (data: Buffer) => {
         stdout += data.toString();
-        if (stdout.length > MAX_OUTPUT && !outputExceeded) {
-          outputExceeded = true;
-          child.kill('SIGTERM');
-          killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
-        }
+        if (stdout.length + stderr.length > MAX_OUTPUT) killOnOutputExceeded();
       });
       child.stderr.on('data', (data: Buffer) => {
         stderr += data.toString();
-        if (stderr.length > MAX_OUTPUT && !outputExceeded) {
-          outputExceeded = true;
-          child.kill('SIGTERM');
-          killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
-        }
+        if (stdout.length + stderr.length > MAX_OUTPUT) killOnOutputExceeded();
       });
 
-      child.on('close', (code) => {
+      child.on('close', (code, signal) => {
         clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
+        if (outputKillTimer) clearTimeout(outputKillTimer);
         if (settled) return;
         settled = true;
         if (timedOut) {
@@ -131,7 +131,7 @@ export class ClaudeClient {
           return;
         }
         if (code !== 0) {
-          const msg = `exit ${code}: ${stderr.slice(0, 500)}`;
+          const msg = `exit ${code}${signal ? `, signal ${signal}` : ''}: ${stderr.slice(0, 500)}`;
           core.warning(`Claude CLI failed (${msg})`);
           reject(new Error(`Claude CLI invocation failed (${msg})`));
           return;
@@ -146,15 +146,20 @@ export class ClaudeClient {
       child.on('error', (error) => {
         clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
+        if (outputKillTimer) clearTimeout(outputKillTimer);
         if (settled) return;
         settled = true;
         reject(new Error(`Claude CLI spawn failed: ${error.message}`));
       });
 
       child.stdin.on('error', (err) => {
-        core.debug(`stdin write error: ${err.message}`);
+        core.warning(`stdin write error: ${err.message}`);
       });
 
+      // Node.js stream.write() buffers data internally — it never does partial writes.
+      // When write() returns false, the data is still fully queued; it just means the
+      // internal buffer exceeded highWaterMark. We wait for 'drain' before calling end()
+      // to avoid unnecessary buffering pressure.
       try {
         const canWrite = child.stdin.write(fullPrompt);
         if (!canWrite) {
@@ -163,7 +168,7 @@ export class ClaudeClient {
           child.stdin.end();
         }
       } catch (err) {
-        core.debug(`stdin write failed: ${(err as Error).message}`);
+        core.warning(`stdin write failed: ${(err as Error).message}`);
         child.stdin.end();
       }
     });

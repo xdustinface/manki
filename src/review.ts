@@ -284,13 +284,14 @@ Be concise. One sentence per reason. Vote on EVERY finding.`;
   const jsonText = extractJSON(response.content);
 
   try {
+    const validVotes = ['agree', 'disagree', 'escalate'];
     const votes = JSON.parse(jsonText) as Array<{ index: number; vote: string; reason: string }>;
     return votes
-      .filter(v => v.index >= 0 && v.index < totalFindings)
+      .filter(v => v.index >= 0 && v.index < totalFindings && validVotes.includes(v.vote))
       .map(v => ({
         agentName: agent.name,
         findingIndex: v.index,
-        vote: (['agree', 'disagree', 'escalate'].includes(v.vote) ? v.vote : 'agree') as AgentVote['vote'],
+        vote: v.vote as AgentVote['vote'],
         reason: v.reason || '',
       }));
   } catch {
@@ -432,7 +433,14 @@ export function buildReviewerUserMessage(rawDiff: string, repoContext: string): 
     message += `## Repository Context\n\n${repoContext}\n\n`;
   }
 
-  message += `## Pull Request Diff\n\n\`\`\`diff\n${rawDiff}\n\`\`\``;
+  const maxDiff = 50000;
+  let truncatedDiff = rawDiff;
+  if (rawDiff.length > maxDiff) {
+    const cutoff = rawDiff.lastIndexOf('\n', maxDiff);
+    truncatedDiff = rawDiff.slice(0, cutoff > 0 ? cutoff : maxDiff) + '\n... (truncated)';
+  }
+
+  message += `## Pull Request Diff\n\n\`\`\`diff\n${truncatedDiff}\n\`\`\``;
 
   return message;
 }
@@ -505,7 +513,7 @@ export function determineVerdict(claimed: unknown, findings: Finding[]): ReviewV
   return 'APPROVE';
 }
 
-function titlesMatch(a: string, b: string): boolean {
+export function titlesMatch(a: string, b: string): boolean {
   const aLower = a.toLowerCase();
   const bLower = b.toLowerCase();
 
