@@ -125,7 +125,10 @@ export async function handleReviewCommentReply(
  */
 export async function handlePRComment(
   octokit: Octokit,
-  client: ClaudeClient,
+  client: ClaudeClient | null,
+  owner: string,
+  repo: string,
+  issueNumber: number,
   memoryConfig?: MemoryConfig,
   memoryToken?: string,
   config?: ReviewConfig,
@@ -144,57 +147,67 @@ export async function handlePRComment(
 
   if (!hasBotMention(body)) return;
 
-  const owner = github.context.repo.owner;
-  const repo = github.context.repo.repo;
-  const prNumber = payload.issue?.number;
-
-  if (!prNumber) return;
-
   const command = parseCommand(body);
   const commentId = comment.id as number;
 
+  const prOnlyCommands = new Set(['check', 'explain', 'review']);
+  if (prOnlyCommands.has(command.type) && !github.context.payload.issue?.pull_request) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nThe \`${command.type}\` command only works on pull requests.`,
+    });
+    return;
+  }
+
   switch (command.type) {
     case 'explain':
+      if (!client) { core.warning('Claude client required for explain command'); return; }
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
-      await handleExplain(octokit, client, owner, repo, prNumber, command.args);
+      await handleExplain(octokit, client, owner, repo, issueNumber, command.args);
       break;
     case 'dismiss':
-      await handleDismiss(octokit, owner, repo, prNumber, command.args, memoryConfig, memoryToken);
+      await handleDismiss(octokit, owner, repo, issueNumber, command.args, memoryConfig, memoryToken);
       await reactToIssueComment(octokit, owner, repo, commentId, '+1');
       break;
     case 'remember':
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
-      await handleRemember(octokit, owner, repo, prNumber, command.args, memoryConfig, memoryToken);
+      await handleRemember(octokit, owner, repo, issueNumber, command.args, memoryConfig, memoryToken);
       break;
     case 'forget':
       await octokit.rest.issues.createComment({
         owner, repo,
-        issue_number: prNumber,
+        issue_number: issueNumber,
         body: `${BOT_MARKER}\nThe \`forget\` command is not yet implemented. You can manually remove learnings from the memory repo.`,
       });
       break;
     case 'check':
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
-      await handleCheck(octokit, owner, repo, prNumber, config);
+      await handleCheck(octokit, owner, repo, issueNumber, config);
+      break;
+    case 'triage':
+      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
+      await handleTriage(octokit, owner, repo, issueNumber, memoryConfig, memoryToken);
       break;
     case 'help':
       await reactToIssueComment(octokit, owner, repo, commentId, '+1');
-      await handleHelp(octokit, owner, repo, prNumber);
+      await handleHelp(octokit, owner, repo, issueNumber);
       break;
     default:
+      if (!client) { core.warning('Claude client required for generic questions'); return; }
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
-      await handleGenericQuestion(octokit, client, owner, repo, prNumber, body);
+      await handleGenericQuestion(octokit, client, owner, repo, issueNumber, body);
   }
 }
 
 interface ParsedCommand {
-  type: 'explain' | 'dismiss' | 'help' | 'remember' | 'forget' | 'check' | 'generic';
+  type: 'explain' | 'dismiss' | 'help' | 'remember' | 'forget' | 'check' | 'triage' | 'generic';
   args: string;
 }
 
 function parseCommand(body: string): ParsedCommand {
   const lower = body.toLowerCase();
-  const match = lower.match(/@manki\s+(explain|dismiss|help|remember|forget|check)(?:\s+(.*))?/);
+  const match = lower.match(/@manki\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/);
 
   if (match) {
     return {
@@ -297,7 +310,7 @@ async function handleHelp(
     owner,
     repo,
     issue_number: prNumber,
-    body: `${BOT_MARKER}\n**Manki Commands:**\n\n| Command | Description |\n|---------|-------------|\n| \`@manki review\` | Run a full multi-agent review |\n| \`@manki explain [topic]\` | Explain something about this PR |\n| \`@manki dismiss [finding]\` | Dismiss a review finding |\n| \`@manki remember <instruction>\` | Teach the reviewer something for future reviews |\n| \`@manki remember global: <instruction>\` | Teach globally (all repos) |\n| \`@manki check\` | Check if all blocking issues are resolved and auto-approve |\n| \`@manki help\` | Show this help message |\n\nYou can also reply to any review comment to start a conversation.`,
+    body: `${BOT_MARKER}\n**Manki Commands:**\n\n| Command | Description |\n|---------|-------------|\n| \`@manki review\` | Run a full multi-agent review |\n| \`@manki explain [topic]\` | Explain something about this PR |\n| \`@manki dismiss [finding]\` | Dismiss a review finding |\n| \`@manki remember <instruction>\` | Teach the reviewer something for future reviews |\n| \`@manki remember global: <instruction>\` | Teach globally (all repos) |\n| \`@manki check\` | Check if all blocking issues are resolved and auto-approve |\n| \`@manki triage\` | Process nit issue checkboxes — create issues for ticked items, suppress unticked |\n| \`@manki help\` | Show this help message |\n\nYou can also reply to any review comment to start a conversation.`,
   });
 }
 
@@ -428,6 +441,137 @@ async function handleCheck(
       });
     }
   }
+}
+
+async function handleTriage(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  memoryConfig?: MemoryConfig,
+  memoryToken?: string,
+): Promise<void> {
+  const authorAssociation = github.context.payload.comment?.author_association;
+  const isTrusted = ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(authorAssociation ?? '');
+  if (!isTrusted) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nOnly collaborators can triage findings.`,
+    });
+    return;
+  }
+
+  const { data: issue } = await octokit.rest.issues.get({ owner, repo, issue_number: issueNumber });
+  const body = issue.body ?? '';
+
+  const checkedRegex = /^- \[x\] [💡❓] \*\*(.+?)\*\* — `(.+?)`/gmiu;
+  const uncheckedRegex = /^- \[ \] [💡❓] \*\*(.+?)\*\* — `(.+?)`/gmu;
+
+  const accepted: Array<{ title: string; ref: string }> = [];
+  const rejected: Array<{ title: string; ref: string }> = [];
+
+  let match;
+  while ((match = checkedRegex.exec(body)) !== null) {
+    accepted.push({ title: match[1], ref: match[2] });
+  }
+  while ((match = uncheckedRegex.exec(body)) !== null) {
+    rejected.push({ title: match[1], ref: match[2] });
+  }
+
+  if (accepted.length === 0 && rejected.length === 0) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nCouldn't parse any findings from the issue body. Make sure the checkboxes follow the expected format.`,
+    });
+    return;
+  }
+
+  const createdIssues: number[] = [];
+  for (const item of accepted) {
+    const sectionRegex = new RegExp(
+      `- \\[x\\] [💡❓] \\*\\*${escapeRegex(item.title)}\\*\\*[\\s\\S]*?(?=\\n- \\[|\\n---|$)`,
+      'iu',
+    );
+    const sectionMatch = body.match(sectionRegex);
+    const context = sectionMatch ? sectionMatch[0] : item.title;
+
+    try {
+      const { data: newIssue } = await octokit.rest.issues.create({
+        owner, repo,
+        title: item.title,
+        body: `## Finding from review triage\n\nSource: #${issueNumber}\n\n${context}`,
+      });
+      createdIssues.push(newIssue.number);
+      core.info(`Created issue #${newIssue.number} for "${item.title}"`);
+    } catch (error) {
+      core.warning(`Failed to create issue for "${item.title}": ${error}`);
+    }
+  }
+
+  if (memoryConfig?.enabled && memoryToken) {
+    const memoryOctokit = github.getOctokit(memoryToken);
+    const memoryRepo = memoryConfig.repo || `${owner}/review-memory`;
+
+    for (const item of accepted) {
+      try {
+        await writeLearning(memoryOctokit, memoryRepo, repo, {
+          id: `accept-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          content: `Finding pattern "${item.title}" was accepted for fix — team considers this valuable`,
+          scope: 'repo',
+          source: `${owner}/${repo}#${issueNumber}`,
+          created_at: new Date().toISOString().split('T')[0],
+        });
+      } catch (error) {
+        core.debug(`Failed to store acceptance for "${item.title}": ${error}`);
+      }
+    }
+
+    for (const item of rejected) {
+      try {
+        await writeSuppression(memoryOctokit, memoryRepo, repo, {
+          id: `supp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          pattern: item.title,
+          reason: `Dismissed during triage of #${issueNumber}`,
+          created_by: github.context.actor,
+          created_at: new Date().toISOString().split('T')[0],
+          pr_ref: `${owner}/${repo}#${issueNumber}`,
+        });
+      } catch (error) {
+        core.debug(`Failed to store suppression for "${item.title}": ${error}`);
+      }
+    }
+  }
+
+  try {
+    await octokit.rest.issues.removeLabel({
+      owner, repo,
+      issue_number: issueNumber,
+      name: 'needs-human',
+    });
+  } catch {
+    // Label might not exist
+  }
+
+  const issueLinks = createdIssues.map(n => `#${n}`).join(', ');
+  await octokit.rest.issues.createComment({
+    owner, repo,
+    issue_number: issueNumber,
+    body: `${BOT_MARKER}\n**Triage complete:**\n- ${accepted.length} finding(s) accepted → issues created: ${issueLinks || 'none'}\n- ${rejected.length} finding(s) dismissed → stored as suppressions\n\nClosing this issue.`,
+  });
+
+  await octokit.rest.issues.update({
+    owner, repo,
+    issue_number: issueNumber,
+    state: 'closed',
+  });
+
+  core.info(`Triage complete: ${accepted.length} accepted, ${rejected.length} rejected`);
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function handleGenericQuestion(

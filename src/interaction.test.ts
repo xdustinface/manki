@@ -68,6 +68,16 @@ describe('parseCommand', () => {
     expect(result).toEqual<ParsedCommand>({ type: 'check', args: 'memory' });
   });
 
+  it('parses @manki triage', () => {
+    const result = parseCommand('@manki triage');
+    expect(result).toEqual<ParsedCommand>({ type: 'triage', args: '' });
+  });
+
+  it('parses @manki triage case-insensitively', () => {
+    const result = parseCommand('@Manki TRIAGE');
+    expect(result).toEqual<ParsedCommand>({ type: 'triage', args: '' });
+  });
+
 });
 
 describe('buildReplyContext', () => {

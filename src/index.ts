@@ -49,10 +49,12 @@ async function run(): Promise<void> {
 
       case 'issue_comment':
         if (action === 'created') {
-          if (isReviewRequest()) {
+          if (isReviewRequest() && github.context.payload.issue?.pull_request) {
             await handleCommentTrigger();
-          } else if (hasBotMention()) {
+          } else if (hasBotMention() && github.context.payload.issue?.pull_request) {
             await handleInteraction();
+          } else if (hasBotMention() && !github.context.payload.issue?.pull_request) {
+            await handleIssueInteraction();
           }
         }
         break;
@@ -402,12 +404,11 @@ async function handleInteraction(): Promise<void> {
 
   const { owner, repo } = github.context.repo;
   const prNumber = github.context.payload.issue?.number;
+  if (!prNumber) return;
 
   let baseRef = 'main';
-  if (prNumber) {
-    const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    baseRef = pr.base.ref;
-  }
+  const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  baseRef = pr.base.ref;
 
   let configContent: string | null = null;
   if (configPathInput) {
@@ -420,7 +421,35 @@ async function handleInteraction(): Promise<void> {
   const memoryConfig = config.memory?.enabled ? config.memory : undefined;
   const memoryToken = config.memory?.enabled ? (core.getInput('memory_repo_token') || core.getInput('github_token', { required: true })) : undefined;
 
-  await handlePRComment(octokit, claude, memoryConfig, memoryToken, config);
+  await handlePRComment(octokit, claude, owner, repo, prNumber, memoryConfig, memoryToken, config);
+}
+
+async function handleIssueInteraction(): Promise<void> {
+  const payload = github.context.payload;
+  const comment = payload.comment;
+  if (!comment) return;
+
+  if (comment.user?.type === 'Bot' || comment.body?.includes('<!-- manki')) return;
+
+  const { owner, repo } = github.context.repo;
+  const issueNumber = payload.issue?.number;
+  if (!issueNumber) return;
+
+  const octokit = await getOctokit();
+  const configPathInput = core.getInput('config_path');
+
+  let configContent: string | null = null;
+  if (configPathInput) {
+    configContent = await fetchConfigFile(octokit, owner, repo, 'main', configPathInput);
+  } else {
+    configContent = await fetchConfigFile(octokit, owner, repo, 'main', '.manki.yml');
+  }
+  const config = loadConfig(configContent ?? undefined);
+
+  const memoryConfig = config.memory?.enabled ? config.memory : undefined;
+  const memoryToken = config.memory?.enabled ? (core.getInput('memory_repo_token') || core.getInput('github_token', { required: true })) : undefined;
+
+  await handlePRComment(octokit, null, owner, repo, issueNumber, memoryConfig, memoryToken, config);
 }
 
 async function handleReviewCommentInteraction(): Promise<void> {
