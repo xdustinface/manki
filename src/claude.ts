@@ -109,10 +109,12 @@ export class ClaudeClient {
         outputKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
       };
       child.stdout.on('data', (data: Buffer) => {
+        if (outputExceeded || settled) return;
         stdout += data.toString();
         if (stdout.length + stderr.length > MAX_OUTPUT) killOnOutputExceeded();
       });
       child.stderr.on('data', (data: Buffer) => {
+        if (outputExceeded || settled) return;
         stderr += data.toString();
         if (stdout.length + stderr.length > MAX_OUTPUT) killOnOutputExceeded();
       });

@@ -86,7 +86,12 @@ export function selectTeam(
       if (focus.includes('test') && paths.some(p => p.includes('test'))) score += 3;
 
       if (focus.includes('performance') && (
-        paths.some(p => p.endsWith('/index.ts') || p.endsWith('/index.js') || p.endsWith('/main.ts') || p.endsWith('/main.rs') || p.includes('/server')) ||
+        paths.some(p =>
+          p === 'index.ts' || p === 'index.js' || p === 'main.ts' || p === 'main.rs' ||
+          p.endsWith('/index.ts') || p.endsWith('/index.js') ||
+          p.endsWith('/main.ts') || p.endsWith('/main.rs') ||
+          p.includes('/server')
+        ) ||
         diff.totalAdditions > 200
       )) score += 2;
 
