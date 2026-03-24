@@ -226,14 +226,21 @@ async function handleDismiss(
     return;
   }
 
+  const authorAssociation = github.context.payload.comment?.author_association;
+  const isTrusted = ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(authorAssociation ?? '');
+
+  if (!isTrusted) {
+    core.info('Dismiss from non-collaborator — acknowledging but not persisting suppression');
+  }
+
   await octokit.rest.issues.createComment({
     owner,
     repo,
     issue_number: prNumber,
-    body: `${BOT_MARKER}\nDismissed${sanitizedPattern ? `: ${sanitizedPattern}` : ''}. ${memoryConfig?.enabled ? 'Stored as suppression in review memory.' : 'Enable memory to persist this for future reviews.'}`,
+    body: `${BOT_MARKER}\nDismissed${sanitizedPattern ? `: ${sanitizedPattern}` : ''}. ${memoryConfig?.enabled && isTrusted ? 'Stored as suppression in review memory.' : 'Enable memory to persist this for future reviews.'}`,
   });
 
-  if (memoryConfig?.enabled && memoryToken && sanitizedPattern) {
+  if (isTrusted && memoryConfig?.enabled && memoryToken && sanitizedPattern) {
     try {
       const memoryOctokit = github.getOctokit(memoryToken);
       const memoryRepo = memoryConfig.repo || `${owner}/review-memory`;
