@@ -525,6 +525,8 @@ export function buildNitIssueBody(
   prNumber: number,
   findings: Finding[],
   owner: string,
+  repo: string,
+  commitSha: string,
 ): string {
   const nits = findings.filter(f => f.severity === 'nit');
 
@@ -534,40 +536,24 @@ export function buildNitIssueBody(
     const safeDescription = sanitizeMarkdown(f.description);
     const safeFile = sanitizeFilePath(f.file);
 
-    let item = `- [ ] ${icon} **${safeTitle}** \u2014 \`${safeFile}:${f.line}\`\n`;
-    item += `  \n  ${safeDescription}\n`;
+    const startLine = Math.max(1, f.line - 5);
+    const endLine = f.line + 10;
+    const permalink = `https://github.com/${owner}/${repo}/blob/${commitSha}/${safeFile}#L${startLine}-L${endLine}`;
 
-    if (f.codeContext) {
-      const ext = safeFile.split('.').pop() || '';
-      const langMap: Record<string, string> = {
-        'ts': 'typescript', 'tsx': 'typescript', 'js': 'javascript', 'jsx': 'javascript',
-        'rs': 'rust', 'py': 'python', 'go': 'go', 'java': 'java',
-        'css': 'css', 'html': 'html', 'yml': 'yaml', 'yaml': 'yaml',
-      };
-      const lang = langMap[ext] || ext;
-      const fence = dynamicFence(f.codeContext);
-      item += `  \n  ${fence}${lang}\n${f.codeContext}\n  ${fence}\n`;
-    }
+    let item = `- [ ] <details><summary>${icon} **${safeTitle}** \u2014 <code>${safeFile}:${f.line}</code></summary>\n`;
+    item += `\n  ${safeDescription}\n`;
+    item += `\n  ${permalink}\n`;
 
-    item += `  \n  <details>\n  <summary>\u{1F916} Fix prompt</summary>\n\n`;
-    item += `  **File:** \`${safeFile}\`\n`;
-    item += `  **Line:** ${f.line}\n`;
-    item += `  **Finding:** ${safeTitle}\n`;
-    item += `  **Severity:** ${f.severity}\n\n`;
-    item += `  **Description:**\n  ${safeDescription}\n`;
     if (f.suggestedFix) {
-      const fixFence = dynamicFence(f.suggestedFix);
-      item += `  \n  **Suggested fix:**\n  ${fixFence}\n  ${f.suggestedFix}\n  ${fixFence}\n`;
+      item += `\n  **Suggested fix:**\n  ${f.suggestedFix}\n`;
     }
-    item += `  \n  > **Important:** Before applying this fix, validate the finding in the broader context of the file and surrounding code.\n`;
-    item += `  \n  </details>`;
+
+    item += `\n  </details>`;
 
     return item;
   }).join('\n\n');
 
-  return `## Review Nits from PR #${prNumber}
-
-The following non-blocking findings were identified during automated review. Please triage:
+  return `The following non-blocking findings were identified during automated review. Triaging these helps Manki learn your preferences.
 - **Check the box** for findings worth fixing
 - **Leave unchecked** for findings to dismiss
 - Comment \`@manki triage\` when done
@@ -588,6 +574,7 @@ export async function createNitIssue(
   repo: string,
   prNumber: number,
   findings: Finding[],
+  commitSha: string,
 ): Promise<number | null> {
   const nits = findings.filter(f => f.severity === 'nit');
   if (nits.length === 0) return null;
@@ -610,7 +597,7 @@ export async function createNitIssue(
     });
   }
 
-  const body = buildNitIssueBody(prNumber, findings, owner);
+  const body = buildNitIssueBody(prNumber, findings, owner, repo, commitSha);
 
   const { data: issue } = await octokit.rest.issues.create({
     owner, repo,

@@ -178,103 +178,65 @@ describe('buildNitIssueBody', () => {
   };
 
   it('filters to only nit findings', () => {
-    const body = buildNitIssueBody(42, [required, nit, suggestion], 'myorg');
+    const body = buildNitIssueBody(42, [required, nit, suggestion], 'testowner', 'testrepo', 'abc123');
     expect(body).toContain('Use const instead of let');
     expect(body).not.toContain('Null dereference');
     expect(body).not.toContain('Is this timeout intentional?');
   });
 
-  it('formats checklist items with file and line', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
-    expect(body).toContain('- [ ]');
-    expect(body).toContain('`src/utils.ts:10`');
+  it('formats checklist items with file and line in details summary', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
+    expect(body).toContain('- [ ] <details><summary>');
+    expect(body).toContain('<code>src/utils.ts:10</code>');
     expect(body).toContain('Variable is never reassigned.');
   });
 
-  it('includes PR reference in header', () => {
-    const body = buildNitIssueBody(99, [nit], 'myorg');
-    expect(body).toContain('PR #99');
-  });
-
-  it('includes suggested fix in folded fix prompt when present', () => {
+  it('includes suggested fix when present', () => {
     const withFix: Finding = { ...nit, suggestedFix: 'const x = 1;' };
-    const body = buildNitIssueBody(42, [withFix], 'myorg');
+    const body = buildNitIssueBody(42, [withFix], 'testowner', 'testrepo', 'abc123');
     expect(body).toContain('**Suggested fix:**');
     expect(body).toContain('const x = 1;');
   });
 
-  it('omits suggested fix from fix prompt when not present', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
+  it('omits suggested fix when not present', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
     expect(body).not.toContain('**Suggested fix:**');
   });
 
   it('uses nit emoji for nit findings', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
     expect(body).toContain('\u{1F4DD} **Use const instead of let**');
   });
 
-  it('includes code context when present', () => {
-    const withContext: Finding = {
-      ...nit,
-      file: 'src/utils.ts',
-      codeContext: '+let x = 1;\n+let y = 2;',
-    };
-    const body = buildNitIssueBody(42, [withContext], 'myorg');
-    expect(body).toContain('```typescript');
-    expect(body).toContain('+let x = 1;\n+let y = 2;');
-    expect(body).toContain('```');
+  it('includes GitHub permalink for code context', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
+    expect(body).toContain('https://github.com/testowner/testrepo/blob/abc123/src/utils.ts#L5-L20');
   });
 
-  it('omits code context when not present', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
-    expect(body).not.toContain('```typescript');
+  it('clamps permalink start line to 1 for low line numbers', () => {
+    const lowLine: Finding = { ...nit, line: 2 };
+    const body = buildNitIssueBody(42, [lowLine], 'testowner', 'testrepo', 'abc123');
+    expect(body).toContain('#L1-L12');
   });
 
-  it('detects language from file extension', () => {
-    const extensions: Array<[string, string]> = [
-      ['src/app.ts', 'typescript'],
-      ['src/app.tsx', 'typescript'],
-      ['src/app.js', 'javascript'],
-      ['src/app.jsx', 'javascript'],
-      ['src/lib.rs', 'rust'],
-      ['src/main.py', 'python'],
-      ['src/main.go', 'go'],
-      ['styles.css', 'css'],
-      ['config.yml', 'yaml'],
-    ];
-
-    for (const [file, lang] of extensions) {
-      const finding: Finding = {
-        ...nit,
-        file,
-        codeContext: '+some code',
-      };
-      const body = buildNitIssueBody(42, [finding], 'myorg');
-      expect(body).toContain(`\`\`\`${lang}`);
-    }
-  });
-
-  it('wraps fix prompt in a folded details section', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
-    expect(body).toContain('<details>');
-    expect(body).toContain('<summary>\u{1F916} Fix prompt</summary>');
+  it('wraps each finding in a details block', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
+    expect(body).toContain('<details><summary>');
+    expect(body).toContain('</summary>');
     expect(body).toContain('</details>');
-    expect(body).toContain('**File:** `src/utils.ts`');
-    expect(body).toContain('**Line:** 10');
-    expect(body).toContain('**Finding:** Use const instead of let');
-    expect(body).toContain('**Severity:** nit');
   });
 
-  it('includes triage instructions with @manki triage', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
+  it('includes triage instructions mentioning learning preferences', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
     expect(body).toContain('`@manki triage`');
     expect(body).toContain('**Check the box** for findings worth fixing');
     expect(body).toContain('**Leave unchecked** for findings to dismiss');
+    expect(body).toContain('learn your preferences');
   });
 
-  it('includes validation reminder in fix prompt', () => {
-    const body = buildNitIssueBody(42, [nit], 'myorg');
-    expect(body).toContain('Before applying this fix, validate the finding');
+  it('does not include the old heading format', () => {
+    const body = buildNitIssueBody(42, [nit], 'testowner', 'testrepo', 'abc123');
+    expect(body).not.toContain('## Review Nits from PR');
   });
 });
 
