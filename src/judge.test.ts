@@ -225,15 +225,20 @@ describe('buildJudgeUserMessage', () => {
     expect(msg).not.toContain('## Pull Request\n');
   });
 
-  it('includes changed files list when provided', () => {
+  it('includes changed files with summaries when provided', () => {
     const findings = [makeFinding()];
-    const changedFiles = ['src/foo.ts', 'src/bar.ts', '.manki.yml'];
+    const changedFiles: DiffFile[] = [
+      makeDiffFile({ path: 'src/foo.ts' }),
+      makeDiffFile({ path: 'src/bar.ts', hunks: [makeHunk({ newLines: 10, oldLines: 5 })] }),
+      makeDiffFile({ path: '.manki.yml', hunks: [] }),
+    ];
     const msg = buildJudgeUserMessage(findings, new Map(), '', undefined, undefined, changedFiles);
 
     expect(msg).toContain('## Changed Files in This PR');
-    expect(msg).toContain('- src/foo.ts');
-    expect(msg).toContain('- src/bar.ts');
-    expect(msg).toContain('- .manki.yml');
+    expect(msg).toContain('### src/foo.ts (+20/-20)');
+    expect(msg).toContain('### src/bar.ts (+10/-5)');
+    expect(msg).toContain('### .manki.yml (+0/-0)');
+    expect(msg).toContain('+line 1');
   });
 
   it('omits changed files section when empty', () => {

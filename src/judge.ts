@@ -119,7 +119,7 @@ export function buildJudgeUserMessage(
   memoryContext: string,
   prContext?: PrContext,
   linkedIssues?: LinkedIssue[],
-  changedFiles?: string[],
+  changedFiles?: DiffFile[],
 ): string {
   const parts: string[] = [];
 
@@ -132,9 +132,15 @@ export function buildJudgeUserMessage(
   if (changedFiles && changedFiles.length > 0) {
     parts.push(`## Changed Files in This PR\n`);
     for (const file of changedFiles) {
-      parts.push(`- ${file}`);
+      const additions = file.hunks.reduce((a, h) => a + h.newLines, 0);
+      const deletions = file.hunks.reduce((a, h) => a + h.oldLines, 0);
+      const stats = `+${additions}/-${deletions}`;
+      const hunkContexts = file.hunks.map(h => {
+        const firstLine = h.content.split('\n')[0]?.trim() || '';
+        return `  - ${firstLine.slice(0, 80)}`;
+      }).join('\n');
+      parts.push(`### ${file.path} (${stats})\n${hunkContexts}\n`);
     }
-    parts.push('');
   }
 
   if (linkedIssues && linkedIssues.length > 0) {
@@ -318,7 +324,7 @@ export async function runJudgeAgent(
     ? filterMemoryForFindings(findings, memory)
     : '';
 
-  const changedFiles = diff.files.map(f => f.path);
+  const changedFiles = diff.files;
 
   const systemPrompt = buildJudgeSystemPrompt(config);
   const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles);
