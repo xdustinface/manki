@@ -8,7 +8,8 @@ type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki-bot -->';
 
-const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
+// Covers all standard HTML elements including `base` (can inject a base URL that hijacks relative links)
+const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
 // The `[^>]*` in these regexes is anchored by a literal `>`, so backtracking is
 // linear. If no `>` exists, the unclosed-tag regex below handles that case
 // separately (anchored to end-of-string). Not a ReDoS concern for our input.
@@ -415,6 +416,7 @@ function formatFindingComment(finding: Finding): string {
     comment += `\n\n<sub>Flagged by: ${safeReviewers}</sub>`;
   }
 
+  // The replace strips all non-alphanumeric chars, so the title is safe for use in an HTML comment marker
   comment += `\n\n<!-- manki:${finding.severity}:${finding.title.replace(/[^a-zA-Z0-9]/g, '-')} -->`;
 
   return comment;

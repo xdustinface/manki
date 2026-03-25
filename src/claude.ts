@@ -111,6 +111,7 @@ export class ClaudeClient {
         timedOut = true;
         child.kill('SIGTERM');
         killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
+        killTimer.unref();
       }, 300000);
 
       const MAX_OUTPUT = 50 * 1024 * 1024; // 50 MB
@@ -120,6 +121,7 @@ export class ClaudeClient {
         clearTimeout(timer);
         child.kill('SIGTERM');
         outputKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
+        outputKillTimer.unref();
       };
       const stdoutDecoder = new StringDecoder('utf8');
       const stderrDecoder = new StringDecoder('utf8');
@@ -197,7 +199,9 @@ export class ClaudeClient {
           reject(new Error(`stdin write failed: ${(err as Error).message}`));
         }
         try { child.kill('SIGTERM'); } catch { /* already dead */ }
+        // Assigned after clearAllTimers — the close handler's clearAllTimers will clear this new timer
         stdinKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
+        stdinKillTimer.unref();
       }
     });
   }
