@@ -106,6 +106,9 @@ review_thresholds:
 instructions: |
   This is a Rust project. Focus on ownership and error handling.
 
+# Default model (used as fallback when per-stage model is not set)
+model: claude-opus-4-6
+
 # Per-stage model selection (falls back to `model` if not set)
 models:
   reviewer: claude-sonnet-4-6   # fast, parallel reviewers
