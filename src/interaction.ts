@@ -599,7 +599,7 @@ async function handleTriage(
       const { data: newIssue } = await octokit.rest.issues.create({
         owner, repo,
         title: item.title,
-        body: `## Finding from review triage\n\nSource: #${issueNumber}\n\n${context}`,
+        body: `**From review triage** — Source: #${issueNumber}\n\n${context}`,
       });
       createdIssues.push(newIssue.number);
       core.info(`Created issue #${newIssue.number} for "${item.title}"`);
