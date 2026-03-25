@@ -6,6 +6,8 @@ import {
   sanitizeMemoryField,
   filterLearningsForFinding,
   filterSuppressionsForFinding,
+  removeLearning,
+  removeSuppression,
   Suppression,
   Pattern,
   Learning,
@@ -429,5 +431,114 @@ describe('filterSuppressionsForFinding', () => {
 
     const result = filterSuppressionsForFinding(suppressions, finding);
     expect(result).toHaveLength(0);
+  });
+});
+
+type MockOctokit = Parameters<typeof removeLearning>[0];
+
+function mockMemoryOctokit(yamlFiles: Record<string, unknown[]>): MockOctokit {
+  const store = new Map<string, unknown[]>();
+  for (const [path, data] of Object.entries(yamlFiles)) {
+    store.set(path, [...data]);
+  }
+
+  return {
+    rest: {
+      repos: {
+        getContent: jest.fn(async ({ path }: { path: string }) => {
+          const data = store.get(path);
+          if (!data) throw new Error(`Not found: ${path}`);
+          const { stringify } = await import('yaml');
+          return {
+            data: {
+              content: Buffer.from(stringify(data)).toString('base64'),
+              encoding: 'base64',
+              sha: 'abc123',
+            },
+          };
+        }),
+        createOrUpdateFileContents: jest.fn(async ({ path, content }: { path: string; content: string }) => {
+          const { parse } = await import('yaml');
+          const decoded = Buffer.from(content, 'base64').toString('utf-8');
+          store.set(path, parse(decoded));
+        }),
+      },
+    },
+  } as unknown as MockOctokit;
+}
+
+describe('removeLearning', () => {
+  it('removes matching learning by case-insensitive substring', async () => {
+    const learnings: Learning[] = [
+      makeLearning({ id: 'l1', content: 'Always use strict mode' }),
+      makeLearning({ id: 'l2', content: 'Check for null before access' }),
+    ];
+    const octokit = mockMemoryOctokit({ 'test-repo/learnings.yml': learnings });
+
+    const { removed, remaining } = await removeLearning(octokit, 'owner/memory', 'test-repo', 'strict mode');
+
+    expect(removed).not.toBeNull();
+    expect(removed!.id).toBe('l1');
+    expect(removed!.content).toBe('Always use strict mode');
+    expect(remaining).toBe(1);
+  });
+
+  it('returns null when no learning matches', async () => {
+    const learnings: Learning[] = [
+      makeLearning({ id: 'l1', content: 'Always use strict mode' }),
+    ];
+    const octokit = mockMemoryOctokit({ 'test-repo/learnings.yml': learnings });
+
+    const { removed, remaining } = await removeLearning(octokit, 'owner/memory', 'test-repo', 'nonexistent');
+
+    expect(removed).toBeNull();
+    expect(remaining).toBe(1);
+  });
+
+  it('returns null when no learnings file exists', async () => {
+    const octokit = mockMemoryOctokit({});
+
+    const { removed, remaining } = await removeLearning(octokit, 'owner/memory', 'test-repo', 'anything');
+
+    expect(removed).toBeNull();
+    expect(remaining).toBe(0);
+  });
+});
+
+describe('removeSuppression', () => {
+  it('removes matching suppression by case-insensitive substring', async () => {
+    const suppressions: Suppression[] = [
+      makeSuppression({ id: 'sup-1', pattern: 'unused variable' }),
+      makeSuppression({ id: 'sup-2', pattern: 'todo comment' }),
+    ];
+    const octokit = mockMemoryOctokit({ 'test-repo/suppressions.yml': suppressions });
+
+    const { removed, remaining } = await removeSuppression(octokit, 'owner/memory', 'test-repo', 'TODO');
+
+    expect(removed).not.toBeNull();
+    expect(removed!.id).toBe('sup-2');
+    expect(removed!.pattern).toBe('todo comment');
+    expect(remaining).toBe(1);
+  });
+
+  it('returns null when no suppression matches', async () => {
+    const suppressions: Suppression[] = [
+      makeSuppression({ id: 'sup-1', pattern: 'unused variable' }),
+    ];
+    const octokit = mockMemoryOctokit({ 'test-repo/suppressions.yml': suppressions });
+
+    const { removed, remaining } = await removeSuppression(octokit, 'owner/memory', 'test-repo', 'nonexistent');
+
+    expect(removed).toBeNull();
+    expect(remaining).toBe(1);
+  });
+
+  it('returns null when no suppressions file exists', async () => {
+    const octokit = mockMemoryOctokit({});
+
+    const { removed, remaining } = await removeSuppression(octokit, 'owner/memory', 'test-repo', 'anything');
+
+    expect(removed).toBeNull();
+    expect(remaining).toBe(0);
   });
 });

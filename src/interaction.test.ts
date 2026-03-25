@@ -63,6 +63,16 @@ describe('parseCommand', () => {
     expect(result).toEqual<ParsedCommand>({ type: 'forget', args: 'something' });
   });
 
+  it('parses @manki forget suppression with pattern', () => {
+    const result = parseCommand('@manki forget suppression unused variable');
+    expect(result).toEqual<ParsedCommand>({ type: 'forget', args: 'suppression unused variable' });
+  });
+
+  it('parses @manki forget without args', () => {
+    const result = parseCommand('@manki forget');
+    expect(result).toEqual<ParsedCommand>({ type: 'forget', args: '' });
+  });
+
   it('parses @manki check with args', () => {
     const result = parseCommand('@manki check memory');
     expect(result).toEqual<ParsedCommand>({ type: 'check', args: 'memory' });

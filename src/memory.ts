@@ -282,6 +282,60 @@ export async function writeLearning(
 }
 
 /**
+ * Remove a learning from the memory repo by case-insensitive substring match on content.
+ */
+export async function removeLearning(
+  octokit: Octokit,
+  memoryRepo: string,
+  targetRepo: string,
+  searchText: string,
+): Promise<{ removed: Learning | null; remaining: number }> {
+  const [owner, repo] = memoryRepo.split('/');
+  const path = `${targetRepo}/learnings.yml`;
+
+  const existing = await fetchYamlFile<Learning[]>(octokit, owner, repo, path) || [];
+  const searchLower = searchText.toLowerCase();
+  const index = existing.findIndex(l => l.content.toLowerCase().includes(searchLower));
+
+  if (index === -1) {
+    return { removed: null, remaining: existing.length };
+  }
+
+  const [removed] = existing.splice(index, 1);
+  const content = stringifyYaml(existing);
+  await writeFile(octokit, owner, repo, path, content, `Remove learning: ${removed.content.slice(0, 50)}`);
+
+  return { removed, remaining: existing.length };
+}
+
+/**
+ * Remove a suppression from the memory repo by case-insensitive substring match on pattern.
+ */
+export async function removeSuppression(
+  octokit: Octokit,
+  memoryRepo: string,
+  targetRepo: string,
+  searchPattern: string,
+): Promise<{ removed: Suppression | null; remaining: number }> {
+  const [owner, repo] = memoryRepo.split('/');
+  const path = `${targetRepo}/suppressions.yml`;
+
+  const existing = await fetchYamlFile<Suppression[]>(octokit, owner, repo, path) || [];
+  const searchLower = searchPattern.toLowerCase();
+  const index = existing.findIndex(s => s.pattern.toLowerCase().includes(searchLower));
+
+  if (index === -1) {
+    return { removed: null, remaining: existing.length };
+  }
+
+  const [removed] = existing.splice(index, 1);
+  const content = stringifyYaml(existing);
+  await writeFile(octokit, owner, repo, path, content, `Remove suppression: ${removed.pattern.slice(0, 50)}`);
+
+  return { removed, remaining: existing.length };
+}
+
+/**
  * Update a pattern tracker in the memory repo.
  */
 export async function updatePattern(

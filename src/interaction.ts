@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 
 import { ClaudeClient } from './claude';
-import { writeSuppression, writeLearning, batchUpdatePatternDecisions, sanitizeMemoryField } from './memory';
+import { writeSuppression, writeLearning, removeLearning, removeSuppression, batchUpdatePatternDecisions, sanitizeMemoryField } from './memory';
 import { reactToIssueComment, reactToReviewComment } from './github';
 import { checkAndAutoApprove, fetchBotReviewThreads } from './state';
 import { ReviewConfig } from './types';
@@ -175,11 +175,8 @@ export async function handlePRComment(
       await handleRemember(octokit, owner, repo, issueNumber, command.args, memoryConfig, memoryToken);
       break;
     case 'forget':
-      await octokit.rest.issues.createComment({
-        owner, repo,
-        issue_number: issueNumber,
-        body: `${BOT_MARKER}\nThe \`forget\` command is not yet implemented. You can manually remove learnings from the memory repo.`,
-      });
+      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
+      await handleForget(octokit, owner, repo, issueNumber, command.args, memoryConfig, memoryToken);
       break;
     case 'check':
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
@@ -310,7 +307,9 @@ async function handleHelp(
     owner,
     repo,
     issue_number: prNumber,
-    body: `${BOT_MARKER}\n**Manki Commands:**\n\n| Command | Description |\n|---------|-------------|\n| \`@manki review\` | Run a full multi-agent review |\n| \`@manki explain [topic]\` | Explain something about this PR |\n| \`@manki dismiss [finding]\` | Dismiss a review finding |\n| \`@manki remember <instruction>\` | Teach the reviewer something for future reviews |\n| \`@manki remember global: <instruction>\` | Teach globally (all repos) |\n| \`@manki check\` | Check if all required issues are resolved and auto-approve |\n| \`@manki triage\` | Process nit issue checkboxes — create issues for ticked items, suppress unticked |\n| \`@manki help\` | Show this help message |\n\nYou can also reply to any review comment to start a conversation.`,
+    body: `${BOT_MARKER}\n**Manki Commands:**\n\n| Command | Description |\n|---------|-------------|\n| \`@manki review\` | Run a full multi-agent review |\n| \`@manki explain [topic]\` | Explain something about this PR |\n| \`@manki dismiss [finding]\` | Dismiss a review finding |\n| \`@manki remember <instruction>\` | Teach the reviewer something for future reviews |\n| \`@manki remember global: <instruction>\` | Teach globally (all repos) |\n| \`@manki forget <text>\` | Remove a learning matching the text |
+| \`@manki forget suppression <pattern>\` | Remove a suppression matching the pattern |
+| \`@manki check\` | Check if all required issues are resolved and auto-approve |\n| \`@manki triage\` | Process nit issue checkboxes — create issues for ticked items, suppress unticked |\n| \`@manki help\` | Show this help message |\n\nYou can also reply to any review comment to start a conversation.`,
   });
 }
 
@@ -388,6 +387,105 @@ async function handleRemember(
       owner, repo,
       issue_number: prNumber,
       body: `${BOT_MARKER}\nFailed to store learning. Check that the memory repo token has write access.`,
+    });
+  }
+}
+
+async function handleForget(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  args: string,
+  memoryConfig?: MemoryConfig,
+  memoryToken?: string,
+): Promise<void> {
+  const authorAssociation = github.context.payload.comment?.author_association;
+  const isTrusted = ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(authorAssociation ?? '');
+
+  if (!isTrusted) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nOnly collaborators can remove memories.`,
+    });
+    return;
+  }
+
+  if (!args || args.trim().length < 3) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nPlease provide a search term (at least 3 characters).\n\nUsage:\n- \`@manki forget <text>\` — remove a learning matching the text\n- \`@manki forget suppression <pattern>\` — remove a suppression matching the pattern`,
+    });
+    return;
+  }
+
+  if (!memoryConfig?.enabled || !memoryToken) {
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nMemory is not enabled for this repo. Add \`memory.enabled: true\` to \`.manki.yml\` to use this feature.`,
+    });
+    return;
+  }
+
+  const memoryOctokit = github.getOctokit(memoryToken);
+  const memoryRepo = memoryConfig.repo || `${owner}/review-memory`;
+  const trimmed = args.trim();
+
+  try {
+    if (trimmed.toLowerCase().startsWith('suppression ')) {
+      const searchPattern = trimmed.slice('suppression '.length).trim();
+      if (searchPattern.length < 3) {
+        await octokit.rest.issues.createComment({
+          owner, repo,
+          issue_number: issueNumber,
+          body: `${BOT_MARKER}\nPlease provide a search pattern (at least 3 characters) after \`suppression\`.`,
+        });
+        return;
+      }
+
+      const { removed, remaining } = await removeSuppression(memoryOctokit, memoryRepo, repo, searchPattern);
+
+      if (removed) {
+        await octokit.rest.issues.createComment({
+          owner, repo,
+          issue_number: issueNumber,
+          body: `${BOT_MARKER}\nRemoved suppression: "${removed.pattern}" (${remaining} remaining)`,
+        });
+        core.info(`Removed suppression: "${removed.pattern}"`);
+      } else {
+        await octokit.rest.issues.createComment({
+          owner, repo,
+          issue_number: issueNumber,
+          body: `${BOT_MARKER}\nNo matching suppression found for: "${searchPattern}"`,
+        });
+      }
+    } else {
+      const { removed, remaining } = await removeLearning(memoryOctokit, memoryRepo, repo, trimmed);
+
+      if (removed) {
+        await octokit.rest.issues.createComment({
+          owner, repo,
+          issue_number: issueNumber,
+          body: `${BOT_MARKER}\nRemoved learning: "${removed.content}" (${remaining} remaining)`,
+        });
+        core.info(`Removed learning: "${removed.content}"`);
+      } else {
+        await octokit.rest.issues.createComment({
+          owner, repo,
+          issue_number: issueNumber,
+          body: `${BOT_MARKER}\nNo matching learning found for: "${trimmed}"`,
+        });
+      }
+    }
+  } catch (error) {
+    core.warning(`Failed to remove memory: ${error}`);
+    await octokit.rest.issues.createComment({
+      owner, repo,
+      issue_number: issueNumber,
+      body: `${BOT_MARKER}\nFailed to remove memory. Check that the memory repo token has write access.`,
     });
   }
 }
