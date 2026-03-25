@@ -798,7 +798,6 @@ describe('intersectFindings', () => {
   });
 
   it('keeps findings unique to non-first passes if they meet threshold', () => {
-    const onlyInLaterPasses = makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' });
     const passes: Finding[][] = [
       [makeFinding({ file: 'src/a.ts', line: 10, title: 'First pass only finding' })],
       [makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' })],
