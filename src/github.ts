@@ -8,6 +8,10 @@ type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki-bot -->';
 
+const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
+const HTML_TAG_REGEX = new RegExp(`<\\/?(${HTML_TAGS})(?:\\s[^>]*)?\\s*\\/?>`, 'gi');
+const HTML_UNCLOSED_TAG_REGEX = new RegExp(`<\\/?(${HTML_TAGS})(?:\\s[^>]*)?$`, 'gim');
+
 /**
  * Fetch the raw diff for a PR.
  */
@@ -347,11 +351,6 @@ function getSeverityLabel(severity: FindingSeverity): string {
 // it into the GitHub comment body. Our own structural markup (<details>, <summary>,
 // collapsible sections, etc.) is added AFTER sanitization and is never passed through here.
 function sanitizeMarkdown(text: string): string {
-  // Some HTML tag names overlap with TypeScript generics (e.g. <select>, <input>).
-  // Stripping them is the safer default for a code review tool since dangling HTML
-  // in a GitHub comment is more harmful than losing a rare generic mention.
-  const htmlTags = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
-
   let result = text;
   // Run comment stripping twice to handle nested comments like <!-- <!-- --> -->,
   // then clean up any dangling close markers left behind.
@@ -360,8 +359,8 @@ function sanitizeMarkdown(text: string): string {
   result = result.replace(/-->/g, '');
 
   return result
-    .replace(new RegExp(`<\\/?(${htmlTags})(?:\\s[^>]*)?\\s*\\/?>`, 'gi'), '') // Known HTML tags (opening, closing, self-closing)
-    .replace(new RegExp(`<\\/?(${htmlTags})(?:\\s[^>]*)?$`, 'gi'), '')      // Unclosed tags at end of string
+    .replace(HTML_TAG_REGEX, '')           // Known HTML tags (opening, closing, self-closing)
+    .replace(HTML_UNCLOSED_TAG_REGEX, '')  // Unclosed tags at end of string
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')                       // Images: keep alt text only
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')                        // Links: keep text only
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')                       // Second pass for nested brackets
@@ -432,8 +431,8 @@ export function buildNitIssueBody(
 
   const checklist = nits.map(f => {
     const icon = f.severity === 'suggestion' ? '\u{1F4A1}' : '\u{2753}';
-    const safeTitle = f.title.replace(/`/g, "'");
-    const safeDescription = f.description.replace(/<!--/g, '').replace(/-->/g, '');
+    const safeTitle = sanitizeMarkdown(f.title);
+    const safeDescription = sanitizeMarkdown(f.description);
 
     let item = `- [ ] ${icon} **${safeTitle}** \u2014 \`${f.file}:${f.line}\`\n`;
     item += `  \n  ${safeDescription}\n`;
@@ -456,7 +455,9 @@ export function buildNitIssueBody(
     item += `  **Severity:** ${f.severity}\n\n`;
     item += `  **Description:**\n  ${safeDescription}\n`;
     if (f.suggestedFix) {
-      item += `  \n  **Suggested fix:**\n  \`\`\`\n  ${f.suggestedFix}\n  \`\`\`\n`;
+      const maxBt = (f.suggestedFix.match(/`+/g) || []).reduce((max, s) => Math.max(max, s.length), 0);
+      const fence = '`'.repeat(Math.max(3, maxBt + 1));
+      item += `  \n  **Suggested fix:**\n  ${fence}\n  ${f.suggestedFix}\n  ${fence}\n`;
     }
     item += `  \n  > **Important:** Before applying this fix, validate the finding in the broader context of the file and surrounding code.\n`;
     item += `  \n  </details>`;
