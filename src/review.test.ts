@@ -7,10 +7,14 @@ import {
   selectTeam,
   titlesMatch,
   truncateDiff,
+  shuffleDiffFiles,
+  rebuildRawDiff,
+  findingsMatch,
+  intersectFindings,
   AGENT_POOL,
 } from './review';
 import { LinkedIssue } from './github';
-import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff } from './types';
+import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile } from './types';
 
 const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   model: 'claude-opus-4-6',
@@ -649,5 +653,185 @@ describe('buildReviewerUserMessage with linked issues', () => {
     expect(prIdx).toBeLessThan(issuesIdx);
     expect(issuesIdx).toBeLessThan(repoIdx);
     expect(repoIdx).toBeLessThan(diffIdx);
+  });
+});
+
+describe('shuffleDiffFiles', () => {
+  const makeFiles = (count: number): DiffFile[] =>
+    Array.from({ length: count }, (_, i) => ({
+      path: `file${i}.ts`,
+      changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 5, content: `+line ${i}` }],
+    }));
+
+  it('returns a new ParsedDiff with the same files', () => {
+    const diff: ParsedDiff = { files: makeFiles(5), totalAdditions: 10, totalDeletions: 5 };
+    const shuffled = shuffleDiffFiles(diff);
+    expect(shuffled.files).toHaveLength(5);
+    expect(shuffled.totalAdditions).toBe(10);
+    expect(shuffled.totalDeletions).toBe(5);
+    const sortedOriginal = [...diff.files].sort((a, b) => a.path.localeCompare(b.path));
+    const sortedShuffled = [...shuffled.files].sort((a, b) => a.path.localeCompare(b.path));
+    expect(sortedShuffled).toEqual(sortedOriginal);
+  });
+
+  it('does not mutate the original diff', () => {
+    const diff: ParsedDiff = { files: makeFiles(5), totalAdditions: 10, totalDeletions: 5 };
+    const originalPaths = diff.files.map(f => f.path);
+    shuffleDiffFiles(diff);
+    expect(diff.files.map(f => f.path)).toEqual(originalPaths);
+  });
+
+  it('produces different orderings across multiple calls (probabilistic)', () => {
+    const diff: ParsedDiff = { files: makeFiles(10), totalAdditions: 20, totalDeletions: 10 };
+    const orderings = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const shuffled = shuffleDiffFiles(diff);
+      orderings.add(shuffled.files.map(f => f.path).join(','));
+    }
+    expect(orderings.size).toBeGreaterThan(1);
+  });
+
+  it('handles single-file diff without error', () => {
+    const diff: ParsedDiff = { files: makeFiles(1), totalAdditions: 1, totalDeletions: 0 };
+    const shuffled = shuffleDiffFiles(diff);
+    expect(shuffled.files).toHaveLength(1);
+    expect(shuffled.files[0].path).toBe('file0.ts');
+  });
+
+  it('handles empty diff without error', () => {
+    const diff: ParsedDiff = { files: [], totalAdditions: 0, totalDeletions: 0 };
+    const shuffled = shuffleDiffFiles(diff);
+    expect(shuffled.files).toHaveLength(0);
+  });
+});
+
+describe('rebuildRawDiff', () => {
+  it('rebuilds a diff string from parsed files', () => {
+    const diff: ParsedDiff = {
+      files: [
+        {
+          path: 'src/foo.ts',
+          changeType: 'modified',
+          hunks: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, content: '+new line' }],
+        },
+      ],
+      totalAdditions: 1,
+      totalDeletions: 0,
+    };
+    const raw = rebuildRawDiff(diff);
+    expect(raw).toContain('diff --git a/src/foo.ts b/src/foo.ts');
+    expect(raw).toContain('@@ -1,3 +1,4 @@');
+    expect(raw).toContain('+new line');
+  });
+
+  it('handles multiple files in order', () => {
+    const diff: ParsedDiff = {
+      files: [
+        { path: 'a.ts', changeType: 'modified', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: '+a' }] },
+        { path: 'b.ts', changeType: 'modified', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: '+b' }] },
+      ],
+      totalAdditions: 2,
+      totalDeletions: 0,
+    };
+    const raw = rebuildRawDiff(diff);
+    const aIdx = raw.indexOf('a/a.ts');
+    const bIdx = raw.indexOf('a/b.ts');
+    expect(aIdx).toBeLessThan(bIdx);
+  });
+});
+
+describe('findingsMatch', () => {
+  it('matches findings with same file, close line, and similar title', () => {
+    const a = makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' });
+    const b = makeFinding({ file: 'src/a.ts', line: 12, title: 'Null check missing in handler' });
+    expect(findingsMatch(a, b)).toBe(true);
+  });
+
+  it('does not match findings with different files', () => {
+    const a = makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' });
+    const b = makeFinding({ file: 'src/b.ts', line: 10, title: 'Null check missing in handler' });
+    expect(findingsMatch(a, b)).toBe(false);
+  });
+
+  it('does not match findings with lines more than 3 apart', () => {
+    const a = makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' });
+    const b = makeFinding({ file: 'src/a.ts', line: 14, title: 'Null check missing in handler' });
+    expect(findingsMatch(a, b)).toBe(false);
+  });
+
+  it('matches findings with lines exactly 3 apart', () => {
+    const a = makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' });
+    const b = makeFinding({ file: 'src/a.ts', line: 13, title: 'Null check missing in handler' });
+    expect(findingsMatch(a, b)).toBe(true);
+  });
+
+  it('does not match findings with completely different titles', () => {
+    const a = makeFinding({ file: 'src/a.ts', line: 10, title: 'Memory leak in connection pool' });
+    const b = makeFinding({ file: 'src/a.ts', line: 10, title: 'SQL injection in query builder' });
+    expect(findingsMatch(a, b)).toBe(false);
+  });
+});
+
+describe('intersectFindings', () => {
+  it('keeps findings that appear in at least threshold passes', () => {
+    const consistent = makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' });
+    const inconsistent = makeFinding({ file: 'src/b.ts', line: 20, title: 'Unused import detected here' });
+
+    const passes: Finding[][] = [
+      [consistent, inconsistent],
+      [makeFinding({ file: 'src/a.ts', line: 11, title: 'Null check missing in handler' })],
+      [makeFinding({ file: 'src/a.ts', line: 10, title: 'Null check missing in handler' })],
+    ];
+
+    const result = intersectFindings(passes, 2);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Null check missing in handler');
+  });
+
+  it('returns all findings from any pass when threshold is 1', () => {
+    const f1 = makeFinding({ title: 'Finding one is important' });
+    const f2 = makeFinding({ title: 'Finding two is also notable' });
+    const passes: Finding[][] = [[f1, f2], []];
+    const result = intersectFindings(passes, 1);
+    expect(result).toHaveLength(2);
+  });
+
+  it('keeps findings unique to non-first passes if they meet threshold', () => {
+    const onlyInLaterPasses = makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' });
+    const passes: Finding[][] = [
+      [makeFinding({ file: 'src/a.ts', line: 10, title: 'First pass only finding' })],
+      [makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' })],
+      [makeFinding({ file: 'src/c.ts', line: 31, title: 'Late discovery finding here' })],
+    ];
+    const result = intersectFindings(passes, 2);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Late discovery finding here');
+  });
+
+  it('returns empty array when passes is empty', () => {
+    expect(intersectFindings([], 1)).toEqual([]);
+  });
+
+  it('filters out findings that only appear in one pass when threshold is 2', () => {
+    const f = makeFinding({ file: 'src/a.ts', line: 10, title: 'Some unique ordering artifact' });
+    const passes: Finding[][] = [
+      [f],
+      [makeFinding({ file: 'src/b.ts', line: 50, title: 'Completely different finding' })],
+    ];
+    const result = intersectFindings(passes, 2);
+    expect(result).toHaveLength(0);
+  });
+
+  it('uses ceil(N/2) threshold correctly for 3 passes', () => {
+    const f = makeFinding({ file: 'src/a.ts', line: 10, title: 'Consistent finding across passes' });
+    const passes: Finding[][] = [
+      [f],
+      [makeFinding({ file: 'src/a.ts', line: 11, title: 'Consistent finding across passes' })],
+      [],
+    ];
+    // threshold = ceil(3/2) = 2, finding appears in 2/3 passes
+    const result = intersectFindings(passes, Math.ceil(3 / 2));
+    expect(result).toHaveLength(1);
   });
 });

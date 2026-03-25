@@ -34,6 +34,7 @@ describe('config', () => {
       expect(DEFAULT_CONFIG.nit_handling).toBe('issues');
       expect(DEFAULT_CONFIG.review_level).toBe('auto');
       expect(DEFAULT_CONFIG.review_thresholds).toEqual({ small: 200, medium: 1000 });
+      expect(DEFAULT_CONFIG.review_passes).toBe(1);
     });
 
     it('has three default reviewers with name and focus', () => {
@@ -325,6 +326,34 @@ models:
       const config = loadConfigFromContent(yaml);
       expect(config.models?.reviewer).toBe('claude-haiku-4-5');
       expect(config.models?.judge).toBe('claude-opus-4-6');
+    });
+
+    it('accepts valid review_passes values', () => {
+      expect(loadConfigFromContent('review_passes: 1').review_passes).toBe(1);
+      expect(loadConfigFromContent('review_passes: 3').review_passes).toBe(3);
+      expect(loadConfigFromContent('review_passes: 5').review_passes).toBe(5);
+    });
+
+    it('defaults review_passes to 1', () => {
+      const config = loadConfigFromContent('model: claude-opus-4-6');
+      expect(config.review_passes).toBe(1);
+    });
+
+    it('throws on review_passes less than 1', () => {
+      expect(() => loadConfigFromContent('review_passes: 0')).toThrow('Invalid config');
+      expect(core.error).toHaveBeenCalledWith('`review_passes` must be an integer between 1 and 5');
+    });
+
+    it('throws on review_passes greater than 5', () => {
+      expect(() => loadConfigFromContent('review_passes: 6')).toThrow('Invalid config');
+    });
+
+    it('throws on non-integer review_passes', () => {
+      expect(() => loadConfigFromContent('review_passes: 2.5')).toThrow('Invalid config');
+    });
+
+    it('throws on non-number review_passes', () => {
+      expect(() => loadConfigFromContent('review_passes: "three"')).toThrow('Invalid config');
     });
   });
 
