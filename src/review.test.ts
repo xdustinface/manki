@@ -235,6 +235,12 @@ describe('buildReviewerSystemPrompt', () => {
     expect(prompt).toContain('import ordering');
     expect(prompt).toContain('JSDoc');
   });
+
+  it('includes scope validation instruction', () => {
+    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
+    expect(prompt).toContain('Unrelated change');
+    expect(prompt).toContain('splitting into a separate PR');
+  });
 });
 
 describe('buildReviewerUserMessage', () => {
