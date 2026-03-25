@@ -9,6 +9,9 @@ type Octokit = ReturnType<typeof github.getOctokit>;
 const BOT_MARKER = '<!-- manki-bot -->';
 
 const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
+// The `[^>]*` in these regexes is anchored by a literal `>`, so backtracking is
+// linear. If no `>` exists, the unclosed-tag regex below handles that case
+// separately (anchored to end-of-string). Not a ReDoS concern for our input.
 const HTML_TAG_REGEX = new RegExp(`<\\/?(${HTML_TAGS})(?:\\s[^>]*)?\\s*\\/?>`, 'gi');
 const HTML_UNCLOSED_TAG_REGEX = new RegExp(`<\\/?(${HTML_TAGS})(?:\\s[^>]*)?$`, 'gim');
 
@@ -117,19 +120,21 @@ export async function updateProgressComment(
   result: ReviewResult,
 ): Promise<void> {
   const emoji = result.verdict === 'APPROVE' ? '✅' : result.verdict === 'REQUEST_CHANGES' ? '❌' : '💬';
+  const safeSummary = sanitizeMarkdown(result.summary);
   const findingsSummary = result.findings.length > 0
     ? `\n\n| Severity | Count |\n|---|---|\n| Blocking | ${result.findings.filter(f => f.severity === 'blocking').length} |\n| Suggestions | ${result.findings.filter(f => f.severity === 'suggestion').length} |\n| Questions | ${result.findings.filter(f => f.severity === 'question').length} |`
     : '';
 
-  const highlights = result.highlights.length > 0
-    ? `\n\n**Highlights:**\n${result.highlights.map(h => `- ${h}`).join('\n')}`
+  const safeHighlights = result.highlights.map(h => sanitizeMarkdown(h));
+  const highlights = safeHighlights.length > 0
+    ? `\n\n**Highlights:**\n${safeHighlights.map(h => `- ${h}`).join('\n')}`
     : '';
 
   await octokit.rest.issues.updateComment({
     owner,
     repo,
     comment_id: commentId,
-    body: `${BOT_MARKER}\n${emoji} **Manki** — ${result.verdict.replace('_', ' ')}\n\n${result.summary}${findingsSummary}${highlights}`,
+    body: `${BOT_MARKER}\n${emoji} **Manki** — ${result.verdict.replace('_', ' ')}\n\n${safeSummary}${findingsSummary}${highlights}`,
   });
 }
 
@@ -244,8 +249,6 @@ export async function postReview(
     body += `\n\n**Findings (not on changed lines):**\n${invalidComments.map(c => `- ${c}`).join('\n')}`;
   }
 
-  body = truncateBody(body);
-
   if (invalidComments.length > 0) {
     core.info(`Moved ${invalidComments.length} comments to review body (lines not in diff)`);
   }
@@ -258,7 +261,7 @@ export async function postReview(
       pull_number: prNumber,
       commit_id: commitSha,
       event,
-      body,
+      body: truncateBody(body),
       comments: validComments,
     });
 

@@ -1,4 +1,4 @@
-import { formatFindingComment, mapVerdictToEvent, BOT_MARKER, buildNitIssueBody, getSeverityLabel, postReview, sanitizeMarkdown } from './github';
+import { formatFindingComment, mapVerdictToEvent, BOT_MARKER, buildNitIssueBody, getSeverityLabel, postReview, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence } from './github';
 import { Finding, ReviewResult } from './types';
 
 describe('formatFindingComment', () => {
@@ -581,5 +581,62 @@ describe('sanitizeMarkdown', () => {
     expect(result).not.toContain('-->');
     expect(result).toMatch(/^a\s+b$/);
     expect(sanitizeMarkdown('x <!-- <!-- a --> --> <!-- <!-- b --> --> y')).not.toContain('-->');
+  });
+});
+
+describe('sanitizeFilePath', () => {
+  it('strips backticks from file paths', () => {
+    expect(sanitizeFilePath('src/`evil`.ts')).toBe("src/'evil'.ts");
+  });
+
+  it('strips newlines from file paths', () => {
+    expect(sanitizeFilePath('src/file\nname.ts')).toBe('src/file name.ts');
+  });
+
+  it('strips both backticks and newlines', () => {
+    expect(sanitizeFilePath('`path\nwith`\nboth')).toBe("'path with' both");
+  });
+
+  it('leaves clean paths unchanged', () => {
+    expect(sanitizeFilePath('src/utils.ts')).toBe('src/utils.ts');
+  });
+});
+
+describe('truncateBody', () => {
+  it('returns short text unchanged', () => {
+    expect(truncateBody('hello world')).toBe('hello world');
+  });
+
+  it('truncates at word boundary near the limit', () => {
+    const text = 'word '.repeat(15000); // ~75000 chars
+    const result = truncateBody(text);
+    expect(result.length).toBeLessThanOrEqual(60000 + 50);
+    expect(result).toContain('*(Review body truncated)*');
+    expect(result).not.toMatch(/word$/); // should not end mid-word before the truncation notice
+  });
+
+  it('respects custom max length', () => {
+    const text = 'a '.repeat(100);
+    const result = truncateBody(text, 50);
+    expect(result.length).toBeLessThanOrEqual(80);
+    expect(result).toContain('*(Review body truncated)*');
+  });
+});
+
+describe('dynamicFence', () => {
+  it('returns triple backticks for content without backticks', () => {
+    expect(dynamicFence('plain text')).toBe('```');
+  });
+
+  it('returns fence longer than content backtick runs', () => {
+    expect(dynamicFence('some ```code``` here')).toBe('````');
+  });
+
+  it('handles content with single backticks', () => {
+    expect(dynamicFence('use `foo` here')).toBe('```');
+  });
+
+  it('handles content with long backtick runs', () => {
+    expect(dynamicFence('`````')).toBe('``````');
   });
 });
