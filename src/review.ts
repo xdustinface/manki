@@ -75,7 +75,7 @@ export async function runReview(
   if (result.findings.length > 0) {
     core.info('');
     for (const f of result.findings) {
-      const icon = f.severity === 'blocking' ? '\u2717' : f.severity === 'suggestion' ? '\u25CB' : '?';
+      const icon = f.severity === 'required' ? '\u2717' : f.severity === 'suggestion' ? '\u25CB' : f.severity === 'nit' ? '\u00B7' : '\u2205';
       core.info(`  ${icon} [${f.severity}] ${f.title}`);
       core.info(`    ${f.file}:${f.line}`);
     }
@@ -120,7 +120,7 @@ Respond with ONLY a JSON array (no markdown fences, no explanation). Each findin
 \`\`\`
 [
   {
-    "severity": "blocking" | "suggestion" | "question",
+    "severity": "required" | "suggestion" | "nit" | "ignore",
     "title": "Short descriptive title",
     "file": "path/to/file.ext",
     "line": <line number in the NEW file>,
@@ -132,9 +132,10 @@ Respond with ONLY a JSON array (no markdown fences, no explanation). Each findin
 
 ## Severity Guidelines
 
-- **blocking**: Bugs, security vulnerabilities, data corruption risks, crashes, incorrect behavior. These MUST be fixed before merge.
-- **suggestion**: Style improvements, minor optimizations, readability enhancements, naming nitpicks. Nice to have but not required.
-- **question**: Code that needs clarification. You're not sure if it's wrong, but it looks suspicious or unclear.
+- **required**: Bugs, security vulnerabilities, data corruption risks, crashes, incorrect behavior. These MUST be fixed before merge.
+- **suggestion**: Style improvements, minor optimizations, readability enhancements. Nice to have but not required.
+- **nit**: Trivial nitpicks — naming, formatting, minor style preferences. Collected separately for triage.
+- **ignore**: Not a real issue — false positive or intentional pattern. Use this to explicitly dismiss a potential finding.
 
 ## Rules
 
@@ -190,7 +191,7 @@ export function parseFindings(responseText: string, reviewerName: string): Findi
 }
 
 export function validateSeverity(severity: unknown): Finding['severity'] {
-  if (severity === 'blocking' || severity === 'suggestion' || severity === 'question') {
+  if (severity === 'required' || severity === 'suggestion' || severity === 'nit' || severity === 'ignore') {
     return severity;
   }
   return 'suggestion';
@@ -207,8 +208,8 @@ async function runConsolidationAgent(
 1. De-duplicate findings — if multiple reviewers flagged the same issue, merge them into one finding (list all reviewers in the "reviewers" array)
 2. Resolve conflicts — if reviewers disagree, use your judgment
 3. Validate — reject false positives or findings that are clearly wrong
-4. Categorize — ensure each finding has the correct severity (blocking/suggestion/question)
-5. Rank — order findings by importance (blocking first, then suggestions, then questions)
+4. Categorize — ensure each finding has the correct severity (required/suggestion/nit/ignore)
+5. Rank — order findings by importance (required first, then suggestions, then nits)
 
 ## Response Format
 
@@ -219,7 +220,7 @@ Respond with ONLY a JSON object (no markdown fences):
   "summary": "2-3 sentence review summary",
   "findings": [
     {
-      "severity": "blocking" | "suggestion" | "question",
+      "severity": "required" | "suggestion" | "nit" | "ignore",
       "title": "Short title",
       "file": "path/to/file",
       "line": <number>,
@@ -233,8 +234,8 @@ Respond with ONLY a JSON object (no markdown fences):
 
 ## Verdict Rules
 
-- **REQUEST_CHANGES**: If ANY finding is "blocking"
-- **APPROVE**: If there are no blocking findings (suggestions and questions are fine)
+- **REQUEST_CHANGES**: If ANY finding is "required"
+- **APPROVE**: If there are no required findings (suggestions, nits, and ignores are fine)
 
 ## Rules
 
@@ -290,9 +291,9 @@ export function parseConsolidatedReview(responseText: string): ReviewResult {
 }
 
 export function determineVerdict(claimed: unknown, findings: Finding[]): ReviewVerdict {
-  const hasBlocking = findings.some(f => f.severity === 'blocking');
-  if (hasBlocking) return 'REQUEST_CHANGES';
-  return 'APPROVE'; // Approve even with suggestions — nits don't block PRs
+  const hasRequired = findings.some(f => f.severity === 'required');
+  if (hasRequired) return 'REQUEST_CHANGES';
+  return 'APPROVE';
 }
 
 function titlesMatch(a: string, b: string): boolean {
@@ -339,10 +340,10 @@ export function mergeIndividualFindings(
     }
   }
 
-  const hasBlocking = allFindings.some(f => f.severity === 'blocking');
+  const hasRequired = allFindings.some(f => f.severity === 'required');
 
   return {
-    verdict: hasBlocking ? 'REQUEST_CHANGES' : 'APPROVE',
+    verdict: hasRequired ? 'REQUEST_CHANGES' : 'APPROVE',
     summary: `Review completed (consolidation skipped). ${allFindings.length} findings from ${agentFindings.length} reviewers.`,
     findings: allFindings,
     highlights: [],

@@ -27,7 +27,7 @@ describe('parseFindings', () => {
   it('parses valid JSON array', () => {
     const json = JSON.stringify([
       {
-        severity: 'blocking',
+        severity: 'required',
         title: 'Bug found',
         file: 'src/index.ts',
         line: 10,
@@ -38,7 +38,7 @@ describe('parseFindings', () => {
 
     const findings = parseFindings(json, 'TestReviewer');
     expect(findings).toHaveLength(1);
-    expect(findings[0].severity).toBe('blocking');
+    expect(findings[0].severity).toBe('required');
     expect(findings[0].title).toBe('Bug found');
     expect(findings[0].file).toBe('src/index.ts');
     expect(findings[0].line).toBe(10);
@@ -56,11 +56,11 @@ describe('parseFindings', () => {
   });
 
   it('parses markdown-wrapped JSON without language tag', () => {
-    const json = '```\n[{"severity":"question","title":"Why?","file":"b.ts","line":5,"description":"Unclear code."}]\n```';
+    const json = '```\n[{"severity":"nit","title":"Why?","file":"b.ts","line":5,"description":"Unclear code."}]\n```';
 
     const findings = parseFindings(json, 'Reviewer');
     expect(findings).toHaveLength(1);
-    expect(findings[0].severity).toBe('question');
+    expect(findings[0].severity).toBe('nit');
   });
 
   it('returns empty array for invalid JSON', () => {
@@ -79,7 +79,7 @@ describe('parseFindings', () => {
   });
 
   it('handles missing fields gracefully', () => {
-    const json = JSON.stringify([{ severity: 'blocking' }]);
+    const json = JSON.stringify([{ severity: 'required' }]);
 
     const findings = parseFindings(json, 'Reviewer');
     expect(findings).toHaveLength(1);
@@ -105,20 +105,26 @@ describe('parseFindings', () => {
 });
 
 describe('validateSeverity', () => {
-  it('accepts blocking', () => {
-    expect(validateSeverity('blocking')).toBe('blocking');
+  it('accepts required', () => {
+    expect(validateSeverity('required')).toBe('required');
   });
 
   it('accepts suggestion', () => {
     expect(validateSeverity('suggestion')).toBe('suggestion');
   });
 
-  it('accepts question', () => {
-    expect(validateSeverity('question')).toBe('question');
+  it('accepts nit', () => {
+    expect(validateSeverity('nit')).toBe('nit');
+  });
+
+  it('accepts ignore', () => {
+    expect(validateSeverity('ignore')).toBe('ignore');
   });
 
   it('defaults to suggestion for unknown values', () => {
     expect(validateSeverity('critical')).toBe('suggestion');
+    expect(validateSeverity('blocking')).toBe('suggestion');
+    expect(validateSeverity('question')).toBe('suggestion');
     expect(validateSeverity(undefined)).toBe('suggestion');
     expect(validateSeverity(null)).toBe('suggestion');
     expect(validateSeverity(42)).toBe('suggestion');
@@ -132,7 +138,7 @@ describe('parseConsolidatedReview', () => {
       summary: 'Found some issues.',
       findings: [
         {
-          severity: 'blocking',
+          severity: 'required',
           title: 'Bug',
           file: 'src/a.ts',
           line: 5,
@@ -191,7 +197,7 @@ describe('parseConsolidatedReview', () => {
       summary: 'Looks good.',
       findings: [
         {
-          severity: 'blocking',
+          severity: 'required',
           title: 'Bug',
           file: 'a.ts',
           line: 1,
@@ -208,10 +214,10 @@ describe('parseConsolidatedReview', () => {
 });
 
 describe('determineVerdict', () => {
-  it('returns REQUEST_CHANGES when any finding is blocking', () => {
+  it('returns REQUEST_CHANGES when any finding is required', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'A', file: '', line: 0, description: '', reviewers: [] },
-      { severity: 'blocking', title: 'B', file: '', line: 0, description: '', reviewers: [] },
+      { severity: 'required', title: 'B', file: '', line: 0, description: '', reviewers: [] },
     ];
     expect(determineVerdict('APPROVE', findings)).toBe('REQUEST_CHANGES');
   });
@@ -223,9 +229,16 @@ describe('determineVerdict', () => {
     expect(determineVerdict('APPROVE', findings)).toBe('APPROVE');
   });
 
-  it('returns APPROVE when there are only questions', () => {
+  it('returns APPROVE when there are only nits', () => {
     const findings: Finding[] = [
-      { severity: 'question', title: 'A', file: '', line: 0, description: '', reviewers: [] },
+      { severity: 'nit', title: 'A', file: '', line: 0, description: '', reviewers: [] },
+    ];
+    expect(determineVerdict('APPROVE', findings)).toBe('APPROVE');
+  });
+
+  it('returns APPROVE when there are only ignores', () => {
+    const findings: Finding[] = [
+      { severity: 'ignore', title: 'A', file: '', line: 0, description: '', reviewers: [] },
     ];
     expect(determineVerdict('APPROVE', findings)).toBe('APPROVE');
   });
@@ -329,14 +342,14 @@ describe('mergeIndividualFindings', () => {
     expect(result.findings).toHaveLength(2);
   });
 
-  it('returns REQUEST_CHANGES when any finding is blocking', () => {
+  it('returns REQUEST_CHANGES when any finding is required', () => {
     const result = mergeIndividualFindings([
-      { reviewer: 'A', findings: [makeFinding({ severity: 'blocking' })] },
+      { reviewer: 'A', findings: [makeFinding({ severity: 'required' })] },
     ]);
     expect(result.verdict).toBe('REQUEST_CHANGES');
   });
 
-  it('returns APPROVE when no blocking findings', () => {
+  it('returns APPROVE when no required findings', () => {
     const result = mergeIndividualFindings([
       { reviewer: 'A', findings: [makeFinding({ severity: 'suggestion' })] },
     ]);

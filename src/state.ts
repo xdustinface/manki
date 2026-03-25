@@ -76,8 +76,8 @@ async function fetchBotReviewThreads(
     })
     .map(thread => {
       const body = thread.comments.nodes[0]?.body ?? '';
-      const blockingMatch = body.match(/<!-- manki:(blocking|suggestion|question):/);
-      const isBlocking = blockingMatch?.[1] === 'blocking';
+      const blockingMatch = body.match(/<!-- manki:(required|suggestion|nit|ignore):/);
+      const isBlocking = blockingMatch?.[1] === 'required';
       const titleMatch = body.match(/<!-- manki:\w+:(.+?) -->/);
       const findingTitle = titleMatch?.[1]?.replace(/-/g, ' ') ?? 'Unknown';
 

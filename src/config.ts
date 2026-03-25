@@ -33,6 +33,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     enabled: false,
     repo: '',
   },
+  nit_handling: 'issues',
 };
 
 const KNOWN_KEYS = new Set([
@@ -46,6 +47,8 @@ const KNOWN_KEYS = new Set([
   'reviewers',
   'instructions',
   'memory',
+  'models',
+  'nit_handling',
 ]);
 
 const REPO_FORMAT = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
@@ -124,6 +127,26 @@ function validateConfig(config: Record<string, unknown>): ConfigValidationResult
     }
   }
 
+  if ('models' in config) {
+    const models = config.models as Record<string, unknown>;
+    if (!models || typeof models !== 'object' || Array.isArray(models)) {
+      errors.push('`models` must be an object');
+    } else {
+      if ('reviewer' in models && typeof models.reviewer !== 'string') {
+        errors.push('`models.reviewer` must be a string');
+      }
+      if ('judge' in models && typeof models.judge !== 'string') {
+        errors.push('`models.judge` must be a string');
+      }
+    }
+  }
+
+  if ('nit_handling' in config) {
+    if (config.nit_handling !== 'issues' && config.nit_handling !== 'comments') {
+      errors.push('`nit_handling` must be "issues" or "comments"');
+    }
+  }
+
   if ('memory' in config) {
     const memory = config.memory as Record<string, unknown>;
     if (!memory || typeof memory !== 'object' || Array.isArray(memory)) {
@@ -153,6 +176,8 @@ function deepMerge(defaults: ReviewConfig, overrides: Record<string, unknown>): 
 
     if (key === 'memory' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
       result.memory = { ...defaults.memory, ...(value as Record<string, unknown>) } as ReviewConfig['memory'];
+    } else if (key === 'models' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      result.models = { ...defaults.models, ...(value as Record<string, unknown>) } as ReviewConfig['models'];
     } else {
       (result as Record<string, unknown>)[key] = value;
     }

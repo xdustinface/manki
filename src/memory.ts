@@ -116,7 +116,7 @@ async function fetchTextFile(
 }
 
 /** Severities that are allowed to be suppressed by stored suppressions. */
-const SUPPRESSIBLE_SEVERITIES: ReadonlySet<FindingSeverity> = new Set<FindingSeverity>(['suggestion', 'question']);
+const SUPPRESSIBLE_SEVERITIES: ReadonlySet<FindingSeverity> = new Set<FindingSeverity>(['suggestion', 'nit']);
 
 /**
  * Filter findings against stored suppressions.

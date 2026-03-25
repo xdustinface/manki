@@ -114,7 +114,7 @@ export async function updateProgressComment(
 ): Promise<void> {
   const emoji = result.verdict === 'APPROVE' ? '✅' : result.verdict === 'REQUEST_CHANGES' ? '❌' : '💬';
   const findingsSummary = result.findings.length > 0
-    ? `\n\n| Severity | Count |\n|---|---|\n| Blocking | ${result.findings.filter(f => f.severity === 'blocking').length} |\n| Suggestions | ${result.findings.filter(f => f.severity === 'suggestion').length} |\n| Questions | ${result.findings.filter(f => f.severity === 'question').length} |`
+    ? `\n\n| Severity | Count |\n|---|---|\n| Required | ${result.findings.filter(f => f.severity === 'required').length} |\n| Suggestions | ${result.findings.filter(f => f.severity === 'suggestion').length} |\n| Nits | ${result.findings.filter(f => f.severity === 'nit').length} |\n| Ignored | ${result.findings.filter(f => f.severity === 'ignore').length} |`
     : '';
 
   const highlights = result.highlights.length > 0
@@ -285,8 +285,10 @@ function mapVerdictToEvent(verdict: ReviewVerdict): 'APPROVE' | 'COMMENT' | 'REQ
 }
 
 function formatFindingComment(finding: Finding): string {
-  const severityEmoji = finding.severity === 'blocking' ? '🚫' : finding.severity === 'suggestion' ? '💡' : '❓';
-  const severityLabel = finding.severity === 'blocking' ? 'Blocking' : finding.severity === 'suggestion' ? 'Suggestion' : 'Question';
+  const emojiMap: Record<string, string> = { required: '🚫', suggestion: '💡', nit: '📝', ignore: '⚪' };
+  const labelMap: Record<string, string> = { required: 'Required', suggestion: 'Suggestion', nit: 'Nit', ignore: 'Ignore' };
+  const severityEmoji = emojiMap[finding.severity] ?? '❓';
+  const severityLabel = labelMap[finding.severity] ?? 'Unknown';
 
   let comment = `${severityEmoji} **${severityLabel}**: ${finding.title}\n\n${finding.description}`;
 
@@ -326,10 +328,10 @@ export function buildNitIssueBody(
   findings: Finding[],
   owner: string,
 ): string {
-  const nits = findings.filter(f => f.severity === 'suggestion' || f.severity === 'question');
+  const nits = findings.filter(f => f.severity === 'nit');
 
   const checklist = nits.map(f => {
-    const icon = f.severity === 'suggestion' ? '\u{1F4A1}' : '\u{2753}';
+    const icon = '\u{1F4DD}';
     const safeTitle = f.title.replace(/`/g, "'");
     const safeDescription = f.description.replace(/<!--/g, '').replace(/-->/g, '');
 
@@ -386,7 +388,7 @@ export async function createNitIssue(
   prNumber: number,
   findings: Finding[],
 ): Promise<number | null> {
-  const nits = findings.filter(f => f.severity === 'suggestion' || f.severity === 'question');
+  const nits = findings.filter(f => f.severity === 'nit');
   if (nits.length === 0) return null;
 
   const searchQuery = `repo:${owner}/${repo} is:issue "Review nits from PR #${prNumber}" label:needs-human`;
