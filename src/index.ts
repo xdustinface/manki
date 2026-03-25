@@ -22,7 +22,7 @@ import {
   createNitIssue,
   reactToIssueComment,
 } from './github';
-import { checkAndAutoApprove } from './state';
+import { checkAndAutoApprove, resolveStaleThreads } from './state';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -164,6 +164,11 @@ async function runFullReview(
   const progressCommentId = await postProgressComment(octokit, owner, repo, prNumber);
 
   try {
+    const staleCount = await resolveStaleThreads(octokit, owner, repo, prNumber, commitSha);
+    if (staleCount > 0) {
+      core.info(`Resolved ${staleCount} stale review threads from previous commits`);
+    }
+
     let configContent: string | null = null;
     if (configPathInput) {
       configContent = await fetchConfigFile(octokit, owner, repo, baseRef, configPathInput);
