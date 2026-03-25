@@ -39,8 +39,8 @@ jobs:
           git diff --staged --quiet || git commit -m "build: compile dist/ for ${TAG}"
 
           # Force-update major version tag
-          git tag -fa "v2" -m "Update v2 tag to $TAG"
-          git push origin "v2" --force
+          git tag -fa "$MAJOR" -m "Update $MAJOR tag to $TAG"
+          git push origin "$MAJOR" --force
 
       - name: Create GitHub Release
         run: |
