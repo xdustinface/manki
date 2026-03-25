@@ -486,30 +486,25 @@ function formatFindingComment(finding: Finding): string {
     // Content inside dynamically-fenced code blocks is rendered literally by GitHub,
     // so HTML/markdown injection is not possible here — no sanitization needed.
     const fence = dynamicFence(finding.suggestedFix);
-    comment += `\n\n<details>\n<summary>Suggested fix</summary>\n\n${fence}suggestion\n${finding.suggestedFix}\n${fence}\n</details>`;
+    const lines = finding.suggestedFix.split('\n').length;
+    const isShort = lines <= 3 && finding.suggestedFix.length <= 120;
+    if (isShort) {
+      comment += `\n\n${fence}suggestion\n${finding.suggestedFix}\n${fence}`;
+    } else {
+      comment += `\n\n<details>\n<summary>Suggested fix</summary>\n\n${fence}suggestion\n${finding.suggestedFix}\n${fence}\n</details>`;
+    }
   }
 
-  const safeFile = sanitizeFilePath(finding.file);
-  comment += '\n\n<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n';
-  comment += `**File:** \`${safeFile}\`\n`;
-  comment += `**Line:** ${finding.line}\n`;
-  comment += `**Finding:** ${safeTitle}\n`;
-  comment += `**Severity:** ${finding.severity}\n\n`;
-  comment += `**Description:**\n${safeDescription}\n`;
-
-  if (finding.suggestedFix) {
-    // Inside a dynamically-fenced code block — GitHub renders literally, safe from injection.
-    const fixFence = dynamicFence(finding.suggestedFix);
-    comment += `\n**Suggested fix:**\n${fixFence}\n${finding.suggestedFix}\n${fixFence}\n`;
-  }
-
-  comment += '\n> **Important:** Before applying this fix, validate the finding in the broader context of the file and surrounding code. The review agent may have missed context that makes this a false positive.\n';
-  comment += '\n</details>';
-
-  if (finding.reviewers.length > 0) {
-    const safeReviewers = finding.reviewers.map(r => sanitizeMarkdown(r)).join(', ');
-    comment += `\n\n<sub>Flagged by: ${safeReviewers}</sub>`;
-  }
+  const aiContext: Record<string, unknown> = {
+    file: finding.file,
+    line: finding.line,
+    severity: finding.severity,
+    ...(finding.judgeConfidence && { confidence: finding.judgeConfidence }),
+    flaggedBy: finding.reviewers,
+    title: finding.title,
+    ...(finding.suggestedFix && { fix: finding.suggestedFix.slice(0, 200) }),
+  };
+  comment += `\n\n<details>\n<summary>AI context</summary>\n\n\`\`\`json\n${JSON.stringify(aiContext, null, 2)}\n\`\`\`\n</details>`;
 
   // The replace strips all non-alphanumeric chars, so the title is safe for use in an HTML comment marker
   comment += `\n\n<!-- manki:${finding.severity}:${finding.title.replace(/[^a-zA-Z0-9]/g, '-')} -->`;

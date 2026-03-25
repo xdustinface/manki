@@ -37,13 +37,21 @@ describe('formatFindingComment', () => {
     expect(comment).toContain('<!-- manki:ignore:');
   });
 
-  it('wraps suggested fix in a collapsible details section', () => {
+  it('shows short suggested fix inline without collapsible wrapper', () => {
     const finding: Finding = { ...baseFinding, suggestedFix: 'if (value != null) { use(value); }' };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('```suggestion');
+    expect(comment).toContain('if (value != null) { use(value); }');
+    expect(comment).not.toContain('<summary>Suggested fix</summary>');
+  });
+
+  it('wraps long suggested fix in a collapsible details section', () => {
+    const longFix = 'const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;\nconst e = 5;';
+    const finding: Finding = { ...baseFinding, suggestedFix: longFix };
     const comment = formatFindingComment(finding);
     expect(comment).toContain('<details>\n<summary>Suggested fix</summary>');
     expect(comment).toContain('```suggestion');
-    expect(comment).toContain('if (value != null) { use(value); }');
-    expect(comment).not.toContain('<details open');
+    expect(comment).toContain(longFix);
   });
 
   it('omits suggested fix section when not present', () => {
@@ -52,52 +60,64 @@ describe('formatFindingComment', () => {
     expect(comment).not.toContain('```suggestion');
   });
 
-  it('includes AI agent prompt in a collapsible details section with labeled fields', () => {
+  it('includes AI context as a collapsible JSON block', () => {
     const comment = formatFindingComment(baseFinding);
-    expect(comment).toContain('<details>\n<summary>🤖 Prompt for AI Agents</summary>');
-    expect(comment).toContain(`**File:** \`${baseFinding.file}\``);
-    expect(comment).toContain(`**Line:** ${baseFinding.line}`);
-    expect(comment).toContain(`**Finding:** ${baseFinding.title}`);
-    expect(comment).toContain(`**Severity:** ${baseFinding.severity}`);
-    expect(comment).toContain(`**Description:**\n${baseFinding.description}`);
-    expect(comment).toContain('> **Important:** Before applying this fix, validate the finding');
-    expect(comment).not.toContain('<details open');
+    expect(comment).toContain('<details>\n<summary>AI context</summary>');
+    expect(comment).toContain('```json');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    expect(jsonMatch).not.toBeNull();
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.file).toBe(baseFinding.file);
+    expect(parsed.line).toBe(baseFinding.line);
+    expect(parsed.severity).toBe(baseFinding.severity);
+    expect(parsed.title).toBe(baseFinding.title);
+    expect(parsed.flaggedBy).toEqual(baseFinding.reviewers);
+    expect(parsed.confidence).toBeUndefined();
+    expect(parsed.fix).toBeUndefined();
   });
 
-  it('includes suggested fix in AI agent prompt when suggestedFix is present', () => {
-    const finding: Finding = { ...baseFinding, suggestedFix: 'if (value != null) { use(value); }' };
+  it('includes fix and confidence in AI context JSON when present', () => {
+    const finding: Finding = { ...baseFinding, suggestedFix: 'if (value != null) { use(value); }', judgeConfidence: 'high' };
     const comment = formatFindingComment(finding);
-    expect(comment).toContain('**Suggested fix:**\n```\nif (value != null) { use(value); }\n```');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.fix).toBe('if (value != null) { use(value); }');
+    expect(parsed.confidence).toBe('high');
   });
 
-  it('omits suggested fix from AI agent prompt when no suggestedFix', () => {
+  it('truncates long suggestedFix in AI context JSON to 200 chars', () => {
+    const longFix = 'a'.repeat(250);
+    const finding: Finding = { ...baseFinding, suggestedFix: longFix };
+    const comment = formatFindingComment(finding);
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.fix.length).toBe(200);
+  });
+
+  it('includes flaggedBy in AI context JSON instead of visible attribution', () => {
     const comment = formatFindingComment(baseFinding);
-    expect(comment).not.toContain('**Suggested fix:**\n```');
+    expect(comment).not.toContain('Flagged by');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.flaggedBy).toEqual(['Security & Correctness']);
   });
 
-  it('includes reviewer attribution', () => {
-    const comment = formatFindingComment(baseFinding);
-    expect(comment).toContain('<sub>Flagged by: Security & Correctness</sub>');
-  });
-
-  it('includes multiple reviewer attributions', () => {
+  it('includes multiple reviewers in AI context flaggedBy', () => {
     const finding: Finding = { ...baseFinding, reviewers: ['Security', 'Testing'] };
     const comment = formatFindingComment(finding);
-    expect(comment).toContain('<sub>Flagged by: Security, Testing</sub>');
+    expect(comment).not.toContain('Flagged by');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.flaggedBy).toEqual(['Security', 'Testing']);
   });
 
-  it('sanitizes reviewer names containing markdown or HTML', () => {
-    const finding: Finding = { ...baseFinding, reviewers: ['<script>alert(1)</script>', '@evil/team'] };
-    const comment = formatFindingComment(finding);
-    expect(comment).not.toContain('<script>');
-    expect(comment).not.toContain('</script>');
-    expect(comment).toContain('@\u200Bevil/team');
-  });
-
-  it('omits reviewer attribution when reviewers is empty', () => {
+  it('includes empty flaggedBy when reviewers is empty', () => {
     const finding: Finding = { ...baseFinding, reviewers: [] };
     const comment = formatFindingComment(finding);
     expect(comment).not.toContain('Flagged by');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.flaggedBy).toEqual([]);
   });
 
   it('includes metadata marker with severity and sanitized title', () => {
