@@ -421,7 +421,8 @@ function formatFindingComment(finding: Finding): string {
   const safeTitle = sanitizeMarkdown(finding.title);
   const safeDescription = sanitizeMarkdown(finding.description);
 
-  let comment = `${severityEmoji} **${severityLabel}**: ${safeTitle}\n\n${safeDescription}`;
+  const confidence = finding.judgeConfidence ? ` <sub>[${finding.judgeConfidence} confidence]</sub>` : '';
+  let comment = `${severityEmoji} **${severityLabel}**${confidence}: ${safeTitle}\n\n${safeDescription}`;
 
   if (finding.suggestedFix) {
     // Content inside dynamically-fenced code blocks is rendered literally by GitHub,

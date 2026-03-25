@@ -305,11 +305,21 @@ async function runFullReview(
       }
     }
 
-    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, result, diff);
+    // Route findings based on nit_handling config:
+    // - required + suggestion: always go to inline PR comments
+    // - nit: inline comments if nit_handling === 'comments', nit issue if 'issues'
+    const nitHandling = config.nit_handling ?? 'issues';
+    const nitFindings = result.findings.filter(f => f.severity === 'nit');
+    const inlineFindings = nitHandling === 'comments'
+      ? result.findings
+      : result.findings.filter(f => f.severity !== 'nit');
 
-    if (result.verdict === 'APPROVE' && result.findings.length > 0) {
+    const reviewResult = { ...result, findings: inlineFindings };
+    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff);
+
+    if (nitHandling === 'issues' && nitFindings.length > 0) {
       try {
-        await createNitIssue(octokit, owner, repo, prNumber, result.findings);
+        await createNitIssue(octokit, owner, repo, prNumber, nitFindings);
       } catch (error) {
         core.warning(`Failed to create nit issue: ${error}`);
       }
@@ -343,7 +353,6 @@ async function runFullReview(
     }
     core.setOutput('severity_counts', JSON.stringify(severityCounts));
 
-    const judgeModel = config.models?.judge || config.model;
     core.setOutput('judge_model', judgeModel);
 
     core.info(`Review complete: ${result.verdict} with ${result.findings.length} findings`);
