@@ -95,10 +95,10 @@ async function resolveReferences(
         let fileContent = Buffer.from(data.content, 'base64').toString('utf-8');
         const fileDir = resolvedPath.includes('/') ? resolvedPath.substring(0, resolvedPath.lastIndexOf('/')) : '';
         fileContent = await resolveReferences(octokit, owner, repo, ref, fileContent, fileDir, depth + 1);
-        resolved = resolved.replace(fullMatch, fileContent.trimEnd());
+        resolved = resolved.replaceAll(fullMatch, () => fileContent.trimEnd());
       }
     } catch {
-      resolved = resolved.replace(fullMatch, `${fullMatch}\n<!-- Could not resolve reference: ${filePath} -->`);
+      resolved = resolved.replaceAll(fullMatch, () => `${fullMatch}\n<!-- Could not resolve reference: ${filePath} -->`);
     }
   }
 
