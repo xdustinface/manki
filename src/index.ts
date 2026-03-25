@@ -293,9 +293,9 @@ async function runFullReview(
       result.verdict = 'COMMENT';
     }
 
-    const { unique, duplicates } = deduplicateFindings(result.findings, recap.previousFindings);
-    if (duplicates.length > 0) {
-      core.info(`Deduplicated ${duplicates.length} findings (already flagged in previous reviews)`);
+    const { unique, duplicates } = deduplicateFindings(result.findings, recap.previousFindings, memory?.suppressions);
+    if (duplicates.length > 0 || unique.length !== result.findings.length) {
+      core.info(`Deduplicated ${duplicates.length} findings, ${result.findings.length - unique.length} total removed`);
       result.findings = unique;
       result.verdict = determineVerdict(result.findings);
     }
