@@ -1,5 +1,8 @@
 # Manki
 
+[![CI](https://github.com/xdustinface/manki/actions/workflows/ci.yml/badge.svg)](https://github.com/xdustinface/manki/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/xdustinface/manki/graph/badge.svg)](https://codecov.io/gh/xdustinface/manki)
+
 **Your tokens, your rules.** Self-hosted AI code review that runs on your own GitHub runners and learns from your team.
 
 Manki assembles a dynamic review team from a pool of seven specialist agents, sized to your diff, then passes all findings through a judge agent that deduplicates, re-severities, and tallies the final verdict. She's curious, thorough, and remembers what you teach her.
