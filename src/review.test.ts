@@ -342,6 +342,7 @@ describe('buildReviewerUserMessage', () => {
     expect(memIdx).toBeLessThan(filesIdx);
     expect(filesIdx).toBeLessThan(diffIdx);
   });
+
 });
 
 describe('parseFindings with extractJSON', () => {
