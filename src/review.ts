@@ -147,12 +147,22 @@ export function findingsMatch(a: Finding, b: Finding): boolean {
 }
 
 export function intersectFindings(passes: Finding[][], threshold: number): Finding[] {
-  if (passes.length === 0) return [];
-  const pass0 = passes[0];
-  return pass0.filter(f => {
-    let count = 1;
-    for (let i = 1; i < passes.length; i++) {
-      if (passes[i].some(other => findingsMatch(f, other))) {
+  // Collect all unique findings across all passes (using fuzzy match for dedup)
+  const allCandidates: Finding[] = [];
+
+  for (const pass of passes) {
+    for (const f of pass) {
+      if (!allCandidates.some(c => findingsMatch(c, f))) {
+        allCandidates.push(f);
+      }
+    }
+  }
+
+  // Keep candidates that appear in >= threshold passes
+  return allCandidates.filter(candidate => {
+    let count = 0;
+    for (const pass of passes) {
+      if (pass.some(f => findingsMatch(candidate, f))) {
         count++;
       }
     }

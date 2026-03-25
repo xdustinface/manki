@@ -789,12 +789,24 @@ describe('intersectFindings', () => {
     expect(result[0].title).toBe('Null check missing in handler');
   });
 
-  it('returns all findings from pass 0 when threshold is 1', () => {
+  it('returns all findings from any pass when threshold is 1', () => {
     const f1 = makeFinding({ title: 'Finding one is important' });
     const f2 = makeFinding({ title: 'Finding two is also notable' });
     const passes: Finding[][] = [[f1, f2], []];
     const result = intersectFindings(passes, 1);
     expect(result).toHaveLength(2);
+  });
+
+  it('keeps findings unique to non-first passes if they meet threshold', () => {
+    const onlyInLaterPasses = makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' });
+    const passes: Finding[][] = [
+      [makeFinding({ file: 'src/a.ts', line: 10, title: 'First pass only finding' })],
+      [makeFinding({ file: 'src/c.ts', line: 30, title: 'Late discovery finding here' })],
+      [makeFinding({ file: 'src/c.ts', line: 31, title: 'Late discovery finding here' })],
+    ];
+    const result = intersectFindings(passes, 2);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('Late discovery finding here');
   });
 
   it('returns empty array when passes is empty', () => {
