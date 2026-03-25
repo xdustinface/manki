@@ -217,7 +217,7 @@ async function runDeliberation(
       titlesMatch(d.title, f.title)
     );
     if (existing) {
-      const severityOrder: Record<string, number> = { required: 3, suggestion: 2, nit: 1 };
+      const severityOrder: Record<string, number> = { required: 3, suggestion: 2, nit: 1, ignore: 0 };
       if ((severityOrder[f.severity] || 0) > (severityOrder[existing.severity] || 0)) {
         existing.severity = f.severity;
       }

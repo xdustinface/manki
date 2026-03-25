@@ -10,7 +10,7 @@ const BOT_MARKER = '<!-- manki -->';
 interface ReviewThread {
   id: string;
   isResolved: boolean;
-  isBlocking: boolean;
+  isRequired: boolean;
   findingTitle: string;
 }
 
@@ -76,15 +76,15 @@ async function fetchBotReviewThreads(
     })
     .map(thread => {
       const body = thread.comments.nodes[0]?.body ?? '';
-      const blockingMatch = body.match(/<!-- manki:(required|suggestion|nit|ignore):/);
-      const isBlocking = blockingMatch?.[1] === 'required';
+      const severityMatch = body.match(/<!-- manki:(required|suggestion|nit|ignore):/);
+      const isRequired = severityMatch?.[1] === 'required';
       const titleMatch = body.match(/<!-- manki:\w+:(.+?) -->/);
       const findingTitle = titleMatch?.[1]?.replace(/-/g, ' ') ?? 'Unknown';
 
       return {
         id: thread.id,
         isResolved: thread.isResolved,
-        isBlocking,
+        isRequired,
         findingTitle,
       };
     });
@@ -94,7 +94,7 @@ async function fetchBotReviewThreads(
  * Check if all blocking threads are resolved.
  */
 function areAllBlockingResolved(threads: ReviewThread[]): boolean {
-  const blockingThreads = threads.filter(t => t.isBlocking);
+  const blockingThreads = threads.filter(t => t.isRequired);
   if (blockingThreads.length === 0) return true;
   return blockingThreads.every(t => t.isResolved);
 }
@@ -110,8 +110,8 @@ async function checkAndAutoApprove(
 ): Promise<boolean> {
   const threads = await fetchBotReviewThreads(octokit, owner, repo, prNumber);
 
-  const blockingCount = threads.filter(t => t.isBlocking).length;
-  const resolvedBlockingCount = threads.filter(t => t.isBlocking && t.isResolved).length;
+  const blockingCount = threads.filter(t => t.isRequired).length;
+  const resolvedBlockingCount = threads.filter(t => t.isRequired && t.isResolved).length;
 
   core.info(`Blocking threads: ${resolvedBlockingCount}/${blockingCount} resolved`);
 

@@ -355,11 +355,26 @@ function mapVerdictToEvent(verdict: ReviewVerdict): 'APPROVE' | 'COMMENT' | 'REQ
   }
 }
 
+const severityLabels: Record<FindingSeverity, string> = {
+  required: 'Required',
+  suggestion: 'Suggestion',
+  nit: 'Nit',
+  ignore: 'Ignore',
+};
+
+const severityEmojis: Record<FindingSeverity, string> = {
+  required: '🚫',
+  suggestion: '💡',
+  nit: '📝',
+  ignore: '⚪',
+};
+
 function getSeverityLabel(severity: FindingSeverity): string {
-  if (severity === 'required') return 'Required';
-  if (severity === 'suggestion') return 'Suggestion';
-  if (severity === 'nit') return 'Nit';
-  return 'Ignore';
+  return severityLabels[severity];
+}
+
+function getSeverityEmoji(severity: FindingSeverity): string {
+  return severityEmojis[severity];
 }
 
 // Sanitizes LLM-generated text (titles, descriptions, summaries) before embedding
@@ -401,10 +416,8 @@ function sanitizeMarkdown(text: string): string {
 }
 
 function formatFindingComment(finding: Finding): string {
-  const emojiMap: Record<string, string> = { required: '🚫', suggestion: '💡', nit: '📝', ignore: '⚪' };
-  const labelMap: Record<string, string> = { required: 'Required', suggestion: 'Suggestion', nit: 'Nit', ignore: 'Ignore' };
-  const severityEmoji = emojiMap[finding.severity] ?? '❓';
-  const severityLabel = labelMap[finding.severity] ?? 'Unknown';
+  const severityEmoji = getSeverityEmoji(finding.severity);
+  const severityLabel = getSeverityLabel(finding.severity);
   const safeTitle = sanitizeMarkdown(finding.title);
   const safeDescription = sanitizeMarkdown(finding.description);
 
@@ -597,4 +610,4 @@ export async function reactToReviewComment(
   }
 }
 
-export { dynamicFence, formatFindingComment, getSeverityLabel, mapVerdictToEvent, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_MARKER };
+export { dynamicFence, formatFindingComment, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_MARKER };

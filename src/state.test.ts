@@ -3,7 +3,7 @@ import { areAllBlockingResolved, ReviewThread } from './state';
 const makeThread = (overrides: Partial<ReviewThread> = {}): ReviewThread => ({
   id: 'thread-1',
   isResolved: false,
-  isBlocking: false,
+  isRequired: false,
   findingTitle: 'Test finding',
   ...overrides,
 });
@@ -11,33 +11,33 @@ const makeThread = (overrides: Partial<ReviewThread> = {}): ReviewThread => ({
 describe('areAllBlockingResolved', () => {
   it('returns true when there are no blocking threads', () => {
     const threads = [
-      makeThread({ id: '1', isBlocking: false, isResolved: false }),
-      makeThread({ id: '2', isBlocking: false, isResolved: true }),
+      makeThread({ id: '1', isRequired: false, isResolved: false }),
+      makeThread({ id: '2', isRequired: false, isResolved: true }),
     ];
     expect(areAllBlockingResolved(threads)).toBe(true);
   });
 
   it('returns true when all blocking threads are resolved', () => {
     const threads = [
-      makeThread({ id: '1', isBlocking: true, isResolved: true }),
-      makeThread({ id: '2', isBlocking: true, isResolved: true }),
+      makeThread({ id: '1', isRequired: true, isResolved: true }),
+      makeThread({ id: '2', isRequired: true, isResolved: true }),
     ];
     expect(areAllBlockingResolved(threads)).toBe(true);
   });
 
   it('returns false when some blocking threads are unresolved', () => {
     const threads = [
-      makeThread({ id: '1', isBlocking: true, isResolved: true }),
-      makeThread({ id: '2', isBlocking: true, isResolved: false }),
+      makeThread({ id: '1', isRequired: true, isResolved: true }),
+      makeThread({ id: '2', isRequired: true, isResolved: false }),
     ];
     expect(areAllBlockingResolved(threads)).toBe(false);
   });
 
   it('returns true when blocking threads are resolved and suggestions are not', () => {
     const threads = [
-      makeThread({ id: '1', isBlocking: true, isResolved: true }),
-      makeThread({ id: '2', isBlocking: false, isResolved: false }),
-      makeThread({ id: '3', isBlocking: false, isResolved: false }),
+      makeThread({ id: '1', isRequired: true, isResolved: true }),
+      makeThread({ id: '2', isRequired: false, isResolved: false }),
+      makeThread({ id: '3', isRequired: false, isResolved: false }),
     ];
     expect(areAllBlockingResolved(threads)).toBe(true);
   });

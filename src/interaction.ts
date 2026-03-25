@@ -424,7 +424,7 @@ async function handleCheck(
 
   if (!approved) {
     const threads = await fetchBotReviewThreads(octokit, owner, repo, prNumber);
-    const blocking = threads.filter(t => t.isBlocking && !t.isResolved);
+    const blocking = threads.filter(t => t.isRequired && !t.isResolved);
 
     if (blocking.length > 0) {
       const list = blocking.map(t => `- "${t.findingTitle}"`).join('\n');
