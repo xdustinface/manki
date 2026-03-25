@@ -353,7 +353,6 @@ async function runFullReview(
     }
     core.setOutput('severity_counts', JSON.stringify(severityCounts));
 
-    const judgeModel = config.models?.judge || config.model;
     core.setOutput('judge_model', judgeModel);
 
     core.info(`Review complete: ${result.verdict} with ${result.findings.length} findings`);
