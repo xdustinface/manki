@@ -110,6 +110,23 @@ describe('formatFindingComment', () => {
     const comment = formatFindingComment(finding);
     expect(comment).toContain('<!-- manki:required:Bug--foo---returns--bar-- -->');
   });
+
+  it('shows judge confidence when present', () => {
+    const finding: Finding = { ...baseFinding, judgeConfidence: 'high' };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('<sub>[high confidence]</sub>');
+  });
+
+  it('shows medium judge confidence', () => {
+    const finding: Finding = { ...baseFinding, judgeConfidence: 'medium' };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('<sub>[medium confidence]</sub>');
+  });
+
+  it('omits judge confidence when absent', () => {
+    const comment = formatFindingComment(baseFinding);
+    expect(comment).not.toContain('confidence]');
+  });
 });
 
 describe('mapVerdictToEvent', () => {
