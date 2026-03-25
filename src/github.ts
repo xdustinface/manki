@@ -1,7 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { Finding, FindingSeverity, ParsedDiff, ReviewResult, ReviewVerdict } from './types';
+import { Finding, FindingSeverity, ParsedDiff, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -230,6 +230,22 @@ export async function dismissPreviousReviews(
   }
 }
 
+function formatStatsOneLiner(stats: ReviewStats): string {
+  const parts: string[] = [];
+  if (stats.severity.required) parts.push(`${stats.severity.required} required`);
+  if (stats.severity.suggestion) parts.push(`${stats.severity.suggestion} suggestion`);
+  if (stats.severity.nit) parts.push(`${stats.severity.nit} nit`);
+  const breakdown = parts.length > 0 ? parts.join(', ') : 'none';
+  const total = stats.findingsKept;
+  const time = Math.round(stats.reviewTimeMs / 1000);
+  return `\u{1F4CA} ${total} findings (${breakdown}) \u00B7 ${stats.diffLines} lines \u00B7 ${time}s`;
+}
+
+function formatStatsJson(stats: ReviewStats): string {
+  const json = JSON.stringify(stats, null, 2);
+  return `<details>\n<summary>Review stats</summary>\n\n\`\`\`json\n${json}\n\`\`\`\n</details>`;
+}
+
 /**
  * Post the review with inline comments.
  */
@@ -241,6 +257,7 @@ export async function postReview(
   commitSha: string,
   result: ReviewResult,
   diff?: ParsedDiff,
+  stats?: ReviewStats,
 ): Promise<number> {
   const event = mapVerdictToEvent(result.verdict);
 
@@ -299,6 +316,10 @@ export async function postReview(
   }
 
   let body = `${BOT_MARKER}\n${sanitizeMarkdown(result.summary)}`;
+  if (stats) {
+    body += `\n\n${formatStatsOneLiner(stats)}`;
+    body += `\n\n${formatStatsJson(stats)}`;
+  }
   if (generalFindings.length > 0) {
     body += `\n\n**General findings:**\n${generalFindings.map(c => `- ${c}`).join('\n')}`;
   }
@@ -854,4 +875,4 @@ export async function fetchSubdirClaudeMd(
   return parts.join('\n\n---\n\n');
 }
 
-export { dynamicFence, formatFindingComment, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_MARKER };
+export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_MARKER };

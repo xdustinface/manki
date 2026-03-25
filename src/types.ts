@@ -21,6 +21,8 @@ export interface ReviewResult {
   findings: Finding[];
   highlights: string[];
   reviewComplete: boolean;
+  rawFindingCount?: number;
+  agentNames?: string[];
 }
 
 export interface ReviewerAgent {
@@ -90,4 +92,21 @@ export interface PrContext {
   title: string;
   body: string;
   baseBranch: string;
+}
+
+export interface ReviewStats {
+  model: string;
+  reviewTimeMs: number;
+  diffLines: number;
+  diffAdditions: number;
+  diffDeletions: number;
+  filesReviewed: number;
+  agents: string[];
+  findingsRaw: number;
+  findingsKept: number;
+  findingsDropped: number;
+  severity: Record<string, number>;
+  verdict: string;
+  prNumber: number;
+  commitSha: string;
 }

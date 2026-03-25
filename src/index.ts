@@ -9,7 +9,7 @@ import { handleReviewCommentReply, handlePRComment } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads } from './recap';
 import { runReview, determineVerdict } from './review';
-import { PrContext } from './types';
+import { PrContext, ReviewStats } from './types';
 import {
   fetchPRDiff,
   fetchConfigFile,
@@ -155,6 +155,7 @@ async function runFullReview(
   prContext?: PrContext,
 ): Promise<void> {
   core.info(`Starting review for ${owner}/${repo}#${prNumber}`);
+  const startTime = Date.now();
 
   const oauthToken = core.getInput('claude_code_oauth_token');
   const apiKey = core.getInput('anthropic_api_key');
@@ -364,8 +365,31 @@ async function runFullReview(
       ? result.findings
       : result.findings.filter(f => f.severity !== 'nit');
 
+    const reviewTimeMs = Date.now() - startTime;
+    const severityMap: Record<string, number> = { required: 0, suggestion: 0, nit: 0 };
+    for (const f of result.findings) {
+      if (f.severity in severityMap) severityMap[f.severity]++;
+    }
+
+    const stats: ReviewStats = {
+      model: reviewerModel,
+      reviewTimeMs,
+      diffLines: diff.totalAdditions + diff.totalDeletions,
+      diffAdditions: diff.totalAdditions,
+      diffDeletions: diff.totalDeletions,
+      filesReviewed: filteredFiles.length,
+      agents: result.agentNames ?? [],
+      findingsRaw: result.rawFindingCount ?? result.findings.length,
+      findingsKept: result.findings.length,
+      findingsDropped: (result.rawFindingCount ?? result.findings.length) - result.findings.length,
+      severity: severityMap,
+      verdict: result.verdict,
+      prNumber,
+      commitSha,
+    };
+
     const reviewResult = { ...result, findings: inlineFindings };
-    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff);
+    const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats);
 
     if (nitHandling === 'issues' && nitFindings.length > 0) {
       try {

@@ -314,6 +314,8 @@ export async function runReview(
     findings: finalFindings,
     highlights: [],
     reviewComplete: true,
+    rawFindingCount: allFindings.length,
+    agentNames: team.agents.map(a => a.name),
   };
 }
 

@@ -1,5 +1,5 @@
-import { formatFindingComment, mapVerdictToEvent, BOT_MARKER, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd } from './github';
-import { Finding, ReviewResult } from './types';
+import { formatFindingComment, formatStatsJson, formatStatsOneLiner, mapVerdictToEvent, BOT_MARKER, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd } from './github';
+import { Finding, ReviewResult, ReviewStats } from './types';
 
 describe('formatFindingComment', () => {
   const baseFinding: Finding = {
@@ -479,6 +479,142 @@ describe('postReview generalFindings', () => {
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
     const body = mockCreateReview.mock.calls[0][0].body as string;
     expect(body).toContain('`src/utils.ts`');
+  });
+});
+
+describe('formatStatsOneLiner', () => {
+  const baseStats: ReviewStats = {
+    model: 'claude-sonnet-4-20250514',
+    reviewTimeMs: 45000,
+    diffLines: 120,
+    diffAdditions: 80,
+    diffDeletions: 40,
+    filesReviewed: 5,
+    agents: ['Security & Safety', 'Correctness'],
+    findingsRaw: 10,
+    findingsKept: 4,
+    findingsDropped: 6,
+    severity: { required: 1, suggestion: 2, nit: 1 },
+    verdict: 'REQUEST_CHANGES',
+    prNumber: 42,
+    commitSha: 'abc123',
+  };
+
+  it('formats a one-liner with severity breakdown', () => {
+    const result = formatStatsOneLiner(baseStats);
+    expect(result).toBe('\u{1F4CA} 4 findings (1 required, 2 suggestion, 1 nit) \u00B7 120 lines \u00B7 45s');
+  });
+
+  it('omits zero-count severities', () => {
+    const stats = { ...baseStats, severity: { required: 0, suggestion: 3, nit: 0 }, findingsKept: 3 };
+    const result = formatStatsOneLiner(stats);
+    expect(result).toContain('(3 suggestion)');
+    expect(result).not.toContain('required');
+    expect(result).not.toContain('nit');
+  });
+
+  it('shows none when all severities are zero', () => {
+    const stats = { ...baseStats, severity: { required: 0, suggestion: 0, nit: 0 }, findingsKept: 0 };
+    const result = formatStatsOneLiner(stats);
+    expect(result).toContain('(none)');
+  });
+
+  it('rounds review time to nearest second', () => {
+    const stats = { ...baseStats, reviewTimeMs: 1500 };
+    const result = formatStatsOneLiner(stats);
+    expect(result).toContain('2s');
+  });
+});
+
+describe('formatStatsJson', () => {
+  it('wraps stats in a collapsed details block with JSON', () => {
+    const stats: ReviewStats = {
+      model: 'claude-sonnet-4-20250514',
+      reviewTimeMs: 30000,
+      diffLines: 50,
+      diffAdditions: 30,
+      diffDeletions: 20,
+      filesReviewed: 3,
+      agents: ['Security'],
+      findingsRaw: 5,
+      findingsKept: 2,
+      findingsDropped: 3,
+      severity: { required: 1, suggestion: 1, nit: 0 },
+      verdict: 'APPROVE',
+      prNumber: 10,
+      commitSha: 'def456',
+    };
+    const result = formatStatsJson(stats);
+    expect(result).toContain('<details>');
+    expect(result).toContain('<summary>Review stats</summary>');
+    expect(result).toContain('```json');
+    expect(result).toContain('"model": "claude-sonnet-4-20250514"');
+    expect(result).toContain('"findingsKept": 2');
+    expect(result).toContain('</details>');
+  });
+});
+
+describe('postReview with stats', () => {
+  const mockCreateReview = jest.fn().mockResolvedValue({ data: { id: 1 } });
+  const mockOctokit = {
+    rest: {
+      pulls: {
+        createReview: mockCreateReview,
+      },
+    },
+  } as unknown as Parameters<typeof postReview>[0];
+
+  beforeEach(() => {
+    mockCreateReview.mockClear();
+  });
+
+  it('includes stats one-liner and collapsed JSON in review body', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'All good.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+    };
+    const stats: ReviewStats = {
+      model: 'claude-sonnet-4-20250514',
+      reviewTimeMs: 60000,
+      diffLines: 200,
+      diffAdditions: 150,
+      diffDeletions: 50,
+      filesReviewed: 8,
+      agents: ['Security', 'Correctness'],
+      findingsRaw: 6,
+      findingsKept: 3,
+      findingsDropped: 3,
+      severity: { required: 0, suggestion: 2, nit: 1 },
+      verdict: 'APPROVE',
+      prNumber: 99,
+      commitSha: 'abc',
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 99, 'abc', result, undefined, stats);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).toContain('\u{1F4CA} 3 findings');
+    expect(body).toContain('200 lines');
+    expect(body).toContain('60s');
+    expect(body).toContain('<details>');
+    expect(body).toContain('"model": "claude-sonnet-4-20250514"');
+  });
+
+  it('omits stats section when stats not provided', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'All good.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).not.toContain('\u{1F4CA}');
+    expect(body).not.toContain('Review stats');
   });
 });
 
