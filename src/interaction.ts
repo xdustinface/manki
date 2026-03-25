@@ -274,7 +274,7 @@ async function handleDismiss(
     owner,
     repo,
     issue_number: prNumber,
-    body: `${BOT_MARKER}\nDismissed${sanitizedPattern ? `: ${sanitizedPattern}` : ''}. ${memoryConfig?.enabled && isTrusted ? 'Stored as suppression in review memory.' : 'Enable memory to persist this for future reviews.'}`,
+    body: `${BOT_MARKER}\n**Manki** — Dismissed${sanitizedPattern ? `: \`${sanitizedPattern}\`` : ''}. ${memoryConfig?.enabled && isTrusted ? 'Stored as suppression in review memory.' : 'Enable memory to persist this for future reviews.'}`,
   });
 
   if (isTrusted && memoryConfig?.enabled && memoryToken && sanitizedPattern) {
