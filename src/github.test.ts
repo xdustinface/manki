@@ -544,4 +544,17 @@ describe('sanitizeMarkdown', () => {
     expect(sanitizeMarkdown('Map<MyType, string>')).toBe('Map<MyType, string>');
     expect(sanitizeMarkdown('Promise<Result>')).toBe('Promise<Result>');
   });
+
+  it('strips svg and math tags', () => {
+    expect(sanitizeMarkdown('before <svg width="100">circle</svg> after')).toBe('before circle after');
+    expect(sanitizeMarkdown('inline <math>x+1</math> formula')).toBe('inline x+1 formula');
+  });
+
+  it('strips nested HTML comments', () => {
+    const result = sanitizeMarkdown('a <!-- <!-- --> --> b');
+    expect(result).not.toContain('<!--');
+    expect(result).not.toContain('-->');
+    expect(result).toMatch(/^a\s+b$/);
+    expect(sanitizeMarkdown('x <!-- <!-- a --> --> <!-- <!-- b --> --> y')).not.toContain('-->');
+  });
 });

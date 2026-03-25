@@ -339,11 +339,23 @@ function getSeverityLabel(severity: FindingSeverity): string {
   return 'Question';
 }
 
+// Sanitizes LLM-generated text (titles, descriptions, summaries) before embedding
+// it into the GitHub comment body. Our own structural markup (<details>, <summary>,
+// collapsible sections, etc.) is added AFTER sanitization and is never passed through here.
 function sanitizeMarkdown(text: string): string {
-  const htmlTags = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
+  // Some HTML tag names overlap with TypeScript generics (e.g. <select>, <input>).
+  // Stripping them is the safer default for a code review tool since dangling HTML
+  // in a GitHub comment is more harmful than losing a rare generic mention.
+  const htmlTags = 'a|abbr|address|article|aside|audio|b|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
 
-  return text
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, '')                          // HTML comments (including unclosed)
+  let result = text;
+  // Run comment stripping twice to handle nested comments like <!-- <!-- --> -->,
+  // then clean up any dangling close markers left behind.
+  result = result.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  result = result.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  result = result.replace(/-->/g, '');
+
+  return result
     .replace(new RegExp(`<\\/?(${htmlTags})(?:\\s[^>]*)?(?:>|$)`, 'gi'), '') // Known HTML tags (with or without attributes)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')                       // Images: keep alt text only
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')                        // Links: keep text only
