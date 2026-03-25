@@ -433,23 +433,26 @@ export function buildNitIssueBody(
     const icon = f.severity === 'suggestion' ? '\u{1F4A1}' : '\u{2753}';
     const safeTitle = sanitizeMarkdown(f.title);
     const safeDescription = sanitizeMarkdown(f.description);
+    const safeFile = f.file.replace(/`/g, "'").replace(/\n/g, ' ');
 
-    let item = `- [ ] ${icon} **${safeTitle}** \u2014 \`${f.file}:${f.line}\`\n`;
+    let item = `- [ ] ${icon} **${safeTitle}** \u2014 \`${safeFile}:${f.line}\`\n`;
     item += `  \n  ${safeDescription}\n`;
 
     if (f.codeContext) {
-      const ext = f.file.split('.').pop() || '';
+      const ext = safeFile.split('.').pop() || '';
       const langMap: Record<string, string> = {
         'ts': 'typescript', 'tsx': 'typescript', 'js': 'javascript', 'jsx': 'javascript',
         'rs': 'rust', 'py': 'python', 'go': 'go', 'java': 'java',
         'css': 'css', 'html': 'html', 'yml': 'yaml', 'yaml': 'yaml',
       };
       const lang = langMap[ext] || ext;
-      item += `  \n  \`\`\`${lang}\n${f.codeContext}\n  \`\`\`\n`;
+      const maxBt = (f.codeContext.match(/`+/g) || []).reduce((max, s) => Math.max(max, s.length), 0);
+      const fence = '`'.repeat(Math.max(3, maxBt + 1));
+      item += `  \n  ${fence}${lang}\n${f.codeContext}\n  ${fence}\n`;
     }
 
     item += `  \n  <details>\n  <summary>\u{1F916} Fix prompt</summary>\n\n`;
-    item += `  **File:** \`${f.file}\`\n`;
+    item += `  **File:** \`${safeFile}\`\n`;
     item += `  **Line:** ${f.line}\n`;
     item += `  **Finding:** ${safeTitle}\n`;
     item += `  **Severity:** ${f.severity}\n\n`;
