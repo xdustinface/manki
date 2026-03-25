@@ -385,7 +385,7 @@ Respond with ONLY a JSON array (no markdown fences, no explanation). Each findin
 - Be thorough but not pedantic. Quality over quantity.
 - When full file contents are provided, use them to understand context (variable definitions, imports, surrounding logic) but only flag issues in the changed code.
 - When review memory is provided, respect its learnings and suppressions. Do not flag patterns that are listed as intentionally suppressed.
-- If you notice changes in the diff that appear unrelated to the PR's stated purpose (title and description), flag them as a "nit" severity finding titled "Unrelated change: [brief description]". Recommend splitting into a separate PR. Only flag changes that are clearly out of scope — don't flag shared config, imports, or test files that naturally accompany the main changes.`;
+- If you notice changes in the diff that appear unrelated to the PR's stated purpose (title and description), flag them as a "suggestion" severity finding titled "Unrelated change: [brief description]". Recommend splitting into a separate PR. Only flag changes that are clearly out of scope — don't flag shared config, imports, or test files that naturally accompany the main changes.`;
 
   if (config.instructions) {
     prompt += `\n\n## Additional Instructions\n\n${config.instructions}`;
