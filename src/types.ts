@@ -62,6 +62,7 @@ export interface ReviewConfig {
     judge?: string;
   };
   nit_handling?: 'issues' | 'comments';
+  review_passes?: number;
 }
 
 export interface DiffFile {

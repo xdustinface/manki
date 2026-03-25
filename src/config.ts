@@ -40,6 +40,7 @@ export const DEFAULT_CONFIG: ReviewConfig = {
     repo: '',
   },
   nit_handling: 'issues',
+  review_passes: 1,
 };
 
 const KNOWN_KEYS = new Set([
@@ -57,6 +58,7 @@ const KNOWN_KEYS = new Set([
   'memory',
   'models',
   'nit_handling',
+  'review_passes',
 ]);
 
 const REPO_FORMAT = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
@@ -179,6 +181,15 @@ function validateConfig(config: Record<string, unknown>): ConfigValidationResult
   if ('nit_handling' in config) {
     if (config.nit_handling !== 'issues' && config.nit_handling !== 'comments') {
       errors.push('`nit_handling` must be "issues" or "comments"');
+    }
+  }
+
+  if ('review_passes' in config) {
+    if (typeof config.review_passes !== 'number' ||
+        !Number.isInteger(config.review_passes) ||
+        config.review_passes < 1 ||
+        config.review_passes > 5) {
+      errors.push('`review_passes` must be an integer between 1 and 5');
     }
   }
 

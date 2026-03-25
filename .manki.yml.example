@@ -52,6 +52,10 @@
 # Where to post nit findings: 'issues' (separate GitHub issue) or 'comments' (inline PR comments)
 # nit_handling: issues
 
+# Multi-pass verification: run each reviewer N times with shuffled file ordering.
+# Only findings that appear consistently across passes are kept, reducing false positives.
+# review_passes: 1  # default: no multi-pass. Set 3 for Diffray-style verification.
+
 # Review memory (requires memory_repo_token)
 # Stores learnings, suppressions, and patterns to improve reviews over time
 # memory:

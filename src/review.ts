@@ -4,7 +4,7 @@ import { ClaudeClient } from './claude';
 import { runJudgeAgent, JudgeInput } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue } from './github';
-import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, TeamRoster, PrContext } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext } from './types';
 import { extractJSON } from './json';
 
 export const AGENT_POOL: readonly ReviewerAgent[] = Object.freeze([
@@ -120,6 +120,46 @@ export function selectTeam(
   return { level, agents: selected, lineCount };
 }
 
+export function shuffleDiffFiles(diff: ParsedDiff): ParsedDiff {
+  const shuffled = [...diff.files];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return { ...diff, files: shuffled };
+}
+
+export function rebuildRawDiff(diff: ParsedDiff): string {
+  return diff.files.map((f: DiffFile) => {
+    const header = `diff --git a/${f.path} b/${f.path}`;
+    const hunks = f.hunks.map(h => {
+      const hunkHeader = `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`;
+      return `${hunkHeader}\n${h.content}`;
+    }).join('\n');
+    return `${header}\n${hunks}`;
+  }).join('\n');
+}
+
+export function findingsMatch(a: Finding, b: Finding): boolean {
+  if (a.file !== b.file) return false;
+  if (Math.abs(a.line - b.line) > 3) return false;
+  return titlesMatch(a.title, b.title);
+}
+
+export function intersectFindings(passes: Finding[][], threshold: number): Finding[] {
+  if (passes.length === 0) return [];
+  const pass0 = passes[0];
+  return pass0.filter(f => {
+    let count = 1;
+    for (let i = 1; i < passes.length; i++) {
+      if (passes[i].some(other => findingsMatch(f, other))) {
+        count++;
+      }
+    }
+    return count >= threshold;
+  });
+}
+
 export interface ReviewClients {
   reviewer: ClaudeClient;
   judge: ClaudeClient;
@@ -141,25 +181,64 @@ export async function runReview(
 
   const memoryContext = memory ? buildMemoryContext(memory) : '';
 
-  core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
-  const agentResults = await Promise.allSettled(
-    team.agents.map(agent =>
-      runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
-    )
-  );
+  const passes = config.review_passes ?? 1;
+  const multiPass = passes > 1;
 
   const allFindings: Finding[] = [];
-  for (let i = 0; i < agentResults.length; i++) {
-    const result = agentResults[i];
-    if (result.status === 'fulfilled') {
-      allFindings.push(...result.value);
-      core.info(`${team.agents[i].name}: ${result.value.length} findings`);
-    } else {
-      core.warning(`${team.agents[i].name} failed: ${result.reason}`);
+  let allAgentsFailed = true;
+
+  if (multiPass) {
+    core.info(`Running ${team.agents.length} reviewer agents with ${passes} passes each (multi-pass mode)...`);
+    for (const agent of team.agents) {
+      const passResults = await Promise.allSettled(
+        Array.from({ length: passes }, () => {
+          const shuffledDiff = shuffleDiffFiles(diff);
+          const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
+          return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
+        })
+      );
+
+      const passFindings: Finding[][] = [];
+      for (const result of passResults) {
+        if (result.status === 'fulfilled') {
+          passFindings.push(result.value);
+        } else {
+          core.warning(`${agent.name} pass failed: ${result.reason}`);
+        }
+      }
+
+      if (passFindings.length > 0) {
+        allAgentsFailed = false;
+        const threshold = Math.ceil(passes / 2);
+        const consistent = intersectFindings(passFindings, threshold);
+        const totalRaw = passFindings.reduce((sum, p) => sum + p.length, 0);
+        core.info(`Multi-pass: ${agent.name} — ${passFindings.length} passes, ${consistent.length} consistent findings (from ${totalRaw} raw)`);
+        allFindings.push(...consistent);
+      } else {
+        core.warning(`${agent.name}: all passes failed`);
+      }
+    }
+  } else {
+    core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
+    const agentResults = await Promise.allSettled(
+      team.agents.map(agent =>
+        runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
+      )
+    );
+
+    for (let i = 0; i < agentResults.length; i++) {
+      const result = agentResults[i];
+      if (result.status === 'fulfilled') {
+        allAgentsFailed = false;
+        allFindings.push(...result.value);
+        core.info(`${team.agents[i].name}: ${result.value.length} findings`);
+      } else {
+        core.warning(`${team.agents[i].name} failed: ${result.reason}`);
+      }
     }
   }
 
-  if (allFindings.length === 0 && agentResults.every(r => r.status === 'rejected')) {
+  if (allFindings.length === 0 && allAgentsFailed) {
     return {
       verdict: 'COMMENT',
       summary: 'Review could not be completed — all reviewer agents failed.',
