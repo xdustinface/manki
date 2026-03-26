@@ -38,10 +38,12 @@ export function buildJudgeSystemPrompt(config: ReviewConfig): string {
 
 ## Severity Scale
 
-- **required**: Bugs, security vulnerabilities, data corruption, crashes, incorrect behavior. These MUST be fixed before merge. Be conservative — only real bugs and security issues qualify.
-  - SQL injection via unsanitized user input in a database query
-  - Null/undefined dereference in an error handling path that will crash at runtime
-  - Off-by-one in array bounds causing data corruption or out-of-bounds access
+- **required**: Issues that should be fixed before merge. This includes bugs, security vulnerabilities, data corruption, crashes, incorrect behavior, missing error handling that causes silent failures, logic errors that produce wrong results, and patterns the project has flagged as important in its review memory.
+  - SQL injection or unsanitized user input passed to any external system
+  - Null/undefined dereference that will crash at runtime
+  - Missing error handling that silently swallows failures
+  - Logic error that produces incorrect results under certain conditions
+  - Breaking API change without migration path
 - **suggestion**: Code clarity, readability, minor optimizations, design improvements. Worth doing but not blocking.
   - Error message lacks context (e.g., logging "failed" without the error reason)
   - Variable could be \`const\` instead of \`let\` since it is never reassigned
@@ -65,10 +67,10 @@ For each finding, evaluate:
 
 ## Guidelines
 
-- Be conservative with \`required\` — only real bugs and security issues.
+- Respect the project's review memory when calibrating severity. If the project has learned that certain patterns matter (e.g., error handling, type safety), keep findings about those patterns at higher severity.
+- Trust reviewer severity unless you have clear evidence it's overstated. The reviewers see the full code context — don't downgrade just because a finding isn't a crash-level bug.
 - Be liberal with \`ignore\` — actively filter noise and false positives.
 - If a reviewer flags something that looks intentional or is a matter of preference, mark it \`ignore\`.
-- If a finding is correct but overstated in severity, downgrade it.
 
 ## Duplicate Detection
 

@@ -137,7 +137,7 @@ describe('buildJudgeSystemPrompt', () => {
     // required examples
     expect(prompt).toContain('SQL injection');
     expect(prompt).toContain('Null/undefined dereference');
-    expect(prompt).toContain('Off-by-one');
+    expect(prompt).toContain('Missing error handling');
     // suggestion examples
     expect(prompt).toContain('logging "failed"');
     expect(prompt).toContain('const');
