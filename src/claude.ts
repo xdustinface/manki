@@ -7,6 +7,12 @@ import * as core from '@actions/core';
 
 const execFileAsync = promisify(execFile);
 
+let cliInstallPromise: Promise<string> | null = null;
+
+export function resetCLIInstallPromise(): void {
+  cliInstallPromise = null;
+}
+
 export interface ClaudeClientOptions {
   oauthToken?: string;
   apiKey?: string;
@@ -59,18 +65,18 @@ export class ClaudeClient {
       this.cachedCLIPath = stdout.trim();
       return this.cachedCLIPath;
     } catch {
-      core.info('Claude CLI not found, installing via npm...');
-      await execFileAsync('npm', ['install', '-g', '@anthropic-ai/claude-code'], {
-        timeout: 120000,
-      });
-
-      try {
-        const { stdout } = await execFileAsync('which', ['claude']);
-        this.cachedCLIPath = stdout.trim();
-        return this.cachedCLIPath;
-      } catch {
-        throw new Error('Failed to install Claude CLI');
+      if (!cliInstallPromise) {
+        cliInstallPromise = (async () => {
+          core.info('Claude CLI not found, installing via npm...');
+          await execFileAsync('npm', ['install', '-g', '@anthropic-ai/claude-code'], {
+            timeout: 120000,
+          });
+          const { stdout } = await execFileAsync('which', ['claude']);
+          return stdout.trim();
+        })();
       }
+      this.cachedCLIPath = await cliInstallPromise;
+      return this.cachedCLIPath;
     }
   }
 
