@@ -71,12 +71,21 @@ export class ClaudeClient {
           await execFileAsync('npm', ['install', '-g', '@anthropic-ai/claude-code'], {
             timeout: 120000,
           });
-          const { stdout } = await execFileAsync('which', ['claude']);
-          return stdout.trim();
+          try {
+            const { stdout } = await execFileAsync('which', ['claude']);
+            return stdout.trim();
+          } catch {
+            throw new Error('Failed to install Claude CLI');
+          }
         })();
       }
-      this.cachedCLIPath = await cliInstallPromise;
-      return this.cachedCLIPath;
+      try {
+        this.cachedCLIPath = await cliInstallPromise;
+        return this.cachedCLIPath;
+      } catch (error) {
+        cliInstallPromise = null;
+        throw error;
+      }
     }
   }
 
