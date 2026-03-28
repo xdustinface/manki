@@ -749,4 +749,4 @@ function parseTriageBody(body: string): TriageResult {
   return { accepted, rejected };
 }
 
-export { parseCommand, buildReplyContext, parseTriageBody, ParsedCommand, TriageFinding, TriageResult, BOT_MARKER, isBotComment, hasBotMention };
+export { parseCommand, buildReplyContext, parseTriageBody, ParsedCommand, TriageFinding, TriageResult, BOT_MARKER, BOT_MENTION_PATTERN, isBotComment, hasBotMention };

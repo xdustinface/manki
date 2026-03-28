@@ -5,7 +5,7 @@ import { createAuthenticatedOctokit, getMemoryToken } from './auth';
 import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
-import { handleReviewCommentReply, handlePRComment } from './interaction';
+import { handleReviewCommentReply, handlePRComment, BOT_MENTION_PATTERN } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
@@ -552,7 +552,7 @@ function isReviewRequest(): boolean {
   if (!comment) return false;
 
   const body = comment.body?.toLowerCase() ?? '';
-  return body.includes('@manki') && body.includes('review');
+  return BOT_MENTION_PATTERN.test(body) && body.includes('review');
 }
 
 function hasBotMention(): boolean {
@@ -560,7 +560,7 @@ function hasBotMention(): boolean {
   if (!comment) return false;
 
   const body = comment.body?.toLowerCase() ?? '';
-  return body.includes('@manki') && !body.includes('review');
+  return BOT_MENTION_PATTERN.test(body) && !body.includes('review');
 }
 
 async function handleInteraction(): Promise<void> {
