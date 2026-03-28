@@ -1379,7 +1379,7 @@ describe('updateProgressComment', () => {
   it('renders dashboard without metadata when metadata is not provided', async () => {
     await updateProgressComment(mockOctokit, 'owner', 'repo', 123, baseDashboard);
     const body = mockUpdateComment.mock.calls[0][0].body as string;
-    expect(body).toContain('**Manki** — Review complete');
+    expect(body).toContain('**Manki** — Review failed');
     expect(body).toContain('\u2713 Parsed diff');
     expect(body).toContain('\u2713 Judge');
     expect(body).not.toContain('Review metadata');
@@ -1388,6 +1388,7 @@ describe('updateProgressComment', () => {
   it('renders config section in metadata', async () => {
     await updateProgressComment(mockOctokit, 'owner', 'repo', 123, baseDashboard, baseMetadata);
     const body = mockUpdateComment.mock.calls[0][0].body as string;
+    expect(body).toContain('**Manki** — Review complete');
     expect(body).toContain('<summary>Review metadata</summary>');
     expect(body).toContain('**Config:**');
     expect(body).toContain('reviewer=claude-sonnet-4-20250514');

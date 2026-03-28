@@ -219,7 +219,7 @@ export async function updateProgressComment(
 ): Promise<void> {
   const parts: string[] = [
     BOT_MARKER,
-    '**Manki** — Review complete',
+    `**Manki** — ${metadata ? 'Review complete' : 'Review failed'}`,
     '',
     buildDashboard({ ...dashboard, phase: 'complete' }),
   ];
