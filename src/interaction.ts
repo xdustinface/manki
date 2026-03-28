@@ -202,6 +202,7 @@ interface ParsedCommand {
   args: string;
 }
 
+const BOT_MENTION_PATTERN = /(?:@manki-labs|@manki|\/manki)\b/;
 const BOT_PREFIX_PATTERN = /(?:@manki-labs|@manki|\/manki)\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/;
 
 function parseCommand(body: string): ParsedCommand {
@@ -729,8 +730,7 @@ function isBotComment(body: string): boolean {
 }
 
 function hasBotMention(body: string): boolean {
-  const lower = body.toLowerCase();
-  return lower.includes('@manki') || lower.includes('/manki');
+  return BOT_MENTION_PATTERN.test(body.toLowerCase());
 }
 
 export { parseCommand, buildReplyContext, ParsedCommand, BOT_MARKER, isBotComment, hasBotMention };
