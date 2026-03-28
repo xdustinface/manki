@@ -20,12 +20,24 @@ export async function resolveGitHubToken(
   repo: string,
 ): Promise<TokenResult> {
   try {
+    // Request OIDC token from GitHub Actions
+    let oidcToken: string;
+    try {
+      oidcToken = await core.getIDToken('manki.dustinface.me');
+    } catch {
+      core.info('OIDC token not available — using github-actions[bot] identity');
+      return { token: githubToken, identity: 'actions' };
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
     const tokenResponse = await fetch(tokenUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${oidcToken}`,
+      },
       body: JSON.stringify({ owner, repo }),
       signal: controller.signal,
     });
