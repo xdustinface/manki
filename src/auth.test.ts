@@ -64,7 +64,8 @@ describe('resolveGitHubToken', () => {
     jest.restoreAllMocks();
   });
 
-  it('returns app token when token service succeeds', async () => {
+  it('returns app token when OIDC and token service succeed', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       return new Response(
         JSON.stringify({ token: APP_TOKEN, expires_at: '2026-03-28T12:00:00Z' }),
@@ -80,10 +81,21 @@ describe('resolveGitHubToken', () => {
 
     const call = (global.fetch as jest.Mock).mock.calls[0];
     expect(call[0]).toBe(TOKEN_URL);
+    expect(call[1].headers['Authorization']).toBe('Bearer fake-oidc-token');
     expect(JSON.parse(call[1].body)).toEqual({ owner: OWNER, repo: REPO });
   });
 
+  it('falls back to github_token when OIDC token is not available', async () => {
+    jest.spyOn(core, 'getIDToken').mockRejectedValue(new Error('OIDC not available'));
+
+    const result = await resolveGitHubToken(GITHUB_TOKEN, TOKEN_URL, OWNER, REPO);
+
+    expect(result).toEqual<TokenResult>({ token: GITHUB_TOKEN, identity: 'actions' });
+    expect(core.info).toHaveBeenCalledWith(expect.stringContaining('OIDC token not available'));
+  });
+
   it('falls back when token service returns not found', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       return new Response('Not Found', { status: 404 });
     });
@@ -95,6 +107,7 @@ describe('resolveGitHubToken', () => {
   });
 
   it('falls back when token service returns an error', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       return new Response('Internal Server Error', { status: 500 });
     });
@@ -106,6 +119,7 @@ describe('resolveGitHubToken', () => {
   });
 
   it('falls back when token service returns invalid response (empty token)', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       return new Response(
         JSON.stringify({ token: '', expires_at: '2026-03-28T12:00:00Z' }),
@@ -120,6 +134,7 @@ describe('resolveGitHubToken', () => {
   });
 
   it('falls back when token service returns invalid response (missing token)', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       return new Response(
         JSON.stringify({ expires_at: '2026-03-28T12:00:00Z' }),
@@ -134,6 +149,7 @@ describe('resolveGitHubToken', () => {
   });
 
   it('falls back on network error', async () => {
+    jest.spyOn(core, 'getIDToken').mockResolvedValue('fake-oidc-token');
     mockFetch(async () => {
       throw new Error('Network failure');
     });
