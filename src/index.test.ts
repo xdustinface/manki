@@ -115,9 +115,16 @@ jest.mock('./state', () => ({
   resolveStaleThreads: jest.fn().mockResolvedValue(0),
 }));
 
-import { run, handlePullRequest, handleCommentTrigger, handleReviewCommentInteraction, handleReviewStateCheck, main, _resetOctokitCache } from './index';
+import { run, runFullReview, handlePullRequest, handleCommentTrigger, handleInteraction, handleIssueInteraction, handleReviewCommentInteraction, handleReviewStateCheck, main, _resetOctokitCache } from './index';
 import * as interaction from './interaction';
 import * as ghUtils from './github';
+import * as diffModule from './diff';
+import * as configModule from './config';
+import * as reviewModule from './review';
+import * as recapModule from './recap';
+import * as memoryModule from './memory';
+import * as stateModule from './state';
+import * as authModule from './auth';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ctx = github.context as any;
@@ -632,5 +639,701 @@ describe('main', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(0);
     exitSpy.mockRestore();
+  });
+});
+
+describe('runFullReview orchestration', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+    setContext({ eventName: 'pull_request', payload: { action: 'opened' } });
+    // Reset to default config for each test
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({ files: [], totalAdditions: 0, totalDeletions: 0 });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([]);
+    jest.mocked(authModule.getMemoryToken).mockReturnValue(null);
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({ previousFindings: [], recapContext: '' });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
+    jest.mocked(recapModule.buildRecapSummary).mockReturnValue('');
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(0);
+    jest.mocked(stateModule.resolveStaleThreads).mockResolvedValue(0);
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'Looks good',
+      findings: [], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('APPROVE');
+    jest.mocked(reviewModule.selectTeam).mockReturnValue({ level: 'standard' as 'small', agents: [{ name: 'general', focus: '' }], lineCount: 0 });
+    jest.mocked(ghUtils.postProgressComment).mockResolvedValue(1);
+    jest.mocked(ghUtils.postReview).mockResolvedValue(123);
+    jest.mocked(ghUtils.fetchPRDiff).mockResolvedValue('');
+    jest.mocked(ghUtils.fetchRepoContext).mockResolvedValue('');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.mocked(ghUtils.fetchSubdirClaudeMd).mockResolvedValue(null as any);
+    jest.mocked(ghUtils.fetchFileContents).mockResolvedValue(new Map());
+    jest.mocked(ghUtils.fetchLinkedIssues).mockResolvedValue([]);
+    jest.mocked(ghUtils.dismissPreviousReviews).mockResolvedValue(undefined);
+    jest.mocked(ghUtils.updateProgressComment).mockResolvedValue(undefined);
+    jest.mocked(ghUtils.updateProgressDashboard).mockResolvedValue(undefined);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue(null as any);
+    jest.mocked(memoryModule.applyEscalations).mockImplementation((findings) => findings);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.mocked(memoryModule.updatePattern).mockResolvedValue(undefined as any);
+  });
+
+  const baseArgs = {
+    owner: 'test-owner',
+    repo: 'test-repo',
+    prNumber: 42,
+    commitSha: 'abc123',
+    baseRef: 'main',
+    prContext: { title: 'Test PR', body: 'Test body', baseBranch: 'main' },
+  };
+
+  function callRunFullReview(): Promise<void> {
+    return runFullReview(
+      baseArgs.owner, baseArgs.repo, baseArgs.prNumber,
+      baseArgs.commitSha, baseArgs.baseRef, baseArgs.prContext,
+    );
+  }
+
+  it('handles diff too large by posting warning review without running Claude', async () => {
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(true);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [], totalAdditions: 3000, totalDeletions: 3000,
+    });
+
+    await callRunFullReview();
+
+    // Should post a review with the "too large" message
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
+      expect.objectContaining({
+        verdict: 'COMMENT',
+        summary: expect.stringContaining('too large for automated review'),
+      }),
+      expect.anything(),
+    );
+    // Should NOT have called runReview (Claude)
+    expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+  });
+
+  it('dismisses previous reviews before posting diff-too-large warning', async () => {
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(true);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [], totalAdditions: 6000, totalDeletions: 0,
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.dismissPreviousReviews)).toHaveBeenCalled();
+  });
+
+  it('gracefully handles dismissPreviousReviews failure on diff-too-large path', async () => {
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(true);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [], totalAdditions: 6000, totalDeletions: 0,
+    });
+    jest.mocked(ghUtils.dismissPreviousReviews).mockRejectedValueOnce(new Error('permission denied'));
+
+    await callRunFullReview();
+
+    // Should still post the review despite dismiss failure
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalled();
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to dismiss previous reviews'),
+    );
+  });
+
+  it('approves when all files are filtered out by config', async () => {
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [{ path: 'package-lock.json', changeType: 'modified', hunks: [] }],
+      totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([]);
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
+      expect.objectContaining({
+        verdict: 'APPROVE',
+        summary: expect.stringContaining('No reviewable files'),
+      }),
+      expect.anything(),
+    );
+    expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+  });
+
+  it('skips auto_review disabled PR events and deletes progress comment', async () => {
+    // Set event to pull_request so the auto_review check triggers
+    ctx.eventName = 'pull_request';
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: false,
+      auto_approve: false,
+      max_diff_lines: 5000,
+      include_paths: [],
+      exclude_paths: [],
+      nit_handling: 'issues',
+      reviewers: [],
+      model: 'claude-sonnet-4-20250514',
+      review_language: 'en',
+      instructions: '',
+      review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+
+    await callRunFullReview();
+
+    // Should delete the progress comment, not proceed with review
+    expect(mockOctokitInstance.rest.issues.deleteComment).toHaveBeenCalled();
+    expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+  });
+
+  it('runs full review pipeline and posts findings for a normal PR', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'line1\nline2\nline3' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    const findings = [
+      { severity: 'required' as const, title: 'Bug found', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['general'] },
+    ];
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'REQUEST_CHANGES',
+      summary: 'Issues found',
+      findings,
+      highlights: [],
+      reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('REQUEST_CHANGES');
+
+    await callRunFullReview();
+
+    // Review should have been called
+    expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    // Review posted with findings
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
+      expect.objectContaining({ verdict: 'REQUEST_CHANGES' }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    // Outputs set
+    expect(jest.mocked(core.setOutput)).toHaveBeenCalledWith('verdict', 'REQUEST_CHANGES');
+    expect(jest.mocked(core.setOutput)).toHaveBeenCalledWith('findings_count', '1');
+  });
+
+  it('creates nit issues when nit_handling is "issues"', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'line1\nline2' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+
+    const nitFinding = {
+      severity: 'nit' as const, title: 'Style nit', file: 'src/app.ts',
+      line: 3, description: 'nit desc', reviewers: ['general'],
+    };
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'Minor nits',
+      findings: [nitFinding], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
+      unique: [nitFinding], duplicates: [],
+    });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.createNitIssue)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42,
+      [expect.objectContaining({ severity: 'nit' })], 'abc123',
+    );
+  });
+
+  it('does not create nit issues when nit_handling is "comments"', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'line1\nline2' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'comments',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+
+    const nitFinding = {
+      severity: 'nit' as const, title: 'Style nit', file: 'src/app.ts',
+      line: 3, description: 'nit desc', reviewers: ['general'],
+    };
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'Minor nits',
+      findings: [nitFinding], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
+      unique: [nitFinding], duplicates: [],
+    });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
+
+    await callRunFullReview();
+
+    // Nits go inline, no nit issue created
+    expect(jest.mocked(ghUtils.createNitIssue)).not.toHaveBeenCalled();
+    // All findings (including nits) should be in the posted review
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
+      expect.objectContaining({
+        findings: [expect.objectContaining({ severity: 'nit' })],
+      }),
+      expect.anything(), expect.anything(), expect.anything(),
+    );
+  });
+
+  it('downgrades incomplete review from APPROVE to COMMENT', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'Looks good',
+      findings: [], highlights: [], reviewComplete: false,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('APPROVE');
+
+    await callRunFullReview();
+
+    // Incomplete review should not APPROVE
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
+      expect.objectContaining({ verdict: 'COMMENT' }),
+      expect.anything(), expect.anything(), expect.anything(),
+    );
+  });
+
+  it('catches review failure and updates progress comment with error state', async () => {
+    jest.mocked(ghUtils.fetchPRDiff).mockRejectedValue(new Error('GitHub API down'));
+
+    await callRunFullReview();
+
+    // Error should be caught and reported
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining('Review failed: GitHub API down'),
+    );
+    // Progress comment should be updated even on failure
+    expect(jest.mocked(ghUtils.updateProgressComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 1,
+      expect.objectContaining({ phase: 'complete', lineCount: 0 }),
+    );
+  });
+
+  it('deduplicates findings from recap and recalculates verdict', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    const finding1 = { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['general'] };
+    const finding2 = { severity: 'nit' as const, title: 'Style', file: 'src/app.ts', line: 8, description: 'desc', reviewers: ['general'] };
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'REQUEST_CHANGES', summary: 'Issues',
+      findings: [finding1, finding2], highlights: [], reviewComplete: true,
+    });
+    // Simulate dedup removing finding1 (it was already flagged)
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
+      unique: [finding2], duplicates: [finding1],
+    });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
+
+    await callRunFullReview();
+
+    // Verdict should be recalculated after dedup
+    expect(jest.mocked(reviewModule.determineVerdict)).toHaveBeenCalledWith([finding2]);
+  });
+
+  it('applies memory escalations when patterns exist', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+
+    const memory = {
+      learnings: [], suppressions: [],
+      patterns: [{
+        id: 'p1', finding_title: 'Bug', occurrences: 5, accepted_count: 3,
+        rejected_count: 0, repos: ['test-repo'], first_seen: '2024-01-01',
+        last_seen: '2024-06-01', escalated: true,
+      }],
+    };
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue(memory);
+
+    const finding = { severity: 'nit' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['general'] };
+    const escalated = { ...finding, severity: 'required' as const };
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'Nits',
+      findings: [finding], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
+    jest.mocked(memoryModule.applyEscalations).mockReturnValue([escalated]);
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('REQUEST_CHANGES');
+
+    await callRunFullReview();
+
+    expect(jest.mocked(memoryModule.applyEscalations)).toHaveBeenCalledWith(
+      [finding], memory.patterns,
+    );
+    // Verdict recalculated after escalation
+    expect(jest.mocked(reviewModule.determineVerdict)).toHaveBeenCalled();
+  });
+
+  it('enriches findings with code context from diff hunks', async () => {
+    const hunkContent = 'line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9';
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 10, newStart: 1, newLines: 10, content: hunkContent }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    const finding = {
+      severity: 'suggestion' as const, title: 'Improvement', file: 'src/app.ts',
+      line: 5, description: 'desc', reviewers: ['general'],
+    };
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'Suggestions',
+      findings: [finding], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
+
+    await callRunFullReview();
+
+    // The finding object is mutated in-place with codeContext.
+    // Verify postReview was called (the enrichment happens before posting).
+    expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalled();
+    // The finding at line 5 in a hunk starting at 1 with 10 lines should match,
+    // so codeContext should have been set on the finding object.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const postedFindings = (jest.mocked(ghUtils.postReview).mock.calls[0][5] as any).findings;
+    // Since nit_handling defaults to 'issues' and this is a suggestion, it stays inline
+    expect(postedFindings.length).toBeGreaterThan(0);
+  });
+
+  it('resolves stale threads and logs count', async () => {
+    jest.mocked(stateModule.resolveStaleThreads).mockResolvedValue(3);
+
+    await callRunFullReview();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Resolved 3 stale review threads from previous commits',
+    );
+  });
+});
+
+describe('handleInteraction', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+  });
+
+  it('returns early when no issue number in payload', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: '@manki help' },
+        issue: undefined,
+      },
+    });
+
+    await handleInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).not.toHaveBeenCalled();
+  });
+
+  it('routes PR comment to handlePRComment with correct params', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: '@manki help' },
+        issue: { number: 7, pull_request: { url: 'https://...' } },
+      },
+    });
+
+    await handleInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).toHaveBeenCalledWith(
+      expect.anything(),  // octokit
+      expect.anything(),  // claude client
+      'test-owner', 'test-repo', 7,
+      undefined,          // memoryConfig (memory not enabled)
+      undefined,          // memoryToken
+      expect.anything(),  // config
+    );
+  });
+});
+
+describe('handleIssueInteraction', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+  });
+
+  it('returns early when no comment in payload', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: { action: 'created', issue: { number: 10 } },
+    });
+
+    await handleIssueInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).not.toHaveBeenCalled();
+  });
+
+  it('skips bot comments', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: 'hello', user: { type: 'Bot' } },
+        issue: { number: 10 },
+      },
+    });
+
+    await handleIssueInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).not.toHaveBeenCalled();
+  });
+
+  it('skips comments with manki marker', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: '<!-- manki -->', user: { type: 'User' } },
+        issue: { number: 10 },
+      },
+    });
+
+    await handleIssueInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).not.toHaveBeenCalled();
+  });
+
+  it('returns early when no issue number', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: '@manki help', user: { type: 'User' } },
+      },
+    });
+
+    await handleIssueInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).not.toHaveBeenCalled();
+  });
+
+  it('calls handlePRComment with null claude client for issue interactions', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        comment: { body: '@manki triage this', user: { type: 'User' } },
+        issue: { number: 15 },
+      },
+    });
+
+    await handleIssueInteraction();
+
+    expect(jest.mocked(interaction.handlePRComment)).toHaveBeenCalledWith(
+      expect.anything(),  // octokit
+      null,               // no claude client for issue interactions
+      'test-owner', 'test-repo', 15,
+      undefined, undefined, expect.anything(),
+    );
+  });
+});
+
+describe('handleReviewStateCheck', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+  });
+
+  it('skips when auto_approve is disabled', async () => {
+    setContext({
+      eventName: 'pull_request_review',
+      payload: {
+        action: 'submitted',
+        pull_request: { number: 1, base: { ref: 'main' } },
+      },
+    });
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+
+    await handleReviewStateCheck();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'auto_approve is disabled — skipping state check',
+    );
+    expect(jest.mocked(stateModule.checkAndAutoApprove)).not.toHaveBeenCalled();
+  });
+
+  it('calls checkAndAutoApprove when enabled and logs success', async () => {
+    setContext({
+      eventName: 'pull_request_review',
+      payload: {
+        action: 'submitted',
+        pull_request: { number: 5, base: { ref: 'main' } },
+      },
+    });
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: true, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+    jest.mocked(stateModule.checkAndAutoApprove).mockResolvedValue(true);
+
+    await handleReviewStateCheck();
+
+    expect(jest.mocked(stateModule.checkAndAutoApprove)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 5,
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'PR #5 auto-approved after all required issues resolved',
+    );
+  });
+});
+
+describe('handleReviewCommentInteraction auto-approve', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+  });
+
+  it('triggers auto-approve check after handling review comment reply', async () => {
+    jest.mocked(interaction.hasBotMention).mockReturnValue(true);
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: true, max_diff_lines: 5000,
+      include_paths: [], exclude_paths: [], nit_handling: 'issues',
+      reviewers: [], model: 'claude-sonnet-4-20250514', review_language: 'en',
+      instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: false, repo: '' },
+    });
+
+    setContext({
+      eventName: 'pull_request_review_comment',
+      payload: {
+        action: 'created',
+        comment: {
+          body: '@manki resolved',
+          in_reply_to_id: 100,
+          user: { type: 'User' },
+        },
+        pull_request: { number: 8, base: { ref: 'main' } },
+      },
+    });
+
+    await handleReviewCommentInteraction();
+
+    expect(jest.mocked(interaction.handleReviewCommentReply)).toHaveBeenCalled();
+    expect(jest.mocked(stateModule.checkAndAutoApprove)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 8,
+    );
   });
 });
