@@ -1,4 +1,8 @@
-import { areAllRequiredResolved, resolveStaleThreads, ReviewThread } from './state';
+import { areAllRequiredResolved, resolveStaleThreads, fetchBotReviewThreads, checkAndAutoApprove, BOT_MARKER, ReviewThread } from './state';
+
+jest.mock('./github', () => ({
+  dismissPreviousReviews: jest.fn().mockResolvedValue(undefined),
+}));
 
 const makeThread = (overrides: Partial<ReviewThread> = {}): ReviewThread => ({
   id: 'thread-1',
@@ -173,5 +177,277 @@ describe('resolveStaleThreads', () => {
 
     expect(count).toBe(0);
     expect(graphqlMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues resolving remaining threads when one mutation fails', async () => {
+    const graphqlMock = jest.fn()
+      .mockResolvedValueOnce({
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                makeGraphqlThreadNode({ id: 't1', commitOid: 'old-sha-111' }),
+                makeGraphqlThreadNode({ id: 't2', commitOid: 'old-sha-222' }),
+              ],
+            },
+          },
+        },
+      })
+      .mockRejectedValueOnce(new Error('GraphQL mutation failed'))
+      .mockResolvedValueOnce({ resolveReviewThread: { thread: { isResolved: true } } });
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const count = await resolveStaleThreads(octokit, 'owner', 'repo', 1, currentSha);
+
+    expect(count).toBe(1);
+    expect(graphqlMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+function makeGraphqlFetchThreadNode(overrides: {
+  id?: string;
+  isResolved?: boolean;
+  body?: string;
+  authorLogin?: string | null;
+} = {}) {
+  return {
+    id: overrides.id ?? 'thread-1',
+    isResolved: overrides.isResolved ?? false,
+    comments: {
+      nodes: [{
+        body: overrides.body ?? '<!-- manki:required:test-finding --> **Required**: test finding',
+        author: overrides.authorLogin !== undefined
+          ? (overrides.authorLogin === null ? null : { login: overrides.authorLogin })
+          : { login: 'github-actions[bot]' },
+      }],
+    },
+  };
+}
+
+function makeGraphqlFetchResponse(nodes: ReturnType<typeof makeGraphqlFetchThreadNode>[]) {
+  return {
+    repository: {
+      pullRequest: {
+        reviewThreads: { nodes },
+      },
+    },
+  };
+}
+
+describe('fetchBotReviewThreads', () => {
+  it('returns bot threads with parsed severity and title', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:null-check --> **Required**: null check' }),
+        makeGraphqlFetchThreadNode({ id: 't2', body: '<!-- manki:suggestion:rename-var --> **Suggestion**: rename var', isResolved: true }),
+      ]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(2);
+    expect(threads[0]).toEqual({ id: 't1', isResolved: false, isRequired: true, findingTitle: 'null check' });
+    expect(threads[1]).toEqual({ id: 't2', isResolved: true, isRequired: false, findingTitle: 'rename var' });
+  });
+
+  it('filters out non-bot threads', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:test --> required finding' }),
+        makeGraphqlFetchThreadNode({ id: 't2', body: 'just a regular human comment' }),
+      ]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0].id).toBe('t1');
+  });
+
+  it('identifies threads by BOT_MARKER alone', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([
+        makeGraphqlFetchThreadNode({ id: 't1', body: `${BOT_MARKER} some comment without severity` }),
+      ]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0].isRequired).toBe(false);
+    expect(threads[0].findingTitle).toBe('Unknown');
+  });
+
+  it('parses nit and ignore severities as non-required', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:nit:style-issue --> nit' }),
+        makeGraphqlFetchThreadNode({ id: 't2', body: '<!-- manki:ignore:false-positive --> ignore' }),
+      ]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(2);
+    expect(threads[0]).toEqual({ id: 't1', isResolved: false, isRequired: false, findingTitle: 'style issue' });
+    expect(threads[1]).toEqual({ id: 't2', isResolved: false, isRequired: false, findingTitle: 'false positive' });
+  });
+
+  it('returns empty array when no threads exist', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(0);
+  });
+});
+
+describe('checkAndAutoApprove', () => {
+  const { dismissPreviousReviews } = jest.requireMock('./github') as { dismissPreviousReviews: jest.Mock };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function makeMockOctokit(overrides: {
+    threads?: ReturnType<typeof makeGraphqlFetchThreadNode>[];
+    prHeadSha?: string;
+    createReviewFn?: jest.Mock;
+  } = {}) {
+    const threads = overrides.threads ?? [];
+    const prHeadSha = overrides.prHeadSha ?? 'abc123';
+    const createReviewFn = overrides.createReviewFn ?? jest.fn().mockResolvedValue({});
+
+    return {
+      graphql: jest.fn().mockResolvedValue(makeGraphqlFetchResponse(threads)),
+      rest: {
+        pulls: {
+          get: jest.fn().mockResolvedValue({ data: { head: { sha: prHeadSha } } }),
+          createReview: createReviewFn,
+        },
+      },
+    } as unknown as Octokit;
+  }
+
+  it('approves when all required threads are resolved', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:fix-bug --> fix', isResolved: true }),
+        makeGraphqlFetchThreadNode({ id: 't2', body: '<!-- manki:suggestion:style --> style', isResolved: false }),
+      ],
+      prHeadSha: 'sha-456',
+      createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE', commit_id: 'sha-456' }),
+    );
+  });
+
+  it('returns false when unresolved required threads remain', async () => {
+    const octokit = makeMockOctokit({
+      threads: [
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:fix-bug --> fix', isResolved: false }),
+      ],
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+  });
+
+  it('approves when there are no required threads', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:suggestion:style --> style', isResolved: false }),
+      ],
+      createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+  });
+
+  it('approves when there are no threads at all', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [],
+      createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+  });
+
+  it('falls back to COMMENT when APPROVE fails', async () => {
+    const createReviewMock = jest.fn()
+      .mockRejectedValueOnce(new Error('APPROVE not allowed'))
+      .mockResolvedValueOnce({});
+
+    const octokit = makeMockOctokit({
+      threads: [
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:fix --> fix', isResolved: true }),
+      ],
+      prHeadSha: 'sha-789',
+      createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledTimes(2);
+    expect(createReviewMock).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+    expect(createReviewMock).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ event: 'COMMENT' }),
+    );
+  });
+
+  it('dismisses previous reviews before approving', async () => {
+    const octokit = makeMockOctokit({
+      threads: [],
+      createReviewFn: jest.fn().mockResolvedValue({}),
+    });
+
+    await checkAndAutoApprove(octokit, 'owner', 'repo', 42);
+
+    expect(dismissPreviousReviews).toHaveBeenCalledWith(octokit, 'owner', 'repo', 42);
+  });
+
+  it('continues with approval when dismissPreviousReviews fails', async () => {
+    dismissPreviousReviews.mockRejectedValueOnce(new Error('dismiss failed'));
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [],
+      createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
   });
 });
