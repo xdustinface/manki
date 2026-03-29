@@ -1,6 +1,6 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, RecapState } from './recap';
+import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',

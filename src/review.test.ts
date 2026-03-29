@@ -17,6 +17,8 @@ import {
 } from './review';
 import { LinkedIssue } from './github';
 import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile } from './types';
+import { runJudgeAgent } from './judge';
+import { applySuppressions } from './memory';
 
 const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   model: 'claude-opus-4-6',
@@ -881,8 +883,8 @@ jest.mock('./memory', () => ({
 }));
 
 describe('runReview', () => {
-  const { runJudgeAgent } = require('./judge') as { runJudgeAgent: jest.Mock };
-  const { applySuppressions } = require('./memory') as { applySuppressions: jest.Mock };
+  const mockedRunJudgeAgent = jest.mocked(runJudgeAgent);
+  const mockedApplySuppressions = jest.mocked(applySuppressions);
 
   function makeClients(reviewerResponse: string = '[]'): ReviewClients {
     return {
@@ -897,8 +899,8 @@ describe('runReview', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    runJudgeAgent.mockResolvedValue({ findings: [], summary: 'All clear.' });
-    applySuppressions.mockReturnValue({ kept: [], suppressed: [] });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'All clear.' });
+    mockedApplySuppressions.mockReturnValue({ kept: [], suppressed: [] });
   });
 
   it('runs a single-pass review and returns approved result with no findings', async () => {
@@ -920,7 +922,7 @@ describe('runReview', () => {
     const config = makeConfig();
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
-    runJudgeAgent.mockResolvedValue({
+    mockedRunJudgeAgent.mockResolvedValue({
       findings: [
         { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.', reviewers: ['Security & Safety'] },
       ],
@@ -930,7 +932,7 @@ describe('runReview', () => {
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
     expect(result.verdict).toBe('REQUEST_CHANGES');
     expect(result.findings).toHaveLength(1);
-    expect(runJudgeAgent).toHaveBeenCalledTimes(1);
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
   });
 
   it('returns COMMENT verdict when all agents fail', async () => {
@@ -974,13 +976,13 @@ describe('runReview', () => {
       patterns: [],
     };
 
-    applySuppressions.mockReturnValue({
+    mockedApplySuppressions.mockReturnValue({
       kept: [],
       suppressed: [{ severity: 'suggestion', title: 'Suppressed finding here', file: 'src/a.ts', line: 10, description: 'Desc.', reviewers: ['Security & Safety'] }],
     });
 
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context', memory);
-    expect(applySuppressions).toHaveBeenCalled();
+    expect(mockedApplySuppressions).toHaveBeenCalled();
     expect(result.findings).toEqual([]);
   });
 
@@ -992,7 +994,7 @@ describe('runReview', () => {
     const config = makeConfig();
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
-    runJudgeAgent.mockRejectedValue(new Error('Judge API failed'));
+    mockedRunJudgeAgent.mockRejectedValue(new Error('Judge API failed'));
 
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
     expect(result.findings.length).toBeGreaterThanOrEqual(1);
@@ -1007,7 +1009,7 @@ describe('runReview', () => {
     const config = makeConfig({ review_passes: 2 });
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
-    runJudgeAgent.mockResolvedValue({
+    mockedRunJudgeAgent.mockResolvedValue({
       findings: [
         { severity: 'required', title: 'Consistent bug across passes', file: 'src/a.ts', line: 10, description: 'Bug.', reviewers: ['Security & Safety'] },
       ],
@@ -1028,7 +1030,7 @@ describe('runReview', () => {
     const config = makeConfig();
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
-    runJudgeAgent.mockResolvedValue({
+    mockedRunJudgeAgent.mockResolvedValue({
       findings: [
         { severity: 'ignore', title: 'Real finding issue here', file: 'src/a.ts', line: 10, description: 'Desc.', reviewers: ['Security & Safety'] },
       ],
