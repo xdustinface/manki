@@ -59,7 +59,7 @@ async function run(): Promise<void> {
       return;
     }
   } else if (eventName === 'issue_comment') {
-    if (action !== 'created') {
+    if (action !== 'created' && action !== 'edited') {
       core.info(`Ignoring issue_comment action: ${action}`);
       return;
     }
