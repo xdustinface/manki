@@ -139,17 +139,41 @@ describe('buildJudgeSystemPrompt', () => {
     expect(prompt).toContain('Null/undefined dereference');
     expect(prompt).toContain('Missing error handling');
     // suggestion examples
-    expect(prompt).toContain('logging "failed"');
+    expect(prompt).toContain('Error message lacks context');
     expect(prompt).toContain('const');
-    expect(prompt).toContain('reusable helper');
+    expect(prompt).toContain('extracting a helper');
     // nit examples
-    expect(prompt).toContain('connectionCount');
+    expect(prompt).toContain('Variable name could be more descriptive');
     expect(prompt).toContain('import ordering');
     expect(prompt).toContain('JSDoc');
     // ignore examples (judge only)
     expect(prompt).toContain('TODO with a tracking issue');
     expect(prompt).toContain('workaround documented');
-    expect(prompt).toContain('ternary vs if/else');
+    expect(prompt).toContain('Style preference that does not affect correctness');
+  });
+
+  it('contains Reviewer Consensus section', () => {
+    const prompt = buildJudgeSystemPrompt(makeConfig());
+    expect(prompt).toContain('## Reviewer Consensus');
+    expect(prompt).toContain('3+ reviewers flagged it');
+    expect(prompt).toContain('2 reviewers flagged it');
+    expect(prompt).toContain('1 reviewer flagged it');
+  });
+
+  it('contains Acceptance Criteria section', () => {
+    const prompt = buildJudgeSystemPrompt(makeConfig());
+    expect(prompt).toContain('## Acceptance Criteria');
+    expect(prompt).toContain('unmet acceptance criterion');
+    expect(prompt).toContain('partially met criterion');
+  });
+
+  it('contains Impact and Likelihood severity framework', () => {
+    const prompt = buildJudgeSystemPrompt(makeConfig());
+    expect(prompt).toContain('## Severity Assessment');
+    expect(prompt).toContain('**Impact**');
+    expect(prompt).toContain('**Likelihood**');
+    expect(prompt).toContain('**Severity mapping:**');
+    expect(prompt).toContain('Critical/High impact + Certain/Probable likelihood');
   });
 });
 
