@@ -133,10 +133,12 @@ async function isReviewInProgress(
     repo,
     issue_number: prNumber,
   });
-  return comments.some(c =>
-    c.body?.includes(BOT_MARKER) &&
-    c.body?.includes('Review in progress'),
-  );
+
+  const botComments = comments.filter(c => c.body?.includes(BOT_MARKER));
+  if (botComments.length === 0) return false;
+
+  const latest = botComments[botComments.length - 1];
+  return latest.body?.includes('Review in progress') ?? false;
 }
 
 async function handlePullRequest(): Promise<void> {
