@@ -52,16 +52,6 @@ permissions:
 
 jobs:
   review:
-    if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'issue_comment' &&
-       (contains(github.event.comment.body, '@manki') ||
-        contains(github.event.comment.body, '/manki') ||
-        contains(github.event.comment.body, '@manki-labs'))) ||
-      (github.event_name == 'pull_request_review_comment' &&
-       github.event.action == 'created') ||
-      (github.event_name == 'pull_request_review' &&
-       (github.event.action == 'submitted' || github.event.action == 'dismissed'))
     runs-on: ubuntu-latest
     concurrency:
       group: manki-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
