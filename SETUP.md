@@ -117,7 +117,7 @@ gh secret set MANKI_PRIVATE_KEY --repo <owner>/<repo>
 
 ```yaml
       - name: Manki Review
-        uses: xdustinface/manki@v3
+        uses: xdustinface/manki@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           github_app_id: ${{ secrets.MANKI_APP_ID }}
@@ -172,7 +172,7 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       - name: Manki Review
-        uses: xdustinface/manki@v3
+        uses: xdustinface/manki@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
