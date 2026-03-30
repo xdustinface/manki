@@ -3,7 +3,8 @@ import * as github from '@actions/github';
 
 import { ClaudeClient } from './claude';
 import { writeSuppression, writeLearning, removeLearning, removeSuppression, batchUpdatePatternDecisions, sanitizeMemoryField } from './memory';
-import { reactToIssueComment, reactToReviewComment } from './github';
+import { reactToIssueComment, reactToReviewComment, fetchPRDiff } from './github';
+import { truncateDiff } from './review';
 import { checkAndAutoApprove, fetchBotReviewThreads } from './state';
 import { ReviewConfig } from './types';
 
@@ -22,6 +23,9 @@ const BOT_MARKER = '<!-- manki -->';
 export async function handleReviewCommentReply(
   octokit: Octokit,
   client: ClaudeClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
   memoryConfig?: MemoryConfig,
   memoryToken?: string,
 ): Promise<void> {
@@ -43,12 +47,6 @@ export async function handleReviewCommentReply(
     return;
   }
 
-  const owner = github.context.repo.owner;
-  const repo = github.context.repo.repo;
-  const prNumber = payload.pull_request?.number;
-
-  if (!prNumber) return;
-
   try {
     const { data: parentComment } = await octokit.rest.pulls.getReviewComment({
       owner,
@@ -64,6 +62,21 @@ export async function handleReviewCommentReply(
     // Acknowledge the reply
     await reactToReviewComment(octokit, owner, repo, comment.id, 'eyes');
 
+    // Fetch the PR diff scoped to the file under discussion
+    let diffContext = '';
+    try {
+      const fullDiff = await fetchPRDiff(octokit, owner, repo, prNumber);
+      const filePath = parentComment.path;
+      const scopedDiff = filePath ? scopeDiffToFile(fullDiff, filePath) : fullDiff;
+      const truncated = truncateDiff(scopedDiff, 15000);
+      if (truncated.trim()) {
+        const sanitizedDiff = truncated.replace(/```/g, '` ` `');
+        diffContext = `\n\n## PR Changes Context\n\nThe following diff shows the changes in this PR relevant to the file being discussed:\n\n\`\`\`diff\n${sanitizedDiff}\n\`\`\``;
+      }
+    } catch (error) {
+      core.debug(`Failed to fetch PR diff for reply context: ${error}`);
+    }
+
     const context = buildReplyContext(
       parentComment.body,
       comment.body,
@@ -75,7 +88,7 @@ export async function handleReviewCommentReply(
       'You are a helpful code review assistant. A developer is replying to one of your review comments. ' +
       'Provide a concise, helpful response. If they are asking for clarification, explain clearly. ' +
       'If they are disagreeing, acknowledge their point and either update your recommendation or explain why the original concern still stands.',
-      context,
+      context + diffContext,
     );
 
     await octokit.rest.pulls.createReplyForReviewComment({
@@ -730,6 +743,23 @@ function buildReplyContext(
   context += `\n\n## Developer Reply\n\n${replyBody}`;
 
   return context;
+}
+
+function scopeDiffToFile(fullDiff: string, filePath: string): string {
+  const lines = fullDiff.split('\n');
+  const result: string[] = [];
+  let inTargetFile = false;
+
+  for (const line of lines) {
+    if (line.startsWith('diff --git')) {
+      inTargetFile = line.includes(` a/${filePath} `) || line.endsWith(` b/${filePath}`);
+    }
+    if (inTargetFile) {
+      result.push(line);
+    }
+  }
+
+  return result.length > 0 ? result.join('\n') : '';
 }
 
 function isBotComment(body: string): boolean {

@@ -735,7 +735,12 @@ async function handleReviewCommentInteraction(): Promise<void> {
       core.warning('Cannot handle command — pull request number not available');
     }
   } else {
-    await handleReviewCommentReply(octokit, claude, memoryConfig, memoryToken);
+    const prNumber = payload.pull_request?.number;
+    if (!prNumber) {
+      core.warning('Cannot handle reply — pull request number not available');
+      return;
+    }
+    await handleReviewCommentReply(octokit, claude, owner, repo, prNumber, memoryConfig, memoryToken);
   }
 
   if (config.auto_approve) {
