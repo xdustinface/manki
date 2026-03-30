@@ -7,6 +7,8 @@ import { LinkedIssue } from './github';
 import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext } from './types';
 import { extractJSON } from './json';
 
+export const HIGH_CONF_SUGGESTION_THRESHOLD = 3;
+
 export const AGENT_POOL: readonly ReviewerAgent[] = Object.freeze([
   {
     name: 'Security & Safety',
@@ -505,7 +507,7 @@ export function determineVerdict(findings: Finding[]): ReviewVerdict {
   const highConfSuggestions = findings.filter(
     f => f.severity === 'suggestion' && f.judgeConfidence === 'high',
   );
-  if (highConfSuggestions.length >= 3) return 'REQUEST_CHANGES';
+  if (highConfSuggestions.length >= HIGH_CONF_SUGGESTION_THRESHOLD) return 'REQUEST_CHANGES';
 
   return 'APPROVE';
 }
