@@ -163,6 +163,7 @@ describe('run', () => {
         eventName: 'pull_request_review',
         payload: {
           action: 'submitted',
+          sender: { login: 'some-human', type: 'User' },
           review: { user: { login: 'manki-labs[bot]', type: 'Bot' } },
           pull_request: { number: 1, base: { ref: 'main' } },
         },
