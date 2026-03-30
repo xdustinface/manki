@@ -35,6 +35,11 @@ jest.mock('./memory', () => ({
 jest.mock('./github', () => ({
   reactToIssueComment: jest.fn().mockResolvedValue(undefined),
   reactToReviewComment: jest.fn().mockResolvedValue(undefined),
+  fetchPRDiff: jest.fn().mockResolvedValue(''),
+}));
+
+jest.mock('./review', () => ({
+  truncateDiff: jest.fn((s: string) => s),
 }));
 
 jest.mock('./state', () => ({
@@ -684,7 +689,7 @@ describe('handleReviewCommentReply', () => {
     setContext({ comment: undefined });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(octokit.rest.pulls.getReviewComment).not.toHaveBeenCalled();
   });
 
@@ -692,7 +697,7 @@ describe('handleReviewCommentReply', () => {
     setContext({ comment: { id: 1, body: '<!-- manki -->\nbot reply', user: { type: 'Bot' }, in_reply_to_id: 99 }, pull_request: { number: 1 } });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(core.info).toHaveBeenCalledWith('Skipping bot comment');
   });
 
@@ -700,16 +705,8 @@ describe('handleReviewCommentReply', () => {
     setContext({ comment: { id: 1, body: 'standalone comment', user: { type: 'User' } }, pull_request: { number: 1 } });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(core.info).toHaveBeenCalledWith('Not a reply to an existing comment');
-  });
-
-  it('returns early when no PR number', async () => {
-    setContext({ comment: { id: 1, body: 'reply', user: { type: 'User' }, in_reply_to_id: 99 }, pull_request: undefined });
-    const octokit = createMockOctokit();
-    const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
-    expect(octokit.rest.pulls.getReviewComment).not.toHaveBeenCalled();
   });
 
   it('skips when parent comment is not from bot', async () => {
@@ -717,7 +714,7 @@ describe('handleReviewCommentReply', () => {
     const octokit = createMockOctokit();
     octokit.rest.pulls.getReviewComment.mockResolvedValue({ data: { body: 'not a bot comment', path: 'file.ts', line: 5 } });
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(core.info).toHaveBeenCalledWith('Parent comment is not from Manki');
   });
 
@@ -725,7 +722,7 @@ describe('handleReviewCommentReply', () => {
     setContext({ comment: { id: 1, body: 'Can you explain more?', user: { type: 'User' }, in_reply_to_id: 99, author_association: 'MEMBER' }, pull_request: { number: 1 } });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(ghUtils.reactToReviewComment).toHaveBeenCalledWith(octokit, 'test-owner', 'test-repo', 1, 'eyes');
     expect(client.sendMessage).toHaveBeenCalledWith(
       expect.any(String),
@@ -738,6 +735,21 @@ describe('handleReviewCommentReply', () => {
       }),
     );
     expect(core.info).toHaveBeenCalledWith('Posted reply to review comment');
+  });
+
+  it('includes scoped PR diff context in the Claude prompt', async () => {
+    setContext({ comment: { id: 1, body: 'Why did you change this?', user: { type: 'User' }, in_reply_to_id: 99, author_association: 'MEMBER' }, pull_request: { number: 1 } });
+    const octokit = createMockOctokit();
+    const client = createMockClient();
+    const fileDiff = 'diff --git a/src/file.ts b/src/file.ts\n--- a/src/file.ts\n+++ b/src/file.ts\n@@ -1,3 +1,3 @@\n-old line\n+new line';
+    const otherDiff = 'diff --git a/src/other.ts b/src/other.ts\n--- a/src/other.ts\n+++ b/src/other.ts\n@@ -1 +1 @@\n-x\n+y';
+    (ghUtils.fetchPRDiff as jest.Mock).mockResolvedValueOnce(`${fileDiff}\n${otherDiff}`);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
+    expect(ghUtils.fetchPRDiff).toHaveBeenCalledWith(octokit, 'test-owner', 'test-repo', 1);
+    const sentContext = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
+    expect(sentContext).toContain('## PR Changes Context');
+    expect(sentContext).toContain('src/file.ts');
+    expect(sentContext).not.toContain('src/other.ts');
   });
 
   it('stores learning for substantive trusted replies with memory enabled', async () => {
@@ -754,7 +766,7 @@ describe('handleReviewCommentReply', () => {
     const octokit = createMockOctokit();
     const client = createMockClient();
     const memoryConfig = { enabled: true, repo: 'test-owner/memory' };
-    await handleReviewCommentReply(octokit, client, memoryConfig, 'mem-token');
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1, memoryConfig, 'mem-token');
     expect(memory.writeLearning).toHaveBeenCalled();
     expect(core.info).toHaveBeenCalledWith('Stored user context as learning');
   });
@@ -766,7 +778,7 @@ describe('handleReviewCommentReply', () => {
     });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client, { enabled: true, repo: 'test-owner/memory' }, 'mem-token');
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1, { enabled: true, repo: 'test-owner/memory' }, 'mem-token');
     expect(memory.writeLearning).not.toHaveBeenCalled();
   });
 
@@ -783,7 +795,7 @@ describe('handleReviewCommentReply', () => {
     });
     const octokit = createMockOctokit();
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client, { enabled: true, repo: 'test-owner/memory' }, 'mem-token');
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1, { enabled: true, repo: 'test-owner/memory' }, 'mem-token');
     expect(memory.writeLearning).not.toHaveBeenCalled();
   });
 
@@ -792,7 +804,7 @@ describe('handleReviewCommentReply', () => {
     const octokit = createMockOctokit();
     octokit.rest.pulls.getReviewComment.mockRejectedValue(new Error('API error'));
     const client = createMockClient();
-    await handleReviewCommentReply(octokit, client);
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
     expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Failed to handle review comment reply'));
   });
 });
