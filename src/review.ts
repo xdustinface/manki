@@ -7,7 +7,7 @@ import { LinkedIssue } from './github';
 import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext } from './types';
 import { extractJSON } from './json';
 
-export const HIGH_CONF_SUGGESTION_THRESHOLD = 3;
+export const HIGH_CONF_SUGGESTION_THRESHOLD = 1;
 
 export const AGENT_POOL: readonly ReviewerAgent[] = Object.freeze([
   {

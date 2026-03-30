@@ -186,20 +186,15 @@ describe('determineVerdict', () => {
     expect(determineVerdict([])).toBe('APPROVE');
   });
 
-  it('should REQUEST_CHANGES when 3+ high-confidence suggestions exist', () => {
+  it('should REQUEST_CHANGES when 1+ high-confidence suggestions exist', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'a', file: 'f', line: 1, description: '', reviewers: ['r'], judgeConfidence: 'high' },
-      { severity: 'suggestion', title: 'b', file: 'f', line: 2, description: '', reviewers: ['r'], judgeConfidence: 'high' },
-      { severity: 'suggestion', title: 'c', file: 'f', line: 3, description: '', reviewers: ['r'], judgeConfidence: 'high' },
     ];
     expect(determineVerdict(findings)).toBe('REQUEST_CHANGES');
   });
 
-  it('should APPROVE when fewer than 3 high-confidence suggestions exist', () => {
-    const findings: Finding[] = [
-      { severity: 'suggestion', title: 'a', file: 'f', line: 1, description: '', reviewers: ['r'], judgeConfidence: 'high' },
-      { severity: 'suggestion', title: 'b', file: 'f', line: 2, description: '', reviewers: ['r'], judgeConfidence: 'high' },
-    ];
+  it('should APPROVE when no high-confidence suggestions exist', () => {
+    const findings: Finding[] = [];
     expect(determineVerdict(findings)).toBe('APPROVE');
   });
 
