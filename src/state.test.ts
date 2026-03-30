@@ -320,10 +320,12 @@ describe('checkAndAutoApprove', () => {
     threads?: ReturnType<typeof makeGraphqlFetchThreadNode>[];
     prHeadSha?: string;
     createReviewFn?: jest.Mock;
+    existingReviews?: Array<{ body?: string; state?: string }>;
   } = {}) {
     const threads = overrides.threads ?? [];
     const prHeadSha = overrides.prHeadSha ?? 'abc123';
     const createReviewFn = overrides.createReviewFn ?? jest.fn().mockResolvedValue({});
+    const existingReviews = overrides.existingReviews ?? [];
 
     return {
       graphql: jest.fn().mockResolvedValue(makeGraphqlFetchResponse(threads)),
@@ -331,6 +333,7 @@ describe('checkAndAutoApprove', () => {
         pulls: {
           get: jest.fn().mockResolvedValue({ data: { head: { sha: prHeadSha } } }),
           createReview: createReviewFn,
+          listReviews: jest.fn().mockResolvedValue({ data: existingReviews }),
         },
       },
     } as unknown as Octokit;
@@ -441,6 +444,62 @@ describe('checkAndAutoApprove', () => {
     const octokit = makeMockOctokit({
       threads: [],
       createReviewFn: createReviewMock,
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+  });
+
+  it('skips duplicate approval when bot already has an active APPROVED review', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [],
+      createReviewFn: createReviewMock,
+      existingReviews: [
+        { body: '<!-- manki -->', state: 'APPROVED' },
+      ],
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).not.toHaveBeenCalled();
+    expect(dismissPreviousReviews).not.toHaveBeenCalled();
+  });
+
+  it('creates new approval when latest bot review is CHANGES_REQUESTED', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [],
+      prHeadSha: 'sha-new',
+      createReviewFn: createReviewMock,
+      existingReviews: [
+        { body: '<!-- manki -->', state: 'APPROVED' },
+        { body: '<!-- manki -->', state: 'CHANGES_REQUESTED' },
+      ],
+    });
+
+    const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(createReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+  });
+
+  it('creates new approval when previous bot approval was DISMISSED', async () => {
+    const createReviewMock = jest.fn().mockResolvedValue({});
+    const octokit = makeMockOctokit({
+      threads: [],
+      prHeadSha: 'sha-new',
+      createReviewFn: createReviewMock,
+      existingReviews: [
+        { body: '<!-- manki -->', state: 'DISMISSED' },
+      ],
     });
 
     const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);

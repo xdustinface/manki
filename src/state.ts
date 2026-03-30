@@ -120,6 +120,21 @@ async function checkAndAutoApprove(
     return false;
   }
 
+  const { data: reviews } = await octokit.rest.pulls.listReviews({
+    owner,
+    repo,
+    pull_number: prNumber,
+  });
+  const botReviews = reviews.filter(
+    (r: { body?: string | null; state?: string }) =>
+      r.body?.includes('<!-- manki') && r.state !== 'DISMISSED',
+  );
+  const latestBotReview = botReviews[botReviews.length - 1];
+  if (latestBotReview?.state === 'APPROVED') {
+    core.info('Already approved — skipping duplicate approval');
+    return true;
+  }
+
   const { data: pr } = await octokit.rest.pulls.get({
     owner,
     repo,
