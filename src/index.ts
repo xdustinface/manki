@@ -48,7 +48,9 @@ async function run(): Promise<void> {
   const senderType = github.context.payload.sender?.type ?? '';
   const reviewAuthorType = github.context.payload.review?.user?.type ?? '';
   if (senderType === 'Bot' || reviewAuthorType === 'Bot') {
-    const actor = github.context.payload.sender?.login ?? github.context.payload.review?.user?.login ?? 'unknown bot';
+    const actor = senderType === 'Bot'
+      ? (github.context.payload.sender?.login ?? 'unknown bot')
+      : (github.context.payload.review?.user?.login ?? 'unknown bot');
     core.info(`Ignoring event from bot: ${actor}`);
     return;
   }
