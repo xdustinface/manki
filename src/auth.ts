@@ -82,6 +82,7 @@ export async function createAuthenticatedOctokit(): Promise<Octokit> {
   if (appId && privateKey) {
     core.info('Using GitHub App authentication for custom bot identity');
     const token = await getInstallationToken(appId, privateKey);
+    setResolvedToken(token);
     return github.getOctokit(token);
   }
 
