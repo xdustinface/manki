@@ -27,7 +27,7 @@ Manki assembles a dynamic review team from a pool of seven specialist agents, si
 - **Structured AI context** -- Inline comments include a collapsed JSON block with machine-readable metadata for AI agents to consume
 - **Self-learning memory** -- Teach her with `/manki remember`. She stores learnings, tracks patterns, applies suppressions, and auto-escalates findings that are consistently accepted during triage
 - **Conversational** -- Reply to any review comment to start a discussion. She reacts with emoji to acknowledge commands
-- **Self-hosted** -- Runs on GitHub Actions with your own Claude credentials. Optional GitHub App identity via OIDC token service; falls back gracefully to github-actions[bot] if unavailable
+- **Self-hosted** -- Runs on GitHub Actions with your own Claude credentials. Optional GitHub App identity via OIDC token service; also enables cross-repo memory access without a separate token. Falls back gracefully to github-actions[bot] if unavailable
 
 ## Quick start
 
@@ -120,6 +120,9 @@ nit_handling: issues
 memory:
   enabled: true
   repo: "your-org/review-memory"
+# memory_repo_token is optional if the manki-labs GitHub App
+# is installed on your memory repo. Otherwise, add it as a
+# workflow secret: memory_repo_token: ${{ secrets.REVIEW_MEMORY_TOKEN }}
 ```
 
 See [`.manki.yml.example`](.manki.yml.example) for all options.
