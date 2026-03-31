@@ -499,9 +499,9 @@ async function runFullReview(
       : undefined;
 
     // Judge calibration metrics
-    let judgeMetrics: { confidenceDistribution: Record<string, number>; severityChanges: number; mergedDuplicates: number } | undefined;
+    let judgeMetrics: { confidenceDistribution: { high: number; medium: number; low: number }; severityChanges: number; mergedDuplicates: number } | undefined;
     if (allJudged.length > 0) {
-      const confidenceDistribution: Record<string, number> = { high: 0, medium: 0, low: 0 };
+      const confidenceDistribution = { high: 0, medium: 0, low: 0 };
       for (const f of allJudged) {
         if (f.judgeConfidence) confidenceDistribution[f.judgeConfidence]++;
       }
