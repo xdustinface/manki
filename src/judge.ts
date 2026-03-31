@@ -53,7 +53,7 @@ export function buildJudgeSystemPrompt(config: ReviewConfig, agentCount: number,
   const majorityThreshold = Math.max(1, Math.ceil(agentCount / 2));
 
   const summaryInstruction = isFollowUp
-    ? 'Use this exact markdown structure:\n\n**Since last review** — [X findings resolved (list key ones briefly), Y with author reply, Z still open]\n\n**This cycle** — [1-2 sentences about new findings, leading with the most impactful one. Be conversational and professional. Do not re-introduce the overall PR opinion.]'
+    ? 'Follow-up review summary using the format described above.'
     : '1-2 sentence review summary. Be conversational but professional. Focus on what matters: what was found, what\'s good, what needs attention. Never list agent names. Never mention agent count or review level. Never say \'after judge evaluation\'. For clean PRs: acknowledge briefly. For PRs with findings: highlight the most important finding(s).';
   let prompt = `You are a code review judge. You evaluate findings from multiple specialist reviewers for accuracy, actionability, and severity.
 
@@ -155,7 +155,15 @@ Multiple specialist reviewers may flag the same issue independently. When you se
 - Use the most detailed description
 - In your reasoning, note which findings you merged (e.g., "Merged findings 1 and 4 — same issue")
 
-## Output Format
+${isFollowUp ? `## Follow-Up Summary Format
+
+This is a follow-up review (not the first review of this PR). Structure your summary using this exact markdown format:
+
+**Since last review** — [X findings resolved (list key ones briefly), Y with author reply, Z still open]
+
+**This cycle** — [1-2 sentences about new findings, leading with the most impactful one. Be conversational and professional. Do not re-introduce the overall PR opinion.]
+
+` : ''}## Output Format
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 
