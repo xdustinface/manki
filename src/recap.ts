@@ -353,4 +353,69 @@ async function resolveAddressedThreads(
   return resolvedCount;
 }
 
-export { PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap };
+async function llmDeduplicateFindings(
+  findings: Finding[],
+  previousFindings: PreviousFinding[],
+  client: ClaudeClient,
+): Promise<{ unique: Finding[]; duplicates: Finding[] }> {
+  const dismissed = previousFindings.filter(f => f.status === 'resolved');
+  if (findings.length === 0 || dismissed.length === 0) {
+    return { unique: findings, duplicates: [] };
+  }
+
+  const sanitize = (s: string) => s.replace(/[\r\n]/g, ' ').replace(/`{3,}/g, '').replace(/"/g, '\\"');
+
+  const dismissedList = dismissed.map((f, i) =>
+    `${i + 1}. "${sanitize(f.title)}" (${sanitize(f.file)}:${f.line})`
+  ).join('\n');
+
+  const newList = findings.map((f, i) =>
+    `${i + 1}. "${sanitize(f.title)}" (${sanitize(f.file)}:${f.line})`
+  ).join('\n');
+
+  try {
+    const response = await client.sendMessage(
+      'You are deduplicating code review findings. Given a list of new findings and a list of previously dismissed findings, determine which new findings are about the same issue as a dismissed one — even if phrased differently. Respond with ONLY a JSON array of objects: { "index": <1-based new finding index>, "matchedDismissed": <1-based dismissed finding index> }. Only include findings that match. If none match, return [].',
+      `## Previously dismissed findings:\n${dismissedList}\n\n## New findings:\n${newList}`,
+      { effort: 'low' },
+    );
+
+    let jsonText = response.content.trim();
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    const matches = JSON.parse(jsonText) as Array<{ index: number; matchedDismissed: number }>;
+    const matchedIndices = new Set(
+      matches
+        .filter(m => m.index - 1 >= 0 && m.index - 1 < findings.length
+                  && m.matchedDismissed - 1 >= 0 && m.matchedDismissed - 1 < dismissed.length)
+        .map(m => m.index - 1),
+    );
+
+    const unique: Finding[] = [];
+    const duplicates: Finding[] = [];
+    for (let i = 0; i < findings.length; i++) {
+      if (matchedIndices.has(i)) {
+        const match = matches.find(m => m.index - 1 === i);
+        const dismissedIdx = match ? match.matchedDismissed - 1 : -1;
+        const dismissedTitle = dismissedIdx >= 0 && dismissedIdx < dismissed.length ? dismissed[dismissedIdx].title : 'unknown';
+        core.info(`LLM dedup: "${findings[i].title}" matches dismissed "${dismissedTitle}"`);
+        duplicates.push(findings[i]);
+      } else {
+        unique.push(findings[i]);
+      }
+    }
+
+    if (duplicates.length > 0) {
+      core.info(`LLM dedup removed ${duplicates.length} findings matching dismissed ones`);
+    }
+
+    return { unique, duplicates };
+  } catch (error) {
+    core.warning(`LLM dedup failed, keeping all findings: ${error}`);
+    return { unique: findings, duplicates: [] };
+  }
+}
+
+export { PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap, llmDeduplicateFindings };

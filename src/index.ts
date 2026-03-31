@@ -7,7 +7,7 @@ import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
-import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads } from './recap';
+import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, llmDeduplicateFindings } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
 import { DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
 import {
@@ -260,7 +260,8 @@ async function runFullReview(
     };
     const reviewerModel = resolveModel(config, 'reviewer');
     const judgeModel = resolveModel(config, 'judge');
-    core.info(`Models — reviewer: ${reviewerModel}, judge: ${judgeModel}`);
+    const dedupModel = resolveModel(config, 'dedup');
+    core.info(`Models — reviewer: ${reviewerModel}, judge: ${judgeModel}, dedup: ${dedupModel}`);
 
     const reviewerClient = new ClaudeClient({ ...authOptions, model: reviewerModel });
     const judgeClient = new ClaudeClient({ ...authOptions, model: judgeModel });
@@ -442,10 +443,22 @@ async function runFullReview(
     }
 
     const { unique, duplicates } = deduplicateFindings(result.findings, recap.previousFindings, memory?.suppressions);
+    let totalDuplicates = duplicates.length;
     if (duplicates.length > 0 || unique.length !== result.findings.length) {
       core.info(`Deduplicated ${duplicates.length} findings, ${result.findings.length - unique.length} total removed`);
       result.findings = unique;
       result.verdict = determineVerdict(result.findings);
+    }
+
+    // LLM-based dedup for findings that passed static matching
+    if (result.findings.length > 0 && recap.previousFindings.length > 0) {
+      const dedupClient = new ClaudeClient({ ...authOptions, model: dedupModel });
+      const llmResult = await llmDeduplicateFindings(result.findings, recap.previousFindings, dedupClient);
+      if (llmResult.duplicates.length > 0) {
+        result.findings = llmResult.unique;
+        totalDuplicates += llmResult.duplicates.length;
+        result.verdict = determineVerdict(result.findings);
+      }
     }
 
     if (memory && memory.patterns.length > 0) {
@@ -547,7 +560,7 @@ async function runFullReview(
 
     const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
     const open = recap.previousFindings.filter(f => f.status === 'open').length;
-    const recapSummary = buildRecapSummary(result.findings.length, duplicates.length, resolved, open);
+    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
@@ -616,7 +629,7 @@ async function runFullReview(
         newFindings: result.findings.length,
         previouslyFlagged: recap.previousFindings.filter(f => f.status === 'open').length,
         resolved: recap.previousFindings.filter(f => f.status === 'resolved').length,
-        suppressionsApplied: duplicates.length,
+        suppressionsApplied: totalDuplicates,
       },
       timing,
     };

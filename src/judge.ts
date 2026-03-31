@@ -11,6 +11,7 @@ import {
   RepoMemory,
 } from './memory';
 import { LinkedIssue } from './github';
+import { titlesOverlap } from './recap';
 import { validateSeverity } from './review';
 import { DiffFile, Finding, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
 
@@ -429,8 +430,8 @@ export function mapJudgedToFindings(original: Finding[], judged: JudgedFinding[]
       match = judged[i];
     }
 
-    if (match && !titlesRelated(finding.title, match.title)) {
-      const titleMatch = judged.find(j => titlesRelated(finding.title, j.title));
+    if (match && !titlesOverlap(finding.title, match.title)) {
+      const titleMatch = judged.find(j => titlesOverlap(finding.title, j.title));
       if (titleMatch) {
         match = titleMatch;
       }
@@ -453,7 +454,7 @@ function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Findin
 
   for (const j of judged) {
     // Find all original findings that match this judge result
-    const matches = original.filter(o => titlesRelated(o.title, j.title));
+    const matches = original.filter(o => titlesOverlap(o.title, j.title));
 
     if (matches.length === 0) {
       // No match found — skip this judge result (should not happen in practice)
@@ -486,31 +487,6 @@ function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Findin
   }
 
   return result;
-}
-
-function titlesRelated(a: string, b: string): boolean {
-  const aLower = a.toLowerCase();
-  const bLower = b.toLowerCase();
-
-  if (aLower === bLower) return true;
-
-  const shorter = aLower.length <= bLower.length ? aLower : bLower;
-  const longer = aLower.length > bLower.length ? aLower : bLower;
-
-  if (shorter.length >= 5 && longer.includes(shorter)) return true;
-
-  // Check word overlap
-  const aWords = new Set(aLower.split(/\s+/).filter(w => w.length >= 3));
-  const bWords = new Set(bLower.split(/\s+/).filter(w => w.length >= 3));
-  if (aWords.size === 0 || bWords.size === 0) return false;
-
-  let overlap = 0;
-  for (const w of aWords) {
-    if (bWords.has(w)) overlap++;
-  }
-
-  const minSize = Math.min(aWords.size, bWords.size);
-  return overlap >= minSize * 0.5;
 }
 
 export function deduplicateFindings(findings: Finding[]): Finding[] {
