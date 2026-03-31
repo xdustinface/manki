@@ -178,8 +178,14 @@ export interface ReviewClients {
 }
 
 export interface ReviewProgress {
-  phase: 'reviewed';
+  phase: 'agent-complete' | 'reviewed' | 'judging';
+  agentName?: string;
+  agentFindingCount?: number;
+  agentDurationMs?: number;
+  agentStatus?: 'success' | 'failure';
   rawFindingCount: number;
+  completedAgents?: number;
+  totalAgents?: number;
 }
 
 export async function runReview(
@@ -205,9 +211,12 @@ export async function runReview(
   const allFindings: Finding[] = [];
   let allAgentsFailed = true;
 
+  let completedCount = 0;
+
   if (multiPass) {
     core.info(`Running ${team.agents.length} reviewer agents with ${passes} passes each (multi-pass mode)...`);
     for (const agent of team.agents) {
+      const startTime = Date.now();
       const passResults = await Promise.allSettled(
         Array.from({ length: passes }, () => {
           const shuffledDiff = shuffleDiffFiles(diff);
@@ -225,6 +234,8 @@ export async function runReview(
         }
       }
 
+      completedCount++;
+
       if (passFindings.length > 0) {
         allAgentsFailed = false;
         const threshold = Math.ceil(passFindings.length / 2);
@@ -232,17 +243,76 @@ export async function runReview(
         const totalRaw = passFindings.reduce((sum, p) => sum + p.length, 0);
         core.info(`Multi-pass: ${agent.name} — ${passFindings.length} passes, ${consistent.length} consistent findings (from ${totalRaw} raw)`);
         allFindings.push(...consistent);
+
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: agent.name,
+            agentFindingCount: consistent.length,
+            agentDurationMs: Date.now() - startTime,
+            agentStatus: 'success',
+            rawFindingCount: allFindings.length,
+            completedAgents: completedCount,
+            totalAgents: team.agents.length,
+          });
+        }
       } else {
         core.warning(`${agent.name}: all passes failed`);
+
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: agent.name,
+            agentFindingCount: 0,
+            agentDurationMs: Date.now() - startTime,
+            agentStatus: 'failure',
+            rawFindingCount: allFindings.length,
+            completedAgents: completedCount,
+            totalAgents: team.agents.length,
+          });
+        }
       }
     }
   } else {
     core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
-    const agentResults = await Promise.allSettled(
-      team.agents.map(agent =>
-        runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
-      )
-    );
+    const agentPromises = team.agents.map(agent => {
+      const startTime = Date.now();
+      return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
+        .then(findings => {
+          completedCount++;
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: findings.length,
+              agentDurationMs: Date.now() - startTime,
+              agentStatus: 'success',
+              rawFindingCount: allFindings.length + findings.length,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+            });
+          }
+          return findings;
+        })
+        .catch(error => {
+          completedCount++;
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: 0,
+              agentDurationMs: Date.now() - startTime,
+              agentStatus: 'failure',
+              rawFindingCount: allFindings.length,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+            });
+          }
+          throw error;
+        });
+    });
+
+    const agentResults = await Promise.allSettled(agentPromises);
 
     for (let i = 0; i < agentResults.length; i++) {
       const result = agentResults[i];
@@ -277,6 +347,15 @@ export async function runReview(
       core.info(`Suppressed ${suppressed.length} findings before judge evaluation`);
     }
     findingsForJudge = kept;
+  }
+
+  if (onProgress) {
+    onProgress({
+      phase: 'judging',
+      rawFindingCount: findingsForJudge.length,
+      totalAgents: team.agents.length,
+      completedAgents: team.agents.length,
+    });
   }
 
   let finalFindings: Finding[];

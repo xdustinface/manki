@@ -271,6 +271,7 @@ async function runFullReview(
       phase: 'started',
       lineCount,
       agentCount: team.agents.length,
+      agentProgress: team.agents.map(a => ({ name: a.name, status: 'reviewing' as const })),
     };
     await updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard);
 
@@ -385,12 +386,33 @@ async function runFullReview(
       { reviewer: reviewerClient, judge: judgeClient }, config, diff, rawDiff, fullContext,
       memory, fileContents, prContext, linkedIssues,
       (progress) => {
-        rawFindingCount = progress.rawFindingCount;
-        reviewEndTime = Date.now();
-        dashboard.phase = 'reviewed';
-        dashboard.rawFindingCount = progress.rawFindingCount;
-        updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
-          .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        if (progress.phase === 'agent-complete') {
+          rawFindingCount = progress.rawFindingCount;
+          if (dashboard.agentProgress && progress.agentName) {
+            const entry = dashboard.agentProgress.find(a => a.name === progress.agentName);
+            if (entry) {
+              entry.status = progress.agentStatus === 'failure' ? 'failed' : 'done';
+              entry.findingCount = progress.agentFindingCount;
+              entry.durationMs = progress.agentDurationMs;
+            }
+          }
+          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        } else if (progress.phase === 'reviewed') {
+          rawFindingCount = progress.rawFindingCount;
+          reviewEndTime = Date.now();
+          dashboard.phase = 'reviewed';
+          dashboard.rawFindingCount = progress.rawFindingCount;
+          dashboard.agentProgress = undefined;
+          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        } else if (progress.phase === 'judging') {
+          dashboard.phase = 'reviewed';
+          dashboard.rawFindingCount = progress.rawFindingCount;
+          dashboard.agentProgress = undefined;
+          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        }
       },
     );
     const judgeEndTime = Date.now();

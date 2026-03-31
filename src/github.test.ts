@@ -1289,13 +1289,47 @@ describe('buildDashboard', () => {
     expect(md).toContain('\u25CB Judge — pending');
   });
 
+  it('renders per-agent progress when agentProgress is provided', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 150, agentCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 2, durationMs: 4000 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 0, durationMs: 3200 },
+        { name: 'Correctness & Logic', status: 'reviewing' },
+        { name: 'Testing & Coverage', status: 'reviewing' },
+        { name: 'Performance & Efficiency', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Manki** — Review in progress');
+    expect(md).toContain('2/5 agents complete');
+    expect(md).toContain('\u2705 Security & Safety — 2 findings (4s)');
+    expect(md).toContain('\u2705 Architecture & Design — 0 findings (3s)');
+    expect(md).toContain('\u23F3 Correctness & Logic');
+    expect(md).toContain('\u25CB Judge');
+  });
+
+  it('renders failed agent status in agent progress', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 1500 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 1, durationMs: 2000 },
+        { name: 'Architecture & Design', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u274C Security & Safety — failed (2s)');
+    expect(md).toContain('\u2705 Correctness & Logic — 1 findings (2s)');
+  });
+
   it('renders the reviewed phase with finding count and running judge', () => {
     const data: DashboardData = { phase: 'reviewed', lineCount: 300, agentCount: 3, rawFindingCount: 12 };
     const md = buildDashboard(data);
     expect(md).toContain('**Manki** — Review in progress');
     expect(md).toContain('\u2713 Parsed diff — 300 lines');
     expect(md).toContain('\u2713 Review — 3 agents \u00B7 12 findings');
-    expect(md).toContain('\u23F3 Running judge...');
+    expect(md).toContain('Judge — evaluating 12 findings...');
   });
 
   it('renders the complete phase with kept/dropped counts', () => {
