@@ -185,14 +185,15 @@ describe('buildJudgeSystemPrompt', () => {
     expect(prompt).toContain('Critical/High impact + Certain/Probable likelihood');
   });
 
-  it('uses follow-up summary instruction when isFollowUp is true', () => {
-    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, true);
+  it('uses follow-up summary instruction when recapStats is provided', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0, resolvedTitles: [] };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats);
     expect(prompt).toContain('Since last review');
     expect(prompt).not.toContain('1-2 sentence review summary');
   });
 
-  it('uses standard summary instruction when isFollowUp is false', () => {
-    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, false);
+  it('uses standard summary instruction when recapStats is undefined', () => {
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5);
     expect(prompt).toContain('1-2 sentence review summary');
     expect(prompt).not.toContain('Since last review');
   });
@@ -540,7 +541,6 @@ describe('runJudgeAgent', () => {
       rawDiff: '',
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
@@ -564,7 +564,6 @@ describe('runJudgeAgent', () => {
       rawDiff: '',
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
@@ -591,7 +590,6 @@ describe('runJudgeAgent', () => {
       rawDiff: '',
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     await runJudgeAgent(mockClient, makeConfig(), input);
@@ -613,7 +611,6 @@ describe('runJudgeAgent', () => {
       rawDiff: '',
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
@@ -644,7 +641,6 @@ describe('runJudgeAgent', () => {
       rawDiff: '',
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
@@ -673,7 +669,6 @@ describe('runJudgeAgent', () => {
       memory: makeMemory(),
       repoContext: '',
       agentCount: 5,
-      isFollowUp: false,
     };
 
     await runJudgeAgent(mockClient, makeConfig(), input);

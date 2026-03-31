@@ -398,9 +398,8 @@ async function runFullReview(
 
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
 
-    const isFollowUp = recap.previousFindings.length > 0;
     let recapStats: RecapStats | undefined;
-    if (isFollowUp) {
+    if (recap.previousFindings.length > 0) {
       const resolved = recap.previousFindings.filter(f => f.status === 'resolved');
       const open = recap.previousFindings.filter(f => f.status === 'open');
       const replied = recap.previousFindings.filter(f => f.status === 'replied');
@@ -488,7 +487,6 @@ async function runFullReview(
         }
       },
       recapStats,
-      isFollowUp,
     );
     const judgeEndTime = Date.now();
 

@@ -11,7 +11,7 @@ import {
   RepoMemory,
 } from './memory';
 import { LinkedIssue } from './github';
-import { titlesOverlap } from './recap';
+import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
 import { DiffFile, Finding, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
 
@@ -32,7 +32,6 @@ export interface JudgeInput {
   linkedIssues?: LinkedIssue[];
   agentCount: number;
   recapStats?: RecapStats;
-  isFollowUp: boolean;
 }
 
 export interface JudgedFinding {
@@ -49,7 +48,8 @@ export interface JudgeResult {
 
 const CONTEXT_LINES = 10;
 
-export function buildJudgeSystemPrompt(config: ReviewConfig, agentCount: number, isFollowUp: boolean = false): string {
+export function buildJudgeSystemPrompt(config: ReviewConfig, agentCount: number, recapStats?: RecapStats): string {
+  const isFollowUp = recapStats !== undefined;
   const majorityThreshold = Math.max(1, Math.ceil(agentCount / 2));
 
   const summaryInstruction = isFollowUp
@@ -204,7 +204,7 @@ export function buildJudgeUserMessage(
     parts.push(`- **Resolved**: ${recapStats.resolved} finding${recapStats.resolved !== 1 ? 's' : ''}`);
     if (recapStats.resolvedTitles.length > 0) {
       for (const title of recapStats.resolvedTitles) {
-        parts.push(`  - ${title}`);
+        parts.push(`  - ${sanitize(title)}`);
       }
     }
     parts.push(`- **Still open**: ${recapStats.open} finding${recapStats.open !== 1 ? 's' : ''}`);
@@ -405,7 +405,7 @@ export async function runJudgeAgent(
   config: ReviewConfig,
   input: JudgeInput,
 ): Promise<{ findings: Finding[]; summary: string }> {
-  const { findings, diff, memory, prContext, linkedIssues, agentCount, recapStats, isFollowUp } = input;
+  const { findings, diff, memory, prContext, linkedIssues, agentCount, recapStats } = input;
 
   if (findings.length === 0) return { findings, summary: 'Review complete.' };
 
@@ -423,7 +423,7 @@ export async function runJudgeAgent(
 
   const changedFiles = diff.files;
 
-  const systemPrompt = buildJudgeSystemPrompt(config, agentCount, isFollowUp);
+  const systemPrompt = buildJudgeSystemPrompt(config, agentCount, recapStats);
   const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, recapStats);
 
   const response = await client.sendMessage(systemPrompt, userMessage, { effort: 'high' });

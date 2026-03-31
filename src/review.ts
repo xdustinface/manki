@@ -201,7 +201,6 @@ export async function runReview(
   linkedIssues?: LinkedIssue[],
   onProgress?: (progress: ReviewProgress) => void,
   recapStats?: RecapStats,
-  isFollowUp: boolean = false,
 ): Promise<ReviewResult> {
   const team = selectTeam(diff, config, config.reviewers);
   core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
@@ -382,7 +381,6 @@ export async function runReview(
         linkedIssues,
         agentCount: team.agents.length,
         recapStats,
-        isFollowUp,
       };
       const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
       judgeSummary = judgeResult.summary;

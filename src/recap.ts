@@ -8,6 +8,11 @@ type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki';
 
+/** Escape double quotes and strip triple-backtick sequences from untrusted text before LLM interpolation. */
+export function sanitize(s: string): string {
+  return s.replace(/[\r\n]/g, ' ').replace(/`{3,}/g, '').replace(/"/g, '\\"');
+}
+
 interface PreviousFinding {
   title: string;
   file: string;
@@ -387,7 +392,7 @@ async function llmDeduplicateFindings(
     return { unique: findings, duplicates: [] };
   }
 
-  const sanitize = (s: string) => s.replace(/[\r\n]/g, ' ').replace(/`{3,}/g, '').replace(/"/g, '\\"');
+  // Uses the module-level sanitize() function
 
   const dismissedList = dismissed.map((f, i) =>
     `${i + 1}. "${sanitize(f.title)}" (${sanitize(f.file)}:${f.line})`
