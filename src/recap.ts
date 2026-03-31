@@ -193,9 +193,10 @@ function deduplicateFindings(
 
   const unique: Finding[] = [];
   const duplicates: DuplicateMatch[] = [];
+  const engaged = previousFindings.filter(f => f.status === 'resolved');
 
   for (const finding of newFindings) {
-    const matched = previousFindings.find(prev =>
+    const matched = engaged.find(prev =>
       matchesPrevious(finding, prev)
     );
 
