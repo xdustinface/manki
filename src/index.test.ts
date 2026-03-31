@@ -1297,6 +1297,168 @@ describe('runFullReview orchestration', () => {
       'Resolved 3 stale review threads from previous commits',
     );
   });
+
+  it('updates dashboard on agent-complete progress', async () => {
+    jest.useFakeTimers();
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: 'general',
+            agentFindingCount: 2,
+            agentDurationMs: 100,
+            agentStatus: 'success',
+            rawFindingCount: 2,
+            completedAgents: 1,
+            totalAgents: 1,
+          });
+        }
+        // Flush the debounce timer
+        jest.advanceTimersByTime(600);
+        await Promise.resolve();
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
+
+    await callRunFullReview();
+    jest.useRealTimers();
+
+    // The debounced flush should have called updateProgressDashboard
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    // At least the initial dashboard + the agent-complete flush
+    expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('updates dashboard on agent-complete with failure status', async () => {
+    jest.useFakeTimers();
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: 'general',
+            agentFindingCount: 0,
+            agentDurationMs: 50,
+            agentStatus: 'failure',
+            rawFindingCount: 0,
+            completedAgents: 1,
+            totalAgents: 1,
+          });
+        }
+        jest.advanceTimersByTime(600);
+        await Promise.resolve();
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
+
+    await callRunFullReview();
+    jest.useRealTimers();
+
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('flushes dashboard immediately on judging progress', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({
+            phase: 'judging',
+            rawFindingCount: 5,
+            judgeInputCount: 3,
+          });
+        }
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
+
+    await callRunFullReview();
+
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    // Initial dashboard + judging flush
+    expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
+    // The last call before postReview should reflect reviewed phase
+    const lastDashboard = dashboardCalls[dashboardCalls.length - 1][4];
+    expect(lastDashboard.phase).toBe('reviewed');
+    expect(lastDashboard.judgeInputCount).toBe(3);
+    expect(lastDashboard.agentProgress).toBeUndefined();
+  });
+
+  it('flushes dashboard immediately on reviewed progress', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({
+            phase: 'reviewed',
+            rawFindingCount: 4,
+          });
+        }
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
+
+    await callRunFullReview();
+
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    expect(dashboardCalls.length).toBeGreaterThanOrEqual(2);
+    const lastDashboard = dashboardCalls[dashboardCalls.length - 1][4];
+    expect(lastDashboard.phase).toBe('reviewed');
+    expect(lastDashboard.rawFindingCount).toBe(4);
+    expect(lastDashboard.agentProgress).toBeUndefined();
+  });
 });
 
 describe('handleInteraction', () => {

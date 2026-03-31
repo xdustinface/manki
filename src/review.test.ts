@@ -1115,6 +1115,34 @@ describe('runReview', () => {
     expect(reviewedCalls.length).toBe(0);
   });
 
+  it('fires onProgress with failure status when all passes fail in multi-pass mode', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_passes: 2 });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const onProgress = jest.fn();
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
+
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.reviewComplete).toBe(false);
+
+    const agentCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
+    );
+    expect(agentCalls.length).toBe(3);
+    for (const [progress] of agentCalls) {
+      expect(progress.agentStatus).toBe('failure');
+      expect(progress.agentFindingCount).toBe(0);
+    }
+  });
+
   it('applies suppressions from memory before judge', async () => {
     const findingJson = JSON.stringify([
       { severity: 'suggestion', title: 'Suppressed finding here', file: 'src/a.ts', line: 10, description: 'Desc.' },
