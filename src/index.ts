@@ -584,6 +584,7 @@ async function runFullReview(
       rawFindingCount,
       keptCount: result.findings.length,
       droppedCount: droppedCount >= 0 ? droppedCount : 0,
+      agentProgress: dashboard.agentProgress,
     };
 
     const timing = {
