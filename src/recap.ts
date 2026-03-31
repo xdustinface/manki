@@ -288,7 +288,7 @@ function buildRecapSummary(
     return `<details>\n<summary>"${title}" (${file}:${line}, ${severity})</summary>\n\nMatches previously flagged: "${matched}"\n</details>`;
   });
   const count = duplicateMatches.length;
-  return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n')}\n\n</details>`;
+  return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n\n')}\n\n</details>`;
 }
 
 /**
