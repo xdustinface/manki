@@ -1289,13 +1289,72 @@ describe('buildDashboard', () => {
     expect(md).toContain('\u25CB Judge — pending');
   });
 
+  it('renders per-agent progress when agentProgress is provided', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 150, agentCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 2, durationMs: 4000 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 0, durationMs: 3200 },
+        { name: 'Correctness & Logic', status: 'reviewing' },
+        { name: 'Testing & Coverage', status: 'reviewing' },
+        { name: 'Performance & Efficiency', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Manki** — Review in progress');
+    expect(md).toContain('2/5 agents complete');
+    expect(md).toContain('\u2705 Security & Safety — 2 findings (4s)');
+    expect(md).toContain('\u2705 Architecture & Design — 0 findings (3s)');
+    expect(md).toContain('\u23F3 Correctness & Logic');
+    expect(md).toContain('\u25CB Judge');
+  });
+
+  it('renders failed agent status in agent progress', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 1500 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 1, durationMs: 2000 },
+        { name: 'Architecture & Design', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u274C Security & Safety — failed (2s)');
+    expect(md).toContain('\u2705 Correctness & Logic — 1 findings (2s)');
+  });
+
   it('renders the reviewed phase with finding count and running judge', () => {
     const data: DashboardData = { phase: 'reviewed', lineCount: 300, agentCount: 3, rawFindingCount: 12 };
     const md = buildDashboard(data);
     expect(md).toContain('**Manki** — Review in progress');
     expect(md).toContain('\u2713 Parsed diff — 300 lines');
     expect(md).toContain('\u2713 Review — 3 agents \u00B7 12 findings');
-    expect(md).toContain('\u23F3 Running judge...');
+    expect(md).toContain('Judge — evaluating 12 findings...');
+  });
+
+  it('renders judgeInputCount separately from rawFindingCount in reviewed phase', () => {
+    const data: DashboardData = { phase: 'reviewed', lineCount: 300, agentCount: 3, rawFindingCount: 12, judgeInputCount: 10 };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u2713 Review — 3 agents \u00B7 12 findings');
+    expect(md).toContain('Judge — evaluating 10 findings...');
+  });
+
+  it('renders per-agent detail in the reviewed phase when agentProgress is provided', () => {
+    const data: DashboardData = {
+      phase: 'reviewed', lineCount: 300, agentCount: 3, rawFindingCount: 7,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 3, durationMs: 4000 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 4, durationMs: 2500 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 0, durationMs: 3100 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Manki** — Review in progress');
+    expect(md).toContain('\u2713 Review — 3 agents \u00B7 7 findings');
+    expect(md).toContain('\u2705 Security & Safety — 3 findings (4s)');
+    expect(md).toContain('\u2705 Correctness & Logic — 4 findings (3s)');
+    expect(md).toContain('\u2705 Architecture & Design — 0 findings (3s)');
+    expect(md).toContain('Judge — evaluating 7 findings...');
   });
 
   it('renders the complete phase with kept/dropped counts', () => {
@@ -1307,6 +1366,54 @@ describe('buildDashboard', () => {
     expect(md).toContain('\u2713 Parsed diff — 500 lines');
     expect(md).toContain('\u2713 Review — 7 agents \u00B7 20 findings');
     expect(md).toContain('\u2713 Judge — 8 kept \u00B7 12 dropped');
+  });
+
+  it('renders per-agent detail in the complete phase when agentProgress is provided', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 500, agentCount: 5,
+      rawFindingCount: 17, keptCount: 14, droppedCount: 3,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 2, durationMs: 4000 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 3000 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 5, durationMs: 6000 },
+        { name: 'Testing & Coverage', status: 'done', findingCount: 4, durationMs: 5000 },
+        { name: 'Performance & Efficiency', status: 'done', findingCount: 3, durationMs: 4000 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u2713 Review — 5 agents \u00B7 17 findings');
+    expect(md).toContain('\u2705 Security & Safety — 2 findings (4s)');
+    expect(md).toContain('\u2705 Architecture & Design — 3 findings (3s)');
+    expect(md).toContain('\u2705 Correctness & Logic — 5 findings (6s)');
+    expect(md).toContain('\u2705 Testing & Coverage — 4 findings (5s)');
+    expect(md).toContain('\u2705 Performance & Efficiency — 3 findings (4s)');
+    expect(md).toContain('\u2713 Judge — 14 kept \u00B7 3 dropped');
+  });
+
+  it('renders failed agent in the complete phase', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 200, agentCount: 2,
+      rawFindingCount: 3, keptCount: 2, droppedCount: 1,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 3, durationMs: 2000 },
+        { name: 'Architecture & Design', status: 'failed', durationMs: 500 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u2705 Security & Safety — 3 findings (2s)');
+    expect(md).toContain('\u274C Architecture & Design — failed (500ms)');
+    expect(md).toContain('\u2713 Judge — 2 kept \u00B7 1 dropped');
+  });
+
+  it('formats sub-second durations in milliseconds', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 1,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'done', findingCount: 1, durationMs: 750 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('750ms');
   });
 
   it('defaults rawFindingCount to 0 when not provided in reviewed phase', () => {

@@ -134,13 +134,22 @@ export interface ReviewStats {
   judgeModel?: string;
 }
 
+export interface AgentProgressEntry {
+  name: string;
+  status: 'pending' | 'reviewing' | 'done' | 'failed';
+  findingCount?: number;
+  durationMs?: number;
+}
+
 export interface DashboardData {
   phase: 'started' | 'reviewed' | 'complete';
   lineCount: number;
   agentCount: number;
   rawFindingCount?: number;
+  judgeInputCount?: number;
   keptCount?: number;
   droppedCount?: number;
+  agentProgress?: AgentProgressEntry[];
 }
 
 export interface JudgeDecision {

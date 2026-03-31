@@ -1,7 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
+import { AgentProgressEntry, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -152,8 +152,40 @@ export async function fetchRepoContext(
 /**
  * Build text status lines showing review progress across phases.
  */
+function renderAgentLines(agents: AgentProgressEntry[]): string {
+  return agents.map(a => {
+    if (a.status === 'done') {
+      return `  \u2705 ${a.name} — ${a.findingCount ?? 0} findings (${formatDuration(a.durationMs ?? 0)})`;
+    }
+    if (a.status === 'failed') {
+      return `  \u274C ${a.name} — failed (${formatDuration(a.durationMs ?? 0)})`;
+    }
+    return `  \u23F3 ${a.name}`;
+  }).join('\n');
+}
+
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
+}
+
 export function buildDashboard(data: DashboardData): string {
+  const agents = data.agentProgress;
+  const hasAgentProgress = agents && agents.length > 0;
+
   if (data.phase === 'started') {
+    if (hasAgentProgress) {
+      const done = agents.filter(a => a.status === 'done' || a.status === 'failed').length;
+      const lines = [
+        '**Manki** — Review in progress',
+        '',
+        `\u2713 Parsed diff — ${data.lineCount} lines`,
+        `\uD83D\uDD0D Review — ${done}/${agents.length} agents complete`,
+        renderAgentLines(agents),
+        `\u25CB Judge`,
+      ];
+      return lines.join('\n');
+    }
+
     return [
       '**Manki** — Review in progress',
       '',
@@ -164,21 +196,29 @@ export function buildDashboard(data: DashboardData): string {
   }
 
   if (data.phase === 'reviewed') {
-    return [
+    const reviewedLines = [
       '**Manki** — Review in progress',
       '',
       `\u2713 Parsed diff — ${data.lineCount} lines`,
       `\u2713 Review — ${data.agentCount} agents \u00B7 ${data.rawFindingCount ?? 0} findings`,
-      `\u23F3 Running judge...`,
-    ].join('\n');
+    ];
+    if (hasAgentProgress) {
+      reviewedLines.push(renderAgentLines(agents));
+    }
+    reviewedLines.push(`\u23F3 Judge — evaluating ${data.judgeInputCount ?? data.rawFindingCount ?? 0} findings...`);
+    return reviewedLines.join('\n');
   }
 
   // phase === 'complete'
-  return [
+  const completeLines = [
     `\u2713 Parsed diff — ${data.lineCount} lines`,
     `\u2713 Review — ${data.agentCount} agents \u00B7 ${data.rawFindingCount ?? 0} findings`,
-    `\u2713 Judge — ${data.keptCount ?? 0} kept \u00B7 ${data.droppedCount ?? 0} dropped`,
-  ].join('\n');
+  ];
+  if (hasAgentProgress) {
+    completeLines.push(renderAgentLines(agents));
+  }
+  completeLines.push(`\u2713 Judge — ${data.keptCount ?? 0} kept \u00B7 ${data.droppedCount ?? 0} dropped`);
+  return completeLines.join('\n');
 }
 
 /**

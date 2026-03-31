@@ -226,6 +226,8 @@ async function runFullReview(
 
   const progressCommentId = await postProgressComment(octokit, owner, repo, prNumber);
 
+  let dashboardFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
   try {
     // Capture recap state before resolving stale threads so dedup sees
     // the original open/resolved status of each previous finding.
@@ -271,6 +273,7 @@ async function runFullReview(
       phase: 'started',
       lineCount,
       agentCount: team.agents.length,
+      agentProgress: team.agents.map(a => ({ name: a.name, status: 'reviewing' as const })),
     };
     await updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard);
 
@@ -381,16 +384,53 @@ async function runFullReview(
 
     let rawFindingCount = 0;
     let reviewEndTime = parseEndTime;
+
+    function scheduleDashboardFlush(): void {
+      if (dashboardFlushTimer) clearTimeout(dashboardFlushTimer);
+      dashboardFlushTimer = setTimeout(() => {
+        dashboardFlushTimer = null;
+        updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+          .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+      }, 500);
+    }
+
     const result = await runReview(
       { reviewer: reviewerClient, judge: judgeClient }, config, diff, rawDiff, fullContext,
       memory, fileContents, prContext, linkedIssues,
       (progress) => {
-        rawFindingCount = progress.rawFindingCount;
-        reviewEndTime = Date.now();
-        dashboard.phase = 'reviewed';
-        dashboard.rawFindingCount = progress.rawFindingCount;
-        updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
-          .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        if (progress.phase === 'agent-complete') {
+          rawFindingCount = progress.rawFindingCount;
+          if (dashboard.agentProgress && progress.agentName) {
+            const entry = dashboard.agentProgress.find(a => a.name === progress.agentName);
+            if (entry) {
+              entry.status = progress.agentStatus === 'failure' ? 'failed' : 'done';
+              entry.findingCount = progress.agentFindingCount;
+              entry.durationMs = progress.agentDurationMs;
+            }
+          }
+          scheduleDashboardFlush();
+        } else if (progress.phase === 'reviewed') {
+          if (dashboardFlushTimer) {
+            clearTimeout(dashboardFlushTimer);
+            dashboardFlushTimer = null;
+          }
+          rawFindingCount = progress.rawFindingCount;
+          reviewEndTime = Date.now();
+          dashboard.phase = 'reviewed';
+          dashboard.rawFindingCount = progress.rawFindingCount;
+          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        } else if (progress.phase === 'judging') {
+          if (dashboardFlushTimer) {
+            clearTimeout(dashboardFlushTimer);
+            dashboardFlushTimer = null;
+          }
+          dashboard.phase = 'reviewed';
+          dashboard.rawFindingCount = progress.rawFindingCount;
+          dashboard.judgeInputCount = progress.judgeInputCount;
+          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+        }
       },
     );
     const judgeEndTime = Date.now();
@@ -544,6 +584,7 @@ async function runFullReview(
       rawFindingCount,
       keptCount: result.findings.length,
       droppedCount: droppedCount >= 0 ? droppedCount : 0,
+      agentProgress: dashboard.agentProgress,
     };
 
     const timing = {
@@ -598,6 +639,10 @@ async function runFullReview(
     core.info(`Review complete: ${result.verdict} with ${result.findings.length} findings`);
     core.info(`Severity breakdown: ${severityCounts.required} required, ${severityCounts.suggestion} suggestion, ${severityCounts.nit} nit, ${severityCounts.ignore} ignore`);
   } catch (error) {
+    if (dashboardFlushTimer) {
+      clearTimeout(dashboardFlushTimer);
+      dashboardFlushTimer = null;
+    }
     const msg = error instanceof Error ? error.message : String(error);
     core.warning(`Review failed: ${msg}`);
 
