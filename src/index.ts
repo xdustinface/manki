@@ -29,16 +29,18 @@ import { checkAndAutoApprove, resolveStaleThreads } from './state';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
-let cachedOctokit: Octokit | null = null;
-let cachedResolvedToken: string | null = null;
+const octokitCache = {
+  instance: null as Octokit | null,
+  resolvedToken: null as string | null,
+};
 
 async function getOctokit(): Promise<Octokit> {
-  if (!cachedOctokit) {
+  if (!octokitCache.instance) {
     const { octokit, resolvedToken } = await createAuthenticatedOctokit();
-    cachedOctokit = octokit;
-    cachedResolvedToken = resolvedToken;
+    octokitCache.instance = octokit;
+    octokitCache.resolvedToken = resolvedToken;
   }
-  return cachedOctokit;
+  return octokitCache.instance;
 }
 
 async function run(): Promise<void> {
@@ -329,7 +331,7 @@ async function runFullReview(
 
     let memory: RepoMemory | null = null;
     if (config.memory?.enabled) {
-      const memoryToken = getMemoryToken(cachedResolvedToken);
+      const memoryToken = getMemoryToken(octokitCache.resolvedToken);
       if (!memoryToken) {
         core.warning('No memory token available — skipping memory load. Set memory_repo_token or github_token.');
       } else {
@@ -451,10 +453,6 @@ async function runFullReview(
       result.verdict = determineVerdict(result.findings);
     }
 
-    const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
-    const open = recap.previousFindings.filter(f => f.status === 'open').length;
-    const recapSummary = buildRecapSummary(result.findings.length, duplicates.length, resolved, open);
-
     // Enrich findings with code context from the diff for nit issues
     for (const finding of result.findings) {
       if (finding.file && finding.line) {
@@ -501,15 +499,16 @@ async function runFullReview(
       : undefined;
 
     // Judge calibration metrics
-    const confidenceDistribution = { high: 0, medium: 0, low: 0 };
-    for (const f of allJudged) {
-      if (f.judgeConfidence) confidenceDistribution[f.judgeConfidence]++;
+    let judgeMetrics: { confidenceDistribution: { high: number; medium: number; low: number }; severityChanges: number; mergedDuplicates: number } | undefined;
+    if (allJudged.length > 0) {
+      const confidenceDistribution = { high: 0, medium: 0, low: 0 };
+      for (const f of allJudged) {
+        if (f.judgeConfidence) confidenceDistribution[f.judgeConfidence]++;
+      }
+      const severityChanges = allJudged.filter(f => f.judgeNotes).length;
+      const mergedDuplicates = (result.rawFindingCount ?? 0) - allJudged.length;
+      judgeMetrics = { confidenceDistribution, severityChanges, mergedDuplicates };
     }
-    const severityChanges = allJudged.filter(f => f.judgeNotes).length;
-    const mergedDuplicates = (result.rawFindingCount ?? 0) - allJudged.length;
-    const judgeMetrics = allJudged.length > 0
-      ? { confidenceDistribution, severityChanges, mergedDuplicates }
-      : undefined;
 
     // File analysis metrics
     const fileTypes: Record<string, number> = {};
@@ -546,6 +545,10 @@ async function runFullReview(
       judgeModel,
     };
 
+    const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
+    const open = recap.previousFindings.filter(f => f.status === 'open').length;
+    const recapSummary = buildRecapSummary(result.findings.length, duplicates.length, resolved, open);
+
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
 
@@ -558,7 +561,7 @@ async function runFullReview(
     }
 
     if (memory && config.memory?.enabled) {
-      const memoryToken = getMemoryToken(cachedResolvedToken);
+      const memoryToken = getMemoryToken(octokitCache.resolvedToken);
       if (!memoryToken) {
         core.warning('No memory token available — skipping memory update. Set memory_repo_token or github_token.');
       } else {
@@ -725,7 +728,7 @@ async function handleInteraction(): Promise<void> {
   });
 
   const memoryConfig = config.memory?.enabled ? config.memory : undefined;
-  const memoryToken = config.memory?.enabled ? getMemoryToken(cachedResolvedToken) ?? undefined : undefined;
+  const memoryToken = config.memory?.enabled ? getMemoryToken(octokitCache.resolvedToken) ?? undefined : undefined;
 
   await handlePRComment(octokit, claude, owner, repo, prNumber, memoryConfig, memoryToken, config);
 }
@@ -753,7 +756,7 @@ async function handleIssueInteraction(): Promise<void> {
   const config = loadConfig(configContent ?? undefined);
 
   const memoryConfig = config.memory?.enabled ? config.memory : undefined;
-  const memoryToken = config.memory?.enabled ? getMemoryToken(cachedResolvedToken) ?? undefined : undefined;
+  const memoryToken = config.memory?.enabled ? getMemoryToken(octokitCache.resolvedToken) ?? undefined : undefined;
 
   await handlePRComment(octokit, null, owner, repo, issueNumber, memoryConfig, memoryToken, config);
 }
@@ -802,7 +805,7 @@ async function handleReviewCommentInteraction(): Promise<void> {
   });
 
   const memoryConfig = config.memory?.enabled ? config.memory : undefined;
-  const memoryToken = config.memory?.enabled ? getMemoryToken(cachedResolvedToken) ?? undefined : undefined;
+  const memoryToken = config.memory?.enabled ? getMemoryToken(octokitCache.resolvedToken) ?? undefined : undefined;
 
   const command = parseCommand(body);
   if (command.type !== 'generic') {
@@ -855,8 +858,8 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 function _resetOctokitCache(): void {
-  cachedOctokit = null;
-  cachedResolvedToken = null;
+  octokitCache.instance = null;
+  octokitCache.resolvedToken = null;
 }
 
 export { run, handlePullRequest, handleCommentTrigger, handleInteraction, handleIssueInteraction, handleReviewCommentInteraction, handleReviewStateCheck, runFullReview, main, _resetOctokitCache };

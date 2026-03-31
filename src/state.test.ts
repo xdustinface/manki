@@ -320,7 +320,7 @@ describe('checkAndAutoApprove', () => {
     threads?: ReturnType<typeof makeGraphqlFetchThreadNode>[];
     prHeadSha?: string;
     createReviewFn?: jest.Mock;
-    existingReviews?: Array<{ body?: string; state?: string }>;
+    existingReviews?: Array<{ body?: string; state?: string; user?: { login?: string; type?: string } }>;
   } = {}) {
     const threads = overrides.threads ?? [];
     const prHeadSha = overrides.prHeadSha ?? 'abc123';
@@ -460,7 +460,7 @@ describe('checkAndAutoApprove', () => {
       threads: [],
       createReviewFn: createReviewMock,
       existingReviews: [
-        { body: '<!-- manki -->', state: 'APPROVED' },
+        { body: '<!-- manki -->', state: 'APPROVED', user: { login: 'github-actions[bot]', type: 'Bot' } },
       ],
     });
 
@@ -478,8 +478,8 @@ describe('checkAndAutoApprove', () => {
       prHeadSha: 'sha-new',
       createReviewFn: createReviewMock,
       existingReviews: [
-        { body: '<!-- manki -->', state: 'APPROVED' },
-        { body: '<!-- manki -->', state: 'CHANGES_REQUESTED' },
+        { body: '<!-- manki -->', state: 'APPROVED', user: { login: 'github-actions[bot]', type: 'Bot' } },
+        { body: '<!-- manki -->', state: 'CHANGES_REQUESTED', user: { login: 'github-actions[bot]', type: 'Bot' } },
       ],
     });
 
@@ -498,7 +498,7 @@ describe('checkAndAutoApprove', () => {
       prHeadSha: 'sha-new',
       createReviewFn: createReviewMock,
       existingReviews: [
-        { body: '<!-- manki -->', state: 'DISMISSED' },
+        { body: '<!-- manki -->', state: 'DISMISSED', user: { login: 'github-actions[bot]', type: 'Bot' } },
       ],
     });
 
