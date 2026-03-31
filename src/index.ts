@@ -612,10 +612,10 @@ async function runFullReview(
       judgeModel,
     };
 
-    const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
-    const open = recap.previousFindings.filter(f => f.status === 'open').length;
+    const resolvedCount = recapStats?.resolved ?? recap.previousFindings.filter(f => f.status === 'resolved').length;
+    const openCount = recapStats?.open ?? recap.previousFindings.filter(f => f.status === 'open').length;
 
-    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open, allDuplicateMatches);
+    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolvedCount, openCount, allDuplicateMatches);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
@@ -682,8 +682,8 @@ async function runFullReview(
       })),
       recap: {
         newFindings: result.findings.length,
-        previouslyFlagged: recap.previousFindings.filter(f => f.status === 'open').length,
-        resolved: recap.previousFindings.filter(f => f.status === 'resolved').length,
+        previouslyFlagged: openCount,
+        resolved: resolvedCount,
         suppressionsApplied: totalDuplicates,
       },
       timing,
