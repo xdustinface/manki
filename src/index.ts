@@ -8,6 +8,7 @@ import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, llmDeduplicateFindings, DuplicateMatch } from './recap';
+import { RecapStats } from './judge';
 import { runReview, determineVerdict, selectTeam } from './review';
 import { DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
 import {
@@ -397,6 +398,19 @@ async function runFullReview(
 
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
 
+    let recapStats: RecapStats | undefined;
+    if (recap.previousFindings.length > 0) {
+      const resolved = recap.previousFindings.filter(f => f.status === 'resolved');
+      const open = recap.previousFindings.filter(f => f.status === 'open');
+      const replied = recap.previousFindings.filter(f => f.status === 'replied');
+      recapStats = {
+        resolved: resolved.length,
+        open: open.length,
+        replied: replied.length,
+        resolvedTitles: resolved.map(f => f.title).filter(t => t.length > 0),
+      };
+    }
+
     // Fetch full file contents for changed files so reviewers have surrounding context
     const filePaths = filteredFiles
       .filter(f => f.changeType !== 'deleted')
@@ -472,6 +486,7 @@ async function runFullReview(
             .catch(err => core.warning(`Failed to update dashboard: ${err}`));
         }
       },
+      recapStats,
     );
     const judgeEndTime = Date.now();
 
@@ -597,10 +612,10 @@ async function runFullReview(
       judgeModel,
     };
 
-    const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
-    const open = recap.previousFindings.filter(f => f.status === 'open').length;
+    const resolvedCount = recapStats?.resolved ?? recap.previousFindings.filter(f => f.status === 'resolved').length;
+    const openCount = recapStats?.open ?? recap.previousFindings.filter(f => f.status === 'open').length;
 
-    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open, allDuplicateMatches);
+    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolvedCount, openCount, allDuplicateMatches);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
@@ -667,8 +682,8 @@ async function runFullReview(
       })),
       recap: {
         newFindings: result.findings.length,
-        previouslyFlagged: recap.previousFindings.filter(f => f.status === 'open').length,
-        resolved: recap.previousFindings.filter(f => f.status === 'resolved').length,
+        previouslyFlagged: openCount,
+        resolved: resolvedCount,
         suppressionsApplied: totalDuplicates,
       },
       timing,
