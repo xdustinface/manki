@@ -254,6 +254,10 @@ function matchesPrevious(finding: Finding, previous: PreviousFinding): boolean {
   return true;
 }
 
+function sanitizeHtml(s: string): string {
+  return s.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /**
  * Build a review summary that includes deduplication stats.
  */
@@ -262,6 +266,7 @@ function buildRecapSummary(
   duplicateCount: number,
   resolvedCount: number,
   openCount: number,
+  duplicateMatches?: DuplicateMatch[],
 ): string {
   const parts: string[] = [];
 
@@ -270,7 +275,15 @@ function buildRecapSummary(
   if (resolvedCount > 0) parts.push(`${resolvedCount} resolved`);
   if (duplicateCount > 0) parts.push(`${duplicateCount} skipped (already flagged)`);
 
-  return parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
+  const summary = parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
+
+  if (!duplicateMatches || duplicateMatches.length === 0) return summary;
+
+  const lines = duplicateMatches.map(d =>
+    `- "${sanitizeHtml(d.finding.title)}" → matches "${sanitizeHtml(d.matchedTitle)}"`
+  );
+  const count = duplicateMatches.length;
+  return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously dismissed)</summary>\n\n${lines.join('\n')}\n\n</details>`;
 }
 
 /**

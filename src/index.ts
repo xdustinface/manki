@@ -563,15 +563,7 @@ async function runFullReview(
     const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
     const open = recap.previousFindings.filter(f => f.status === 'open').length;
 
-    let dedupDetails = '';
-    if (allDuplicateMatches.length > 0) {
-      const lines = allDuplicateMatches.map(d =>
-        `- "${d.finding.title}" → matches "${d.matchedTitle}"`
-      );
-      dedupDetails = `\n\n<details><summary>🔁 ${allDuplicateMatches.length} finding${allDuplicateMatches.length === 1 ? '' : 's'} skipped (previously dismissed)</summary>\n\n${lines.join('\n')}\n\n</details>`;
-    }
-
-    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open) + dedupDetails;
+    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open, allDuplicateMatches);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);

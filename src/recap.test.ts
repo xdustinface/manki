@@ -502,6 +502,28 @@ describe('buildRecapSummary', () => {
     const summary = buildRecapSummary(0, 0, 0, 0);
     expect(summary).toBe('No findings');
   });
+
+  it('appends collapsed dedup details when duplicateMatches provided', () => {
+    const matches = [
+      { finding: makeFinding({ title: 'Unused import' }), matchedTitle: 'Remove unused import' },
+    ];
+    const summary = buildRecapSummary(1, 1, 0, 0, matches);
+    expect(summary).toContain('Findings: 1 new, 1 skipped (already flagged)');
+    expect(summary).toContain('<details>');
+    expect(summary).toContain('1 finding skipped (previously dismissed)');
+    expect(summary).toContain('"Unused import"');
+  });
+
+  it('sanitizes HTML in finding titles within dedup details', () => {
+    const matches = [
+      { finding: makeFinding({ title: '<script>alert("xss")</script>' }), matchedTitle: 'legit "title"' },
+    ];
+    const summary = buildRecapSummary(0, 1, 0, 0, matches);
+    expect(summary).not.toContain('<script>');
+    expect(summary).toContain('&lt;script&gt;');
+    expect(summary).toContain('&quot;xss&quot;');
+    expect(summary).toContain('legit &quot;title&quot;');
+  });
 });
 
 describe('fetchRecapState', () => {
