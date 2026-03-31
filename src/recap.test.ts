@@ -1,6 +1,6 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, titlesOverlap } from './recap';
+import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -836,5 +836,102 @@ describe('resolveAddressedThreads edge cases', () => {
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
     expect(result).toBe(0);
     expect(graphqlMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('llmDeduplicateFindings', () => {
+  it('returns all findings when no dismissed findings exist', async () => {
+    const findings = [makeFinding({ title: 'Null check missing', file: 'src/foo.ts', line: 10 })];
+    const previous = [makePrevious({ status: 'open' })];
+    const mockClient = { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings(findings, previous, mockClient);
+    expect(result.unique).toHaveLength(1);
+    expect(result.duplicates).toHaveLength(0);
+    expect(mockClient.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns all findings when no findings to check', async () => {
+    const previous = [makePrevious({ status: 'resolved' })];
+    const mockClient = { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings([], previous, mockClient);
+    expect(result.unique).toHaveLength(0);
+    expect(result.duplicates).toHaveLength(0);
+    expect(mockClient.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('identifies LLM-matched duplicates', async () => {
+    const findings = [
+      makeFinding({ title: 'Missing null check', file: 'src/foo.ts', line: 10 }),
+      makeFinding({ title: 'Unused import', file: 'src/bar.ts', line: 5 }),
+    ];
+    const previous = [
+      makePrevious({ title: 'Null safety issue', file: 'src/foo.ts', line: 10, status: 'resolved' }),
+    ];
+    const mockClient = {
+      sendMessage: jest.fn().mockResolvedValue({
+        content: '[{ "index": 1, "matchedDismissed": 1 }]',
+      }),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings(findings, previous, mockClient);
+    expect(result.unique).toHaveLength(1);
+    expect(result.unique[0].title).toBe('Unused import');
+    expect(result.duplicates).toHaveLength(1);
+    expect(result.duplicates[0].title).toBe('Missing null check');
+  });
+
+  it('handles LLM returning no matches', async () => {
+    const findings = [
+      makeFinding({ title: 'Missing null check', file: 'src/foo.ts', line: 10 }),
+    ];
+    const previous = [
+      makePrevious({ title: 'Unused variable', file: 'src/bar.ts', line: 20, status: 'resolved' }),
+    ];
+    const mockClient = {
+      sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings(findings, previous, mockClient);
+    expect(result.unique).toHaveLength(1);
+    expect(result.duplicates).toHaveLength(0);
+  });
+
+  it('gracefully handles LLM errors', async () => {
+    const findings = [
+      makeFinding({ title: 'Missing null check', file: 'src/foo.ts', line: 10 }),
+    ];
+    const previous = [
+      makePrevious({ title: 'Old finding', file: 'src/foo.ts', line: 10, status: 'resolved' }),
+    ];
+    const mockClient = {
+      sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings(findings, previous, mockClient);
+    expect(result.unique).toHaveLength(1);
+    expect(result.duplicates).toHaveLength(0);
+  });
+
+  it('handles LLM response with code fences', async () => {
+    const findings = [
+      makeFinding({ title: 'Missing null check', file: 'src/foo.ts', line: 10 }),
+      makeFinding({ title: 'Unused import', file: 'src/bar.ts', line: 5 }),
+    ];
+    const previous = [
+      makePrevious({ title: 'Null safety issue', file: 'src/foo.ts', line: 10, status: 'resolved' }),
+    ];
+    const mockClient = {
+      sendMessage: jest.fn().mockResolvedValue({
+        content: '```json\n[{ "index": 1, "matchedDismissed": 1 }]\n```',
+      }),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const result = await llmDeduplicateFindings(findings, previous, mockClient);
+    expect(result.unique).toHaveLength(1);
+    expect(result.unique[0].title).toBe('Unused import');
+    expect(result.duplicates).toHaveLength(1);
+    expect(result.duplicates[0].title).toBe('Missing null check');
   });
 });

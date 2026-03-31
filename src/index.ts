@@ -7,7 +7,7 @@ import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
-import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads } from './recap';
+import { fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, llmDeduplicateFindings } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
 import { DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
 import {
@@ -446,6 +446,16 @@ async function runFullReview(
       core.info(`Deduplicated ${duplicates.length} findings, ${result.findings.length - unique.length} total removed`);
       result.findings = unique;
       result.verdict = determineVerdict(result.findings);
+    }
+
+    // LLM-based dedup for findings that passed static matching
+    if (result.findings.length > 0 && recap.previousFindings.length > 0) {
+      const dedupClient = new ClaudeClient({ ...authOptions, model: 'claude-haiku-4-5' });
+      const llmResult = await llmDeduplicateFindings(result.findings, recap.previousFindings, dedupClient);
+      if (llmResult.duplicates.length > 0) {
+        result.findings = llmResult.unique;
+        result.verdict = determineVerdict(result.findings);
+      }
     }
 
     if (memory && memory.patterns.length > 0) {
