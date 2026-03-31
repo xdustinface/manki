@@ -442,6 +442,7 @@ async function runFullReview(
     }
 
     const { unique, duplicates } = deduplicateFindings(result.findings, recap.previousFindings, memory?.suppressions);
+    let totalDuplicates = duplicates.length;
     if (duplicates.length > 0 || unique.length !== result.findings.length) {
       core.info(`Deduplicated ${duplicates.length} findings, ${result.findings.length - unique.length} total removed`);
       result.findings = unique;
@@ -454,6 +455,7 @@ async function runFullReview(
       const llmResult = await llmDeduplicateFindings(result.findings, recap.previousFindings, dedupClient);
       if (llmResult.duplicates.length > 0) {
         result.findings = llmResult.unique;
+        totalDuplicates += llmResult.duplicates.length;
         result.verdict = determineVerdict(result.findings);
       }
     }
@@ -557,7 +559,7 @@ async function runFullReview(
 
     const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
     const open = recap.previousFindings.filter(f => f.status === 'open').length;
-    const recapSummary = buildRecapSummary(result.findings.length, duplicates.length, resolved, open);
+    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, resolved, open);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
