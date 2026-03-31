@@ -595,6 +595,36 @@ describe('handlePullRequest', () => {
     expect(jest.mocked(core.info)).toHaveBeenCalledWith('Skipping draft PR');
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
   });
+
+  it('skips when review is already in progress', async () => {
+    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
+    mockListComments.mockResolvedValueOnce({
+      data: [
+        { body: '<!-- manki-bot -->\n**Manki** — Review in progress', updated_at: recentDate, user: { login: 'manki-labs[bot]', type: 'Bot' } },
+      ],
+    });
+
+    setContext({
+      eventName: 'pull_request',
+      payload: {
+        action: 'opened',
+        sender: { login: 'user' },
+        pull_request: {
+          number: 1,
+          head: { sha: 'abc' },
+          base: { ref: 'main' },
+          title: 'Test PR',
+          body: '',
+          draft: false,
+        },
+      },
+    });
+
+    await handlePullRequest();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(expect.stringContaining('review already in progress'));
+    expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
+  });
 });
 
 describe('handleCommentTrigger', () => {
@@ -618,6 +648,31 @@ describe('handleCommentTrigger', () => {
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
       'Comment is on an issue, not a PR — skipping',
     );
+  });
+
+  it('reacts with eyes and skips when review is already in progress', async () => {
+    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
+    mockListComments.mockResolvedValueOnce({
+      data: [
+        { body: '<!-- manki-bot -->\n**Manki** — Review in progress', updated_at: recentDate, user: { login: 'manki-labs[bot]', type: 'Bot' } },
+      ],
+    });
+
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
+        comment: { id: 42, body: '@manki review' },
+      },
+    });
+
+    await handleCommentTrigger();
+
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith('Review already in progress — skipping');
   });
 });
 
