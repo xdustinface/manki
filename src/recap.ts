@@ -216,17 +216,7 @@ function titlesOverlap(a: string, b: string): boolean {
   if (shorter.length >= 5 && longer.includes(shorter)) return true;
 
   // Word overlap — 50% of words in the shorter title must appear in the longer
-  const aWords = new Set(aLower.split(/\s+/).filter(w => w.length >= 3));
-  const bWords = new Set(bLower.split(/\s+/).filter(w => w.length >= 3));
-  if (aWords.size === 0 || bWords.size === 0) return false;
-
-  let overlap = 0;
-  for (const w of aWords) {
-    if (bWords.has(w)) overlap++;
-  }
-
-  const minSize = Math.min(aWords.size, bWords.size);
-  return overlap >= minSize * 0.5;
+  return wordOverlapRatio(a, b) >= 0.5;
 }
 
 function wordOverlapRatio(a: string, b: string): number {
