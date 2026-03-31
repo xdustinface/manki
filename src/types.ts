@@ -146,6 +146,7 @@ export interface DashboardData {
   lineCount: number;
   agentCount: number;
   rawFindingCount?: number;
+  judgeInputCount?: number;
   keptCount?: number;
   droppedCount?: number;
   agentProgress?: AgentProgressEntry[];

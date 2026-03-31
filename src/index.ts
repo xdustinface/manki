@@ -382,6 +382,17 @@ async function runFullReview(
 
     let rawFindingCount = 0;
     let reviewEndTime = parseEndTime;
+
+    let dashboardFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    function scheduleDashboardFlush(): void {
+      if (dashboardFlushTimer) clearTimeout(dashboardFlushTimer);
+      dashboardFlushTimer = setTimeout(() => {
+        dashboardFlushTimer = null;
+        updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
+          .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+      }, 500);
+    }
+
     const result = await runReview(
       { reviewer: reviewerClient, judge: judgeClient }, config, diff, rawDiff, fullContext,
       memory, fileContents, prContext, linkedIssues,
@@ -396,8 +407,7 @@ async function runFullReview(
               entry.durationMs = progress.agentDurationMs;
             }
           }
-          updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
-            .catch(err => core.warning(`Failed to update dashboard: ${err}`));
+          scheduleDashboardFlush();
         } else if (progress.phase === 'reviewed') {
           rawFindingCount = progress.rawFindingCount;
           reviewEndTime = Date.now();
@@ -409,6 +419,7 @@ async function runFullReview(
         } else if (progress.phase === 'judging') {
           dashboard.phase = 'reviewed';
           dashboard.rawFindingCount = progress.rawFindingCount;
+          dashboard.judgeInputCount = progress.judgeInputCount;
           dashboard.agentProgress = undefined;
           updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
             .catch(err => core.warning(`Failed to update dashboard: ${err}`));

@@ -184,6 +184,7 @@ export interface ReviewProgress {
   agentDurationMs?: number;
   agentStatus?: 'success' | 'failure';
   rawFindingCount: number;
+  judgeInputCount?: number;
   completedAgents?: number;
   totalAgents?: number;
 }
@@ -212,6 +213,7 @@ export async function runReview(
   let allAgentsFailed = true;
 
   let completedCount = 0;
+  let progressFindingCount = 0;
 
   if (multiPass) {
     core.info(`Running ${team.agents.length} reviewer agents with ${passes} passes each (multi-pass mode)...`);
@@ -280,6 +282,7 @@ export async function runReview(
       return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
         .then(findings => {
           completedCount++;
+          progressFindingCount += findings.length;
           if (onProgress) {
             onProgress({
               phase: 'agent-complete',
@@ -287,7 +290,7 @@ export async function runReview(
               agentFindingCount: findings.length,
               agentDurationMs: Date.now() - startTime,
               agentStatus: 'success',
-              rawFindingCount: allFindings.length + findings.length,
+              rawFindingCount: progressFindingCount,
               completedAgents: completedCount,
               totalAgents: team.agents.length,
             });
@@ -303,7 +306,7 @@ export async function runReview(
               agentFindingCount: 0,
               agentDurationMs: Date.now() - startTime,
               agentStatus: 'failure',
-              rawFindingCount: allFindings.length,
+              rawFindingCount: progressFindingCount,
               completedAgents: completedCount,
               totalAgents: team.agents.length,
             });
@@ -352,7 +355,8 @@ export async function runReview(
   if (onProgress) {
     onProgress({
       phase: 'judging',
-      rawFindingCount: findingsForJudge.length,
+      rawFindingCount: allFindings.length,
+      judgeInputCount: findingsForJudge.length,
       totalAgents: team.agents.length,
       completedAgents: team.agents.length,
     });

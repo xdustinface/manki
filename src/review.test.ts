@@ -1013,6 +1013,8 @@ describe('runReview', () => {
     expect(judgingCalls.length).toBe(1);
     expect(judgingCalls[0][0].totalAgents).toBe(3);
     expect(judgingCalls[0][0].completedAgents).toBe(3);
+    expect(judgingCalls[0][0].rawFindingCount).toBe(3);
+    expect(judgingCalls[0][0].judgeInputCount).toBe(3);
 
     // Judging should fire after reviewed
     const reviewedIdx = onProgress.mock.calls.findIndex(
@@ -1054,6 +1056,63 @@ describe('runReview', () => {
     );
     expect(failedCalls.length).toBe(1);
     expect(failedCalls[0][0].agentFindingCount).toBe(0);
+  });
+
+  it('fires onProgress per agent in multi-pass mode', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Consistent bug across passes', file: 'src/a.ts', line: 10, description: 'Bug.' },
+    ]);
+    const clients = makeClients(findingJson);
+    const config = makeConfig({ review_passes: 2 });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const onProgress = jest.fn();
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
+
+    const agentCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
+    );
+    expect(agentCalls.length).toBe(3);
+    for (const [progress] of agentCalls) {
+      expect(progress.agentName).toBeDefined();
+      expect(progress.agentStatus).toBe('success');
+      expect(progress.agentDurationMs).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('fires onProgress with failure status when all agents fail', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const onProgress = jest.fn();
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
+
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.reviewComplete).toBe(false);
+
+    const agentCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
+    );
+    expect(agentCalls.length).toBe(3);
+    for (const [progress] of agentCalls) {
+      expect(progress.agentStatus).toBe('failure');
+      expect(progress.agentFindingCount).toBe(0);
+    }
+
+    const reviewedCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'reviewed',
+    );
+    expect(reviewedCalls.length).toBe(0);
   });
 
   it('applies suppressions from memory before judge', async () => {

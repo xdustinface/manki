@@ -1332,6 +1332,13 @@ describe('buildDashboard', () => {
     expect(md).toContain('Judge — evaluating 12 findings...');
   });
 
+  it('renders judgeInputCount separately from rawFindingCount in reviewed phase', () => {
+    const data: DashboardData = { phase: 'reviewed', lineCount: 300, agentCount: 3, rawFindingCount: 12, judgeInputCount: 10 };
+    const md = buildDashboard(data);
+    expect(md).toContain('\u2713 Review — 3 agents \u00B7 12 findings');
+    expect(md).toContain('Judge — evaluating 10 findings...');
+  });
+
   it('renders the complete phase with kept/dropped counts', () => {
     const data: DashboardData = {
       phase: 'complete', lineCount: 500, agentCount: 7,
