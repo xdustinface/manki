@@ -615,7 +615,8 @@ async function handleTriage(
     }
 
     if (suggestedFix) {
-      bodyParts.push('', '## Suggested Fix', '', '```', suggestedFix, '```');
+      const lang = inferLanguageFromPath(item.ref);
+      bodyParts.push('', '## Suggested Fix', '', `\`\`\`${lang}`, suggestedFix, '```');
     }
 
     const issueBody = bodyParts.join('\n');
@@ -760,6 +761,19 @@ function scopeDiffToFile(fullDiff: string, filePath: string): string {
   }
 
   return result.length > 0 ? result.join('\n') : '';
+}
+
+const LANG_BY_EXT: Record<string, string> = {
+  '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript',
+  '.py': 'python', '.rs': 'rust', '.go': 'go', '.java': 'java', '.rb': 'ruby',
+  '.sh': 'bash', '.yml': 'yaml', '.yaml': 'yaml', '.json': 'json', '.md': 'markdown',
+  '.css': 'css', '.html': 'html', '.sql': 'sql', '.c': 'c', '.cpp': 'cpp', '.h': 'c',
+};
+
+function inferLanguageFromPath(filePath: string): string {
+  const dotIdx = filePath.lastIndexOf('.');
+  if (dotIdx === -1) return '';
+  return LANG_BY_EXT[filePath.slice(dotIdx)] ?? '';
 }
 
 function isBotComment(body: string): boolean {
