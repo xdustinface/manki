@@ -1802,7 +1802,7 @@ describe('isReviewInProgress', () => {
     const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
     mockListComments.mockResolvedValueOnce({
       data: [
-        { body: '<!-- manki-bot -->\n**Manki** — Review in progress\n\nSome details', updated_at: recentDate },
+        { body: '<!-- manki-bot -->\n**Manki** — Review in progress\n\nSome details', updated_at: recentDate, user: { login: 'manki-labs[bot]', type: 'Bot' } },
       ],
     });
 
@@ -1816,7 +1816,7 @@ describe('isReviewInProgress', () => {
     const staleDate = new Date(Date.now() - 15 * 60000).toISOString();
     mockListComments.mockResolvedValueOnce({
       data: [
-        { body: '<!-- manki-bot -->\n**Manki** — Review in progress', updated_at: staleDate },
+        { body: '<!-- manki-bot -->\n**Manki** — Review in progress', updated_at: staleDate, user: { login: 'manki-labs[bot]', type: 'Bot' } },
       ],
     });
 
@@ -1828,7 +1828,20 @@ describe('isReviewInProgress', () => {
   it('returns false when no progress comment exists', async () => {
     mockListComments.mockResolvedValueOnce({
       data: [
-        { body: 'Some random comment', updated_at: new Date().toISOString() },
+        { body: 'Some random comment', updated_at: new Date().toISOString(), user: { login: 'someuser', type: 'User' } },
+      ],
+    });
+
+    const result = await isReviewInProgress(mockOctokitInstance as never, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+  });
+
+  it('ignores progress-like comments from non-bot users', async () => {
+    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
+    mockListComments.mockResolvedValueOnce({
+      data: [
+        { body: '<!-- manki-bot -->\n**Manki** — Review in progress', updated_at: recentDate, user: { login: 'malicious-user', type: 'User' } },
       ],
     });
 

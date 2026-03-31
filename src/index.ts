@@ -154,9 +154,10 @@ async function run(): Promise<void> {
 async function isReviewInProgress(octokit: Octokit, owner: string, repo: string, prNumber: number): Promise<boolean> {
   try {
     const { data: comments } = await octokit.rest.issues.listComments({
-      owner, repo, issue_number: prNumber, per_page: 5, direction: 'desc',
+      owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
     });
     const progressComment = comments.find(c =>
+      c.user?.type === 'Bot' &&
       c.body?.includes(PROGRESS_MARKER) && c.body?.includes('Review in progress')
     );
     if (!progressComment) return false;
