@@ -5,6 +5,31 @@ All notable changes to Manki will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-03-31
+
+### Added
+
+- Live per-agent progress updates in review comment — shows real-time agent completion with timing and finding counts (#357)
+- LLM-based deduplication for dismissed findings using Haiku — catches semantically similar findings that static matching misses (#364)
+- Collapsed `<details>` section in review report showing deduplicated findings with matched titles (#372)
+- Configurable `dedup` model in `.manki.yml` via `models.dedup` (defaults to `claude-haiku-4-5`) (#364)
+
+### Fixed
+
+- Fuzzy word-overlap matching in recap dedup to catch rephrased findings (#361)
+- Prevent parallel review runs by checking for in-progress reviews before starting new ones (#371)
+- Skip self-triggered workflow events from `manki-labs[bot]` to reduce runner waste (#371)
+
+### Changed
+
+- Consolidate `titlesRelated` in judge.ts with shared `titlesOverlap` from recap.ts (#364)
+- Refactor `buildDashboard` to single linear rendering path — 52 → 36 lines (#369)
+- Simplify `completeDashboard` construction using spread from accumulated dashboard object (#369)
+
+### Chores
+
+- Guard `majorityThreshold` for `agentCount < 2`, harden bot review filter, add language annotation to suggested fix code blocks, narrow `recapSummary` scope, conditional `confidenceDistribution`, encapsulate `octokitCache`, export and test `scopeDiffToFile`, realistic test data in `determineVerdict` tests (#366)
+
 ## [4.1.0] - 2026-03-31
 
 ### Added
