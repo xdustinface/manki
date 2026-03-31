@@ -1143,6 +1143,56 @@ describe('runReview', () => {
     }
   });
 
+  it('marks agent as failed when all passes fail but other agents succeed in multi-pass mode', async () => {
+    let callCount = 0;
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Found a bug', file: 'src/a.ts', line: 10, description: 'Bug.' },
+    ]);
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation(() => {
+          callCount++;
+          // First agent (Security & Safety) has 2 passes that both fail;
+          // remaining agents succeed on all passes
+          if (callCount <= 2) return Promise.reject(new Error('API error'));
+          return Promise.resolve({ content: findingJson });
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_passes: 2 });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const onProgress = jest.fn();
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [
+        { severity: 'required', title: 'Found a bug', file: 'src/a.ts', line: 10, description: 'Bug.', reviewers: ['Code Quality'] },
+      ],
+      summary: 'One finding.',
+    });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
+
+    expect(result.reviewComplete).toBe(true);
+
+    const agentCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
+    );
+    expect(agentCalls.length).toBe(3);
+
+    // First agent should have failed (all passes rejected)
+    expect(agentCalls[0][0].agentStatus).toBe('failure');
+    expect(agentCalls[0][0].agentFindingCount).toBe(0);
+
+    // Remaining agents should have succeeded
+    for (const [progress] of agentCalls.slice(1)) {
+      expect(progress.agentStatus).toBe('success');
+      expect(progress.agentFindingCount).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   it('applies suppressions from memory before judge', async () => {
     const findingJson = JSON.stringify([
       { severity: 'suggestion', title: 'Suppressed finding here', file: 'src/a.ts', line: 10, description: 'Desc.' },

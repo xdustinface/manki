@@ -409,6 +409,10 @@ async function runFullReview(
           }
           scheduleDashboardFlush();
         } else if (progress.phase === 'reviewed') {
+          if (dashboardFlushTimer) {
+            clearTimeout(dashboardFlushTimer);
+            dashboardFlushTimer = null;
+          }
           rawFindingCount = progress.rawFindingCount;
           reviewEndTime = Date.now();
           dashboard.phase = 'reviewed';
@@ -417,6 +421,10 @@ async function runFullReview(
           updateProgressDashboard(octokit, owner, repo, progressCommentId, dashboard)
             .catch(err => core.warning(`Failed to update dashboard: ${err}`));
         } else if (progress.phase === 'judging') {
+          if (dashboardFlushTimer) {
+            clearTimeout(dashboardFlushTimer);
+            dashboardFlushTimer = null;
+          }
           dashboard.phase = 'reviewed';
           dashboard.rawFindingCount = progress.rawFindingCount;
           dashboard.judgeInputCount = progress.judgeInputCount;
