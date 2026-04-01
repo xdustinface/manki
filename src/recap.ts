@@ -8,6 +8,7 @@ import { Finding, FindingSeverity, ParsedDiff } from './types';
 type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki';
+const RECAP_STATS_RE = /<!-- manki-recap:(\{[^}]+\}) -->/;
 
 /** Escape double quotes and strip triple-backtick sequences from untrusted text before LLM interpolation. */
 export function sanitize(s: string): string {
@@ -31,6 +32,12 @@ interface PreviousFinding {
 interface RecapState {
   previousFindings: PreviousFinding[];
   recapContext: string;
+}
+
+interface CumulativeRecapStats {
+  resolved: number;
+  open: number;
+  replied: number;
 }
 
 /**
@@ -83,6 +90,48 @@ async function fetchRecapState(
   core.info(`Recap: ${resolved.length} resolved, ${open.length} open, ${previousFindings.length} total previous findings`);
 
   return { previousFindings, recapContext };
+}
+
+/**
+ * Extract cumulative recap stats embedded in the most recent bot progress comment.
+ * Returns null on first review or if no prior stats are found.
+ */
+async function fetchPreviousRecapStats(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<CumulativeRecapStats | null> {
+  try {
+    const { data: comments } = await octokit.rest.issues.listComments({
+      owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
+    });
+
+    for (const comment of comments) {
+      if (comment.user?.type !== 'Bot') continue;
+      if (!comment.body?.includes('<!-- manki-bot -->')) continue;
+
+      const match = comment.body.match(RECAP_STATS_RE);
+      if (match) {
+        const parsed = JSON.parse(match[1]) as CumulativeRecapStats;
+        return {
+          resolved: parsed.resolved ?? 0,
+          open: parsed.open ?? 0,
+          replied: parsed.replied ?? 0,
+        };
+      }
+    }
+  } catch (error) {
+    core.warning(`Failed to fetch previous recap stats: ${error}`);
+  }
+  return null;
+}
+
+/**
+ * Format cumulative recap stats as a hidden HTML comment for embedding in progress comments.
+ */
+function formatRecapStatsTag(stats: CumulativeRecapStats): string {
+  return `<!-- manki-recap:${JSON.stringify(stats)} -->`;
 }
 
 interface ReviewThread {
@@ -455,4 +504,4 @@ async function llmDeduplicateFindings(
   }
 }
 
-export { DuplicateMatch, PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap, llmDeduplicateFindings };
+export { CumulativeRecapStats, DuplicateMatch, PreviousFinding, RecapState, fetchRecapState, fetchPreviousRecapStats, formatRecapStatsTag, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap, llmDeduplicateFindings };

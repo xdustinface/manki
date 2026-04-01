@@ -243,6 +243,7 @@ export async function updateProgressComment(
   commentId: number,
   dashboard: DashboardData,
   metadata?: ReviewMetadata,
+  recapStatsTag?: string,
 ): Promise<void> {
   const parts: string[] = [
     BOT_MARKER,
@@ -290,8 +291,12 @@ export async function updateProgressComment(
     parts.push('</details>');
   }
 
-  parts.push(REVIEW_COMPLETE_MARKER);
+  if (recapStatsTag) {
+    parts.push('');
+    parts.push(recapStatsTag);
+  }
 
+  parts.push(REVIEW_COMPLETE_MARKER);
   await octokit.rest.issues.updateComment({
     owner,
     repo,

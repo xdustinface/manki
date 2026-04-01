@@ -1,6 +1,6 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
+import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, fetchPreviousRecapStats, formatRecapStatsTag, titlesOverlap, llmDeduplicateFindings } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -1083,5 +1083,109 @@ describe('llmDeduplicateFindings', () => {
     const result = await llmDeduplicateFindings(findings, previous, mockClient);
     expect(result.unique).toHaveLength(1);
     expect(result.duplicates).toHaveLength(0);
+  });
+});
+
+describe('fetchPreviousRecapStats', () => {
+  it('returns null when no bot comments exist', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({ data: [] }),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const result = await fetchPreviousRecapStats(octokit, 'owner', 'repo', 1);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when bot comment has no recap tag', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [{
+              user: { type: 'Bot' },
+              body: '<!-- manki-bot -->\n**Manki** — Review complete',
+            }],
+          }),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const result = await fetchPreviousRecapStats(octokit, 'owner', 'repo', 1);
+    expect(result).toBeNull();
+  });
+
+  it('parses recap stats from bot progress comment', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [{
+              user: { type: 'Bot' },
+              body: '<!-- manki-bot -->\n**Manki** — Review complete\n\n<!-- manki-recap:{"resolved":3,"open":2,"replied":1} -->',
+            }],
+          }),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const result = await fetchPreviousRecapStats(octokit, 'owner', 'repo', 1);
+    expect(result).toEqual({ resolved: 3, open: 2, replied: 1 });
+  });
+
+  it('returns the most recent recap stats when multiple comments exist', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":5,"open":1,"replied":0} -->',
+              },
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":2,"open":3,"replied":1} -->',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const result = await fetchPreviousRecapStats(octokit, 'owner', 'repo', 1);
+    expect(result).toEqual({ resolved: 5, open: 1, replied: 0 });
+  });
+
+  it('returns null on API error', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockRejectedValue(new Error('API error')),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const result = await fetchPreviousRecapStats(octokit, 'owner', 'repo', 1);
+    expect(result).toBeNull();
+  });
+});
+
+describe('formatRecapStatsTag', () => {
+  it('formats stats as hidden HTML comment', () => {
+    const tag = formatRecapStatsTag({ resolved: 3, open: 2, replied: 1 });
+    expect(tag).toBe('<!-- manki-recap:{"resolved":3,"open":2,"replied":1} -->');
+  });
+
+  it('roundtrips through regex parsing', () => {
+    const original = { resolved: 10, open: 5, replied: 3 };
+    const tag = formatRecapStatsTag(original);
+    const match = tag.match(/<!-- manki-recap:(\{[^}]+\}) -->/);
+    expect(match).not.toBeNull();
+    const parsed = JSON.parse(match![1]);
+    expect(parsed).toEqual(original);
   });
 });

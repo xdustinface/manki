@@ -83,6 +83,8 @@ jest.mock('./memory', () => ({
 
 jest.mock('./recap', () => ({
   fetchRecapState: jest.fn().mockResolvedValue({ previousFindings: [], recapContext: '' }),
+  fetchPreviousRecapStats: jest.fn().mockResolvedValue(null),
+  formatRecapStatsTag: jest.fn().mockReturnValue('<!-- manki-recap:{"resolved":0,"open":0,"replied":0} -->'),
   deduplicateFindings: jest.fn().mockReturnValue({ unique: [], duplicates: [] }),
   buildRecapSummary: jest.fn().mockReturnValue(''),
   resolveAddressedThreads: jest.fn().mockResolvedValue(0),
