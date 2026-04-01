@@ -215,8 +215,8 @@ interface ParsedCommand {
   args: string;
 }
 
-const BOT_MENTION_PATTERN = /(?:@manki-labs|@manki|\/manki)\b/;
-const BOT_PREFIX_PATTERN = /(?:@manki-labs|@manki|\/manki)\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/;
+const BOT_MENTION_PATTERN = /(?:@manki-review|@manki-labs|@manki|\/manki)\b/;
+const BOT_PREFIX_PATTERN = /(?:@manki-review|@manki-labs|@manki|\/manki)\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/;
 
 function parseCommand(body: string): ParsedCommand {
   const lower = body.toLowerCase();
@@ -323,7 +323,7 @@ async function handleHelp(
     owner,
     repo,
     issue_number: prNumber,
-    body: `${BOT_MARKER}\n**Manki** — Here's what I can do:\n\n| Command | |\n|---|---|\n| \`/manki review\` | Run a full review |\n| \`/manki explain [topic]\` | Explain something about this PR |\n| \`/manki check\` | Check required issues & auto-approve |\n| \`/manki dismiss [finding]\` | Dismiss a finding |\n| \`/manki triage\` | Process nit issue checkboxes |\n| \`/manki remember <instruction>\` | Teach me something for future reviews |\n| \`/manki forget <text>\` | Remove a learning or suppression |\n| \`/manki help\` | Show this message |\n\nYou can also use \`@manki\` or \`@manki-labs\` as the command prefix, or reply to any of my review comments.`,
+    body: `${BOT_MARKER}\n**Manki** — Here's what I can do:\n\n| Command | |\n|---|---|\n| \`/manki review\` | Run a full review |\n| \`/manki explain [topic]\` | Explain something about this PR |\n| \`/manki check\` | Check required issues & auto-approve |\n| \`/manki dismiss [finding]\` | Dismiss a finding |\n| \`/manki triage\` | Process nit issue checkboxes |\n| \`/manki remember <instruction>\` | Teach me something for future reviews |\n| \`/manki forget <text>\` | Remove a learning or suppression |\n| \`/manki help\` | Show this message |\n\nYou can also use \`@manki\` or \`@manki-review\` as the command prefix, or reply to any of my review comments.`,
   });
 }
 
@@ -882,11 +882,17 @@ function extractPrNumber(issueTitle: string): number | null {
 }
 
 function isReviewRequest(body: string): boolean {
-  return BOT_MENTION_PATTERN.test(body.toLowerCase()) && /\breview\b/i.test(body);
+  const lower = body.toLowerCase();
+  if (!BOT_MENTION_PATTERN.test(lower)) return false;
+  const afterMention = lower.replace(BOT_MENTION_PATTERN, '');
+  return /\breview\b/.test(afterMention);
 }
 
 function isBotMentionNonReview(body: string): boolean {
-  return BOT_MENTION_PATTERN.test(body.toLowerCase()) && !/\breview\b/i.test(body);
+  const lower = body.toLowerCase();
+  if (!BOT_MENTION_PATTERN.test(lower)) return false;
+  const afterMention = lower.replace(BOT_MENTION_PATTERN, '');
+  return !/\breview\b/.test(afterMention);
 }
 
 /**
