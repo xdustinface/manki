@@ -6,6 +6,7 @@ import { isLineInDiff, findClosestDiffLine } from './diff';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
+const BOT_LOGIN = 'manki-review[bot]';
 const BOT_MARKER = '<!-- manki-bot -->';
 const REVIEW_COMPLETE_MARKER = '<!-- manki-review-complete -->';
 const FORCE_REVIEW_MARKER = '<!-- manki-force-review -->';
@@ -1012,4 +1013,4 @@ async function isReviewInProgress(octokit: Octokit, owner: string, repo: string,
   }
 }
 
-export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, isReviewInProgress };
+export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, isReviewInProgress };

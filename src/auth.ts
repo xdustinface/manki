@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { createAppAuth } from '@octokit/auth-app';
+import { BOT_LOGIN } from './github';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -15,7 +16,7 @@ export interface TokenResult {
 }
 
 /**
- * Auto-detect manki-labs GitHub App installation and fetch an app token
+ * Auto-detect manki-review GitHub App installation and fetch an app token
  * from the token service. Falls back to the provided github_token on any failure.
  */
 export async function resolveGitHubToken(
@@ -60,7 +61,7 @@ export async function resolveGitHubToken(
       return { token: githubToken, identity: 'actions' };
     }
 
-    core.info(`Using manki-labs[bot] identity (token expires ${tokenData.expires_at})`);
+    core.info(`Using ${BOT_LOGIN} identity (token expires ${tokenData.expires_at})`);
     core.setSecret(tokenData.token);
     return { token: tokenData.token, identity: 'app' };
   } catch (error) {
@@ -71,7 +72,7 @@ export async function resolveGitHubToken(
 
 /**
  * Create an authenticated Octokit client.
- * Priority: explicit App credentials > auto-detect manki-labs app > github_token.
+ * Priority: explicit App credentials > auto-detect manki-review app > github_token.
  */
 export async function createAuthenticatedOctokit(): Promise<AuthResult> {
   const appId = core.getInput('github_app_id');

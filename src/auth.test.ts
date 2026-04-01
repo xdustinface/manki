@@ -107,7 +107,7 @@ describe('resolveGitHubToken', () => {
 
     expect(result).toEqual<TokenResult>({ token: APP_TOKEN, identity: 'app' });
     expect(core.setSecret).toHaveBeenCalledWith(APP_TOKEN);
-    expect(core.info).toHaveBeenCalledWith(expect.stringContaining('manki-labs[bot]'));
+    expect(core.info).toHaveBeenCalledWith(expect.stringContaining('manki-review[bot]'));
 
     const call = (global.fetch as jest.Mock).mock.calls[0];
     expect(call[0]).toBe(TOKEN_URL);

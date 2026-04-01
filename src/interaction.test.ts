@@ -110,17 +110,32 @@ describe('parseCommand', () => {
     expect(result).toEqual<ParsedCommand>({ type: 'help', args: '' });
   });
 
-  it('parses @manki-labs prefix', () => {
+  it('parses @manki-review prefix', () => {
+    const result = parseCommand('@manki-review explain the error handling');
+    expect(result).toEqual<ParsedCommand>({ type: 'explain', args: 'the error handling' });
+  });
+
+  it('parses @manki-review dismiss', () => {
+    const result = parseCommand('@manki-review dismiss null-check-warning');
+    expect(result).toEqual<ParsedCommand>({ type: 'dismiss', args: 'null-check-warning' });
+  });
+
+  it('parses @manki-review help', () => {
+    const result = parseCommand('@manki-review help');
+    expect(result).toEqual<ParsedCommand>({ type: 'help', args: '' });
+  });
+
+  it('parses @manki-labs prefix (backwards compat)', () => {
     const result = parseCommand('@manki-labs explain the error handling');
     expect(result).toEqual<ParsedCommand>({ type: 'explain', args: 'the error handling' });
   });
 
-  it('parses @manki-labs dismiss', () => {
+  it('parses @manki-labs dismiss (backwards compat)', () => {
     const result = parseCommand('@manki-labs dismiss null-check-warning');
     expect(result).toEqual<ParsedCommand>({ type: 'dismiss', args: 'null-check-warning' });
   });
 
-  it('parses @manki-labs help', () => {
+  it('parses @manki-labs help (backwards compat)', () => {
     const result = parseCommand('@manki-labs help');
     expect(result).toEqual<ParsedCommand>({ type: 'help', args: '' });
   });
@@ -130,8 +145,8 @@ describe('parseCommand', () => {
     expect(result).toEqual<ParsedCommand>({ type: 'explain', args: 'the changes' });
   });
 
-  it('is case-insensitive for @manki-labs prefix', () => {
-    const result = parseCommand('@Manki-Labs EXPLAIN the changes');
+  it('is case-insensitive for @manki-review prefix', () => {
+    const result = parseCommand('@Manki-Review EXPLAIN the changes');
     expect(result).toEqual<ParsedCommand>({ type: 'explain', args: 'the changes' });
   });
 
@@ -413,8 +428,8 @@ describe('hasBotMention', () => {
     expect(hasBotMention('/manki explain this')).toBe(true);
   });
 
-  it('detects @manki-labs mention', () => {
-    expect(hasBotMention('@manki-labs explain this')).toBe(true);
+  it('detects @manki-review mention', () => {
+    expect(hasBotMention('@manki-review explain this')).toBe(true);
   });
 
   it('returns false for unrelated text', () => {
@@ -429,8 +444,8 @@ describe('hasBotMention', () => {
     expect(hasBotMention('/MANKI help')).toBe(true);
   });
 
-  it('is case-insensitive for @manki-labs', () => {
-    expect(hasBotMention('@MANKI-LABS help')).toBe(true);
+  it('is case-insensitive for @manki-review', () => {
+    expect(hasBotMention('@MANKI-REVIEW help')).toBe(true);
   });
 });
 
@@ -443,8 +458,8 @@ describe('isReviewRequest', () => {
     expect(isReviewRequest('/manki review')).toBe(true);
   });
 
-  it('detects @manki-labs review', () => {
-    expect(isReviewRequest('@manki-labs review')).toBe(true);
+  it('detects @manki-review review', () => {
+    expect(isReviewRequest('@manki-review review')).toBe(true);
   });
 
   it('is case-insensitive', () => {
@@ -454,6 +469,10 @@ describe('isReviewRequest', () => {
   it('returns false for non-review commands', () => {
     expect(isReviewRequest('@manki explain')).toBe(false);
     expect(isReviewRequest('/manki help')).toBe(false);
+  });
+
+  it('returns false for @manki-review with non-review action', () => {
+    expect(isReviewRequest('@manki-review dismiss')).toBe(false);
   });
 
   it('returns false for text without bot mention', () => {
@@ -470,14 +489,14 @@ describe('isBotMentionNonReview', () => {
     expect(isBotMentionNonReview('/manki help')).toBe(true);
   });
 
-  it('detects @manki-labs dismiss', () => {
-    expect(isBotMentionNonReview('@manki-labs dismiss')).toBe(true);
+  it('detects @manki-review dismiss', () => {
+    expect(isBotMentionNonReview('@manki-review dismiss')).toBe(true);
   });
 
   it('returns false for review commands', () => {
     expect(isBotMentionNonReview('@manki review')).toBe(false);
     expect(isBotMentionNonReview('/manki review')).toBe(false);
-    expect(isBotMentionNonReview('@manki-labs review')).toBe(false);
+    expect(isBotMentionNonReview('@manki-review review')).toBe(false);
   });
 
   it('returns false for text without bot mention', () => {

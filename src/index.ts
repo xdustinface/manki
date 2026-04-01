@@ -25,6 +25,7 @@ import {
   createNitIssue,
   reactToIssueComment,
   fetchLinkedIssues,
+  BOT_LOGIN,
   BOT_MARKER as PROGRESS_MARKER,
   FORCE_REVIEW_MARKER,
   isReviewInProgress,
@@ -95,7 +96,7 @@ async function run(): Promise<void> {
           });
           const alreadyProcessed = reactions.some(r =>
             r.content === 'eyes' &&
-            (r.user?.login === 'manki-labs[bot]' || r.user?.login === 'github-actions[bot]')
+            (r.user?.login === BOT_LOGIN || r.user?.login === 'github-actions[bot]')
           );
           if (alreadyProcessed) {
             core.info('Edited comment already processed (has eyes reaction) — skipping');

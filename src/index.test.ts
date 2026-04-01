@@ -115,6 +115,7 @@ jest.mock('./github', () => ({
   reactToIssueComment: jest.fn().mockResolvedValue(undefined),
   fetchLinkedIssues: jest.fn().mockResolvedValue([]),
   isReviewInProgress: jest.fn().mockResolvedValue(false),
+  BOT_LOGIN: 'manki-review[bot]',
   BOT_MARKER: '<!-- manki-bot -->',
   REVIEW_COMPLETE_MARKER: '<!-- manki-review-complete -->',
   FORCE_REVIEW_MARKER: '<!-- manki-force-review -->',
@@ -173,7 +174,7 @@ describe('run', () => {
         payload: {
           action: 'submitted',
           sender: { login: 'some-human', type: 'User' },
-          review: { user: { login: 'manki-labs[bot]', type: 'Bot' } },
+          review: { user: { login: 'manki-review[bot]', type: 'Bot' } },
           pull_request: { number: 1, base: { ref: 'main' } },
         },
       });
@@ -181,7 +182,7 @@ describe('run', () => {
       await run();
 
       expect(jest.mocked(core.info)).toHaveBeenCalledWith(
-        'Ignoring event from bot: manki-labs[bot]',
+        'Ignoring event from bot: manki-review[bot]',
       );
     });
 
@@ -358,7 +359,7 @@ describe('run', () => {
       jest.mocked(interaction.hasBotMention).mockReturnValue(true);
       jest.mocked(interaction.isReviewRequest).mockReturnValue(true);
       mockListReactionsForIssueComment.mockResolvedValueOnce({
-        data: [{ content: 'eyes', user: { login: 'manki-labs[bot]' } }],
+        data: [{ content: 'eyes', user: { login: 'manki-review[bot]' } }],
       });
 
       setContext({
