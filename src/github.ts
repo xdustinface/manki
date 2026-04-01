@@ -994,7 +994,8 @@ async function isReviewInProgress(octokit: Octokit, owner: string, repo: string,
     const progressComment = comments.find(c =>
       c.user?.type === 'Bot' &&
       c.body?.includes(BOT_MARKER) &&
-      !c.body?.includes(REVIEW_COMPLETE_MARKER)
+      !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
+      !c.body?.includes(FORCE_REVIEW_MARKER)
     );
     if (!progressComment) return false;
 

@@ -624,6 +624,9 @@ describe('handlePullRequest', () => {
     expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: expect.stringContaining('Review skipped') }),
     );
+    const skipBody = mockOctokitInstance.rest.issues.createComment.mock.calls[0][0].body as string;
+    expect(skipBody).toContain(FORCE_REVIEW_MARKER);
+    expect(skipBody).toContain('- [ ] Force review');
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
   });
 
@@ -707,6 +710,9 @@ describe('handleCommentTrigger', () => {
     expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: expect.stringContaining('Review skipped') }),
     );
+    const skipBody = mockOctokitInstance.rest.issues.createComment.mock.calls[0][0].body as string;
+    expect(skipBody).toContain(FORCE_REVIEW_MARKER);
+    expect(skipBody).toContain('- [ ] Force review');
     expect(jest.mocked(core.info)).toHaveBeenCalledWith('Review already in progress — skipping');
   });
 });
