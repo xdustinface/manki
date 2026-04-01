@@ -31,18 +31,35 @@ Manki assembles a dynamic review team from a pool of seven specialist agents, si
 
 ## Quick start
 
+### 1. Install the GitHub App
+
+Install [Manki](https://github.com/apps/manki-review) on the repositories you want reviewed.
+
+### 2. Add a Claude secret
+
+```bash
+# Claude Max subscription (no extra API costs)
+claude setup-token
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
+```
+
+Or use an [Anthropic API key](SETUP.md#anthropic-api-key-pay-per-use) instead.
+
+### 3. Add the workflow
+
+Create `.github/workflows/manki.yml`:
+
 ```yaml
-# .github/workflows/manki.yml
 name: Manki
 on:
   pull_request:
     types: [opened, synchronize]
+  pull_request_review:
+    types: [submitted, dismissed]
   issue_comment:
     types: [created, edited]
   pull_request_review_comment:
     types: [created]
-  pull_request_review:
-    types: [submitted, dismissed]
 
 permissions:
   contents: read
@@ -50,12 +67,12 @@ permissions:
   issues: write
   id-token: write
 
-concurrency:
-  group: manki-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   review:
+    if: github.actor != 'manki-labs[bot]'
+    concurrency:
+      group: manki-${{ github.event_name }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +81,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-For the full setup guide (permissions, memory system, GitHub App identity, troubleshooting), see **[SETUP.md](SETUP.md)**.
+For the full setup guide (permissions, memory system, troubleshooting), see **[SETUP.md](SETUP.md)**.
 
 ## Talk to Manki
 
@@ -81,7 +98,7 @@ For the full setup guide (permissions, memory system, GitHub App identity, troub
 | `/manki forget suppression <pattern>` | Remove a suppression matching the pattern |
 | `/manki help` | Show all commands |
 
-You can also use `@manki` or `@manki-labs` as the command prefix, or reply to any of her review comments to start a conversation. Tip: You can edit a comment to add `/manki` if you forgot to include it.
+You can also use `@manki` or `@manki-review` as the command prefix, or reply to any of her review comments to start a conversation. Tip: You can edit a comment to add `/manki` if you forgot to include it.
 
 ## Configure
 
