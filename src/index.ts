@@ -168,26 +168,30 @@ async function run(): Promise<void> {
 async function postReviewSkippedComment(
   octokit: Octokit, owner: string, repo: string, prNumber: number, remaining: number,
 ): Promise<void> {
-  const body = [
-    PROGRESS_MARKER,
-    `**Review skipped** — a review is currently in progress. Retry in ~${remaining} minutes, or force now:`,
-    '',
-    '- [ ] Force review',
-    '',
-    FORCE_REVIEW_MARKER,
-  ].join('\n');
-  // Update an existing skip comment instead of creating a duplicate
-  const { data: comments } = await octokit.rest.issues.listComments({
-    owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
-  });
-  const existing = comments.find(c =>
-    c.user?.type === 'Bot' &&
-    c.body?.includes(PROGRESS_MARKER) && c.body?.includes('Review skipped'),
-  );
-  if (existing) {
-    await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-  } else {
-    await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+  try {
+    const body = [
+      PROGRESS_MARKER,
+      `**Review skipped** — a review is currently in progress. Retry in ~${remaining} minutes, or force now:`,
+      '',
+      '- [ ] Force review',
+      '',
+      FORCE_REVIEW_MARKER,
+    ].join('\n');
+    // Update an existing skip comment instead of creating a duplicate
+    const { data: comments } = await octokit.rest.issues.listComments({
+      owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
+    });
+    const existing = comments.find(c =>
+      c.user?.type === 'Bot' &&
+      c.body?.includes(PROGRESS_MARKER) && c.body?.includes('Review skipped'),
+    );
+    if (existing) {
+      await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+    } else {
+      await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+    }
+  } catch (error) {
+    core.warning(`Failed to post review-skipped comment: ${error instanceof Error ? error.message : error}`);
   }
 }
 
@@ -250,8 +254,8 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
     }
   }
 
-  // Acknowledge the review request
-  if (payload.comment?.id) {
+  // Acknowledge the review request (skip when forceReview — already reacted in run())
+  if (!forceReview && payload.comment?.id) {
     await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
   }
 

@@ -993,11 +993,10 @@ async function isReviewInProgress(octokit: Octokit, owner: string, repo: string,
     });
     const progressComment = comments.find(c =>
       c.user?.type === 'Bot' &&
-      c.body?.includes(BOT_MARKER) && c.body?.includes('Review in progress')
+      c.body?.includes(BOT_MARKER) &&
+      !c.body?.includes(REVIEW_COMPLETE_MARKER)
     );
     if (!progressComment) return false;
-
-    if (progressComment.body?.includes(REVIEW_COMPLETE_MARKER)) return false;
 
     const updatedAt = new Date(progressComment.updated_at).getTime();
     const ageMinutes = (Date.now() - updatedAt) / 60000;

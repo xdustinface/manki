@@ -1573,6 +1573,12 @@ describe('updateProgressComment', () => {
     expect(body).toContain('\u2713 Judge');
     expect(body).not.toContain('\u23F3 Running judge');
   });
+
+  it('includes REVIEW_COMPLETE_MARKER in the updated comment body', async () => {
+    await updateProgressComment(mockOctokit, 'owner', 'repo', 123, baseDashboard);
+    const body = mockUpdateComment.mock.calls[0][0].body as string;
+    expect(body).toContain(REVIEW_COMPLETE_MARKER);
+  });
 });
 
 describe('fetchPRDiff', () => {
@@ -2172,7 +2178,7 @@ describe('isReviewInProgress', () => {
   it('returns false when progress comment contains complete marker', async () => {
     const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
     const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Manki** — Review in progress\n${REVIEW_COMPLETE_MARKER}`, updated_at: recentDate, user: { type: 'Bot' } },
+      { body: `${BOT_MARKER}\n**Manki** — Review complete\n${REVIEW_COMPLETE_MARKER}`, updated_at: recentDate, user: { type: 'Bot' } },
     ]);
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
