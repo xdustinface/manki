@@ -884,14 +884,18 @@ function extractPrNumber(issueTitle: string): number | null {
 function isReviewRequest(body: string): boolean {
   const lower = body.toLowerCase();
   if (!BOT_MENTION_PATTERN.test(lower)) return false;
-  const afterMention = lower.replace(BOT_MENTION_PATTERN, '');
+  const afterMention = lower.replace(
+    new RegExp(BOT_MENTION_PATTERN.source, 'g'), ''
+  );
   return /\breview\b/.test(afterMention);
 }
 
 function isBotMentionNonReview(body: string): boolean {
   const lower = body.toLowerCase();
   if (!BOT_MENTION_PATTERN.test(lower)) return false;
-  const afterMention = lower.replace(BOT_MENTION_PATTERN, '');
+  const afterMention = lower.replace(
+    new RegExp(BOT_MENTION_PATTERN.source, 'g'), ''
+  );
   return !/\breview\b/.test(afterMention);
 }
 

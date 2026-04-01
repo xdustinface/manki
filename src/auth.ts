@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { createAppAuth } from '@octokit/auth-app';
+import { BOT_LOGIN } from './github';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -60,7 +61,7 @@ export async function resolveGitHubToken(
       return { token: githubToken, identity: 'actions' };
     }
 
-    core.info(`Using manki-review[bot] identity (token expires ${tokenData.expires_at})`);
+    core.info(`Using ${BOT_LOGIN} identity (token expires ${tokenData.expires_at})`);
     core.setSecret(tokenData.token);
     return { token: tokenData.token, identity: 'app' };
   } catch (error) {
