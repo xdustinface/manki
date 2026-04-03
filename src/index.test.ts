@@ -1845,7 +1845,7 @@ describe('handleReviewStateCheck', () => {
       expect.anything(), 'test-owner', 'test-repo', 5,
     );
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
-      'PR #5 auto-approved after all required issues resolved',
+      'PR #5 auto-approved after all findings resolved',
     );
   });
 });
@@ -1856,7 +1856,7 @@ describe('handleReviewCommentInteraction auto-approve', () => {
     _resetOctokitCache();
   });
 
-  it('triggers auto-approve check after handling review comment reply', async () => {
+  it('triggers auto-approve after handling review comment reply', async () => {
     jest.mocked(interaction.hasBotMention).mockReturnValue(true);
     jest.mocked(configModule.loadConfig).mockReturnValue({
       auto_review: true, auto_approve: true, max_diff_lines: 5000,

@@ -91,16 +91,16 @@ async function fetchBotReviewThreads(
 }
 
 /**
- * Check if all required threads are resolved.
+ * Check if all bot review threads (required, suggestion, nit) are resolved.
+ * Auto-approve should only fire when every finding is resolved, because
+ * CHANGES_REQUESTED can be caused by high-confidence suggestions too.
  */
-function areAllRequiredResolved(threads: ReviewThread[]): boolean {
-  const requiredThreads = threads.filter(t => t.isRequired);
-  if (requiredThreads.length === 0) return true;
-  return requiredThreads.every(t => t.isResolved);
+function areAllFindingsResolved(threads: ReviewThread[]): boolean {
+  return threads.every(t => t.isResolved);
 }
 
 /**
- * Post an approval review if all required issues are resolved.
+ * Post an approval review if all findings are resolved.
  */
 async function checkAndAutoApprove(
   octokit: Octokit,
@@ -116,13 +116,13 @@ async function checkAndAutoApprove(
 
   const threads = await fetchBotReviewThreads(octokit, owner, repo, prNumber);
 
-  const requiredCount = threads.filter(t => t.isRequired).length;
-  const resolvedRequiredCount = threads.filter(t => t.isRequired && t.isResolved).length;
+  const totalCount = threads.length;
+  const resolvedCount = threads.filter(t => t.isResolved).length;
 
-  core.info(`Required threads: ${resolvedRequiredCount}/${requiredCount} resolved`);
+  core.info(`Review threads: ${resolvedCount}/${totalCount} resolved`);
 
-  if (!areAllRequiredResolved(threads)) {
-    core.info('Not all required issues resolved — skipping auto-approve');
+  if (!areAllFindingsResolved(threads)) {
+    core.info('Not all findings resolved — skipping auto-approve');
     return false;
   }
 
@@ -153,7 +153,7 @@ async function checkAndAutoApprove(
     core.warning(`Failed to dismiss previous reviews during auto-approve: ${error}`);
   }
 
-  core.info('All required issues resolved — auto-approving');
+  core.info('All findings resolved — auto-approving');
   const body = BOT_MARKER;
 
   try {
@@ -263,4 +263,4 @@ async function resolveStaleThreads(
   return resolvedCount;
 }
 
-export { ReviewThread, areAllRequiredResolved, checkAndAutoApprove, fetchBotReviewThreads, resolveStaleThreads, BOT_MARKER };
+export { ReviewThread, areAllFindingsResolved, checkAndAutoApprove, fetchBotReviewThreads, resolveStaleThreads, BOT_MARKER };
