@@ -430,16 +430,18 @@ async function runFullReview(
 
     let recapStats: RecapStats | undefined;
     if (recap.previousFindings.length > 0) {
-      const totalResolved = recap.previousFindings.filter(f => f.status === 'resolved');
-      const totalOpen = recap.previousFindings.filter(f => f.status === 'open');
-      const totalReplied = recap.previousFindings.filter(f => f.status === 'replied');
+      // Adjust for auto-resolved threads: in-memory status is stale (still 'open')
+      // because resolveAddressedThreads already resolved them on GitHub
+      const totalResolved = recap.previousFindings.filter(f => f.status === 'resolved').length + autoResolved;
+      const totalOpen = recap.previousFindings.filter(f => f.status === 'open').length - autoResolved;
+      const totalReplied = recap.previousFindings.filter(f => f.status === 'replied').length;
 
-      const deltaResolved = Math.max(0, totalResolved.length - (previousRecap?.resolved ?? 0));
-      const deltaOpen = Math.max(0, totalOpen.length - (previousRecap?.open ?? 0));
-      const deltaReplied = Math.max(0, totalReplied.length - (previousRecap?.replied ?? 0));
+      const deltaResolved = Math.max(0, totalResolved - (previousRecap?.resolved ?? 0));
+      const deltaOpen = Math.max(0, totalOpen - (previousRecap?.open ?? 0));
+      const deltaReplied = Math.max(0, totalReplied - (previousRecap?.replied ?? 0));
 
       const resolvedTitles = deltaResolved > 0
-        ? totalResolved.map(f => f.title).filter(t => t.length > 0)
+        ? recap.previousFindings.filter(f => f.status === 'resolved').map(f => f.title).filter(t => t.length > 0)
         : [];
 
       recapStats = {

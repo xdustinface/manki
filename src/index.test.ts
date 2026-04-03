@@ -1475,6 +1475,54 @@ describe('runFullReview orchestration', () => {
     expect(jest.mocked(recapModule.formatRecapStatsTag)).toHaveBeenCalledWith({
       resolved: 2, open: 1, replied: 0,
     });
+
+    // Delta stats passed to runReview should also account for auto-resolved:
+    // previousRecap is null, so delta = adjusted total: resolved=2, open=1
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const recapStatsArg = runReviewCall[runReviewCall.length - 1];
+    expect(recapStatsArg).toEqual({ resolved: 2, open: 1, replied: 0, resolvedTitles: ['Already resolved'] });
+  });
+
+  it('buildRecapSummary receives delta counts, not cumulative', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    // Current cumulative state: 3 resolved, 2 open
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required', status: 'resolved' },
+        { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'required', status: 'resolved' },
+        { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion', status: 'resolved' },
+        { title: 'Open A', file: 'src/app.ts', line: 4, severity: 'suggestion', status: 'open' },
+        { title: 'Open B', file: 'src/app.ts', line: 5, severity: 'nit', status: 'open' },
+      ],
+      recapContext: 'some context',
+    });
+
+    // Previous cycle had 2 resolved, 3 open — so delta should be: resolved=1, open=0 (clamped)
+    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue({
+      resolved: 2, open: 3, replied: 0,
+    });
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'Looks good',
+      findings: [], highlights: [], reviewComplete: true,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
+
+    await callRunFullReview();
+
+    // buildRecapSummary should receive delta resolved=1, delta open=0 (not cumulative 3, 2)
+    expect(jest.mocked(recapModule.buildRecapSummary)).toHaveBeenCalledWith(
+      0, 0, 1, 0, [],
+    );
   });
 
   it('applies memory escalations when patterns exist', async () => {
