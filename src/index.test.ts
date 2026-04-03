@@ -1883,7 +1883,9 @@ describe('handleReviewCommentInteraction auto-approve', () => {
     await handleReviewCommentInteraction();
 
     expect(jest.mocked(interaction.handleReviewCommentReply)).toHaveBeenCalled();
-    expect(jest.mocked(stateModule.checkAndAutoApprove)).toHaveBeenCalled();
+    expect(jest.mocked(stateModule.checkAndAutoApprove)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 8,
+    );
   });
 });
 
