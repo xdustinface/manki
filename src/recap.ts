@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { ClaudeClient } from './claude';
+import { BOT_MARKER as PROGRESS_BOT_MARKER } from './github';
 import { matchesSuppression, Suppression } from './memory';
 import { getSeverityEmoji } from './github';
 import { Finding, FindingSeverity, ParsedDiff } from './types';
@@ -8,6 +9,7 @@ import { Finding, FindingSeverity, ParsedDiff } from './types';
 type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_MARKER = '<!-- manki';
+const RECAP_STATS_REGEX = /<!-- manki-recap:(\{[^}]+\}) -->/;
 
 /** Escape double quotes and strip triple-backtick sequences from untrusted text before LLM interpolation. */
 export function sanitize(s: string): string {
@@ -31,6 +33,52 @@ interface PreviousFinding {
 interface RecapState {
   previousFindings: PreviousFinding[];
   recapContext: string;
+}
+
+interface CumulativeRecapStats {
+  resolved: number;
+  open: number;
+  replied: number;
+}
+
+async function fetchPreviousRecapStats(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<CumulativeRecapStats | null> {
+  try {
+    const { data: comments } = await octokit.rest.issues.listComments({
+      owner,
+      repo,
+      issue_number: prNumber,
+      per_page: 100,
+      direction: 'desc',
+    });
+
+    for (const comment of comments) {
+      if (comment.user?.type !== 'Bot') continue;
+      if (!comment.body?.includes(PROGRESS_BOT_MARKER)) continue;
+
+      const match = comment.body.match(RECAP_STATS_REGEX);
+      if (match) {
+        try {
+          return JSON.parse(match[1]) as CumulativeRecapStats;
+        } catch {
+          core.debug(`Malformed recap stats JSON in comment, skipping: ${match[1]}`);
+          continue;
+        }
+      }
+    }
+  } catch (error) {
+    core.warning(`Failed to fetch previous recap stats: ${error}`);
+  }
+
+  return null;
+}
+
+function formatRecapStatsTag(stats: CumulativeRecapStats): string {
+  return `<!-- manki-recap:${JSON.stringify(stats)} -->`;
 }
 
 /**
@@ -272,24 +320,13 @@ function sanitizeHtml(s: string): string {
 
 /**
  * Build a review summary that includes deduplication stats.
+ * Progression (resolved/open) is handled by the judge summary.
  */
 function buildRecapSummary(
-  newCount: number,
   duplicateCount: number,
-  resolvedCount: number,
-  openCount: number,
   duplicateMatches?: DuplicateMatch[],
 ): string {
-  const parts: string[] = [];
-
-  if (newCount > 0) parts.push(`${newCount} new`);
-  if (openCount > 0) parts.push(`${openCount} previously flagged`);
-  if (resolvedCount > 0) parts.push(`${resolvedCount} resolved`);
-  if (duplicateCount > 0) parts.push(`${duplicateCount} skipped (already flagged)`);
-
-  const summary = parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
-
-  if (!duplicateMatches || duplicateMatches.length === 0) return summary;
+  if (duplicateCount === 0 || !duplicateMatches || duplicateMatches.length === 0) return '';
 
   const lines = duplicateMatches.map(d => {
     const title = sanitizeHtml(d.finding.title);
@@ -302,7 +339,7 @@ function buildRecapSummary(
     return `<details>\n<summary>${emoji} "${title}" (${file}:${line}, ${sanitizeHtml(severity)})</summary>\n\n**Description:** ${description}\n\n*Matches previously flagged: "${matched}"*\n</details>`;
   });
   const count = duplicateMatches.length;
-  return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n\n')}\n\n</details>`;
+  return `<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n\n')}\n\n</details>`;
 }
 
 /**
@@ -318,8 +355,8 @@ async function resolveAddressedThreads(
   prNumber: number,
   previousFindings: PreviousFinding[],
   diff: ParsedDiff,
-): Promise<number> {
-  let resolvedCount = 0;
+): Promise<string[]> {
+  const resolvedTitles: string[] = [];
 
   const openFindings = previousFindings.filter(f => f.status === 'open' && f.threadId);
 
@@ -338,11 +375,11 @@ async function resolveAddressedThreads(
     }
   }
 
-  if (candidates.length === 0) return 0;
+  if (candidates.length === 0) return [];
 
   if (!client) {
     core.info(`${candidates.length} findings may have been addressed but cannot validate without Claude client`);
-    return 0;
+    return [];
   }
 
   const prompt = candidates.map((c, i) =>
@@ -375,7 +412,7 @@ async function resolveAddressedThreads(
               }
             `, { threadId: candidate.finding.threadId });
 
-            resolvedCount++;
+            resolvedTitles.push(candidate.finding.title);
             core.info(`Auto-resolved: "${candidate.finding.title}" — ${result.reason}`);
           } catch (error) {
             core.debug(`Failed to resolve thread: ${error}`);
@@ -387,7 +424,7 @@ async function resolveAddressedThreads(
     core.warning(`Failed to validate addressed findings: ${error}`);
   }
 
-  return resolvedCount;
+  return resolvedTitles;
 }
 
 async function llmDeduplicateFindings(
@@ -455,4 +492,4 @@ async function llmDeduplicateFindings(
   }
 }
 
-export { DuplicateMatch, PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap, llmDeduplicateFindings };
+export { CumulativeRecapStats, DuplicateMatch, PreviousFinding, RecapState, fetchRecapState, fetchPreviousRecapStats, formatRecapStatsTag, deduplicateFindings, buildRecapSummary, resolveAddressedThreads, titlesOverlap, llmDeduplicateFindings };

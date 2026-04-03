@@ -1,6 +1,6 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
+import { deduplicateFindings, buildRecapSummary, PreviousFinding, resolveAddressedThreads, fetchRecapState, fetchPreviousRecapStats, formatRecapStatsTag, titlesOverlap, llmDeduplicateFindings } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -403,7 +403,7 @@ describe('resolveAddressedThreads', () => {
     expect(typeof resolveAddressedThreads).toBe('function');
   });
 
-  it('returns 0 when no client is provided and candidates exist', async () => {
+  it('returns empty array when no client is provided and candidates exist', async () => {
     const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
     const findings = [makePrevious({
       title: 'Missing null check',
@@ -423,10 +423,10 @@ describe('resolveAddressedThreads', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
-  it('returns 0 when no open findings match any hunks', async () => {
+  it('returns empty array when no open findings match any hunks', async () => {
     const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
     const findings = [makePrevious({
       title: 'Missing null check',
@@ -446,7 +446,7 @@ describe('resolveAddressedThreads', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
   it('resolves threads when Claude confirms findings are addressed', async () => {
@@ -476,7 +476,7 @@ describe('resolveAddressedThreads', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(1);
+    expect(result).toEqual(['Missing null check']);
     expect(graphqlMock).toHaveBeenCalledTimes(1);
   });
 
@@ -507,33 +507,31 @@ describe('resolveAddressedThreads', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
     expect(graphqlMock).not.toHaveBeenCalled();
   });
 });
 
 describe('buildRecapSummary', () => {
-  it('includes all stats when present', () => {
-    const summary = buildRecapSummary(3, 2, 1, 4);
-    expect(summary).toBe('Findings: 3 new, 4 previously flagged, 1 resolved, 2 skipped (already flagged)');
+  it('returns empty string when no duplicates', () => {
+    expect(buildRecapSummary(0)).toBe('');
   });
 
-  it('shows only new findings when others are zero', () => {
-    const summary = buildRecapSummary(5, 0, 0, 0);
-    expect(summary).toBe('Findings: 5 new');
+  it('returns empty string when all counts are zero', () => {
+    expect(buildRecapSummary(0)).toBe('');
   });
 
-  it('returns "No findings" when all counts are zero', () => {
-    const summary = buildRecapSummary(0, 0, 0, 0);
-    expect(summary).toBe('No findings');
+  it('returns empty string when duplicateCount > 0 but no matches provided', () => {
+    expect(buildRecapSummary(2)).toBe('');
+    expect(buildRecapSummary(2, [])).toBe('');
   });
 
-  it('appends collapsed dedup details with per-finding collapsible sections', () => {
+  it('returns collapsible dedup details when duplicates exist', () => {
     const matches = [
       { finding: makeFinding({ title: 'Unused import', file: 'src/index.ts', line: 10, severity: 'suggestion', description: 'The import is not used anywhere' }), matchedTitle: 'Remove unused import' },
     ];
-    const summary = buildRecapSummary(1, 1, 0, 0, matches);
-    expect(summary).toContain('Findings: 1 new, 1 skipped (already flagged)');
+    const summary = buildRecapSummary(1, matches);
+    expect(summary).not.toContain('Findings:');
     expect(summary).toContain('1 finding skipped (previously flagged)');
     expect(summary).toContain('💡 "Unused import" (src/index.ts:10, suggestion)</summary>');
     expect(summary).toContain('**Description:** The import is not used anywhere');
@@ -544,7 +542,7 @@ describe('buildRecapSummary', () => {
     const matches = [
       { finding: makeFinding({ title: '<script>alert("xss")</script>' }), matchedTitle: 'legit "title"' },
     ];
-    const summary = buildRecapSummary(0, 1, 0, 0, matches);
+    const summary = buildRecapSummary(1, matches);
     expect(summary).not.toContain('<script>');
     expect(summary).toContain('&lt;script&gt;');
     expect(summary).toContain('&quot;xss&quot;');
@@ -555,10 +553,150 @@ describe('buildRecapSummary', () => {
     const matches = [
       { finding: makeFinding({ title: 'a &lt;b&gt; issue' }), matchedTitle: 'foo & bar' },
     ];
-    const summary = buildRecapSummary(0, 1, 0, 0, matches);
+    const summary = buildRecapSummary(1, matches);
     expect(summary).toContain('&amp;lt;b&amp;gt;');
     expect(summary).toContain('foo &amp; bar');
     expect(summary).not.toContain('foo & bar');
+  });
+});
+
+describe('formatRecapStatsTag', () => {
+  it('formats stats as an HTML comment tag', () => {
+    const tag = formatRecapStatsTag({ resolved: 3, open: 1, replied: 2 });
+    expect(tag).toBe('<!-- manki-recap:{"resolved":3,"open":1,"replied":2} -->');
+  });
+});
+
+describe('fetchPreviousRecapStats', () => {
+  it('extracts stats from the most recent bot progress comment', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n**Manki** — Review complete\n<!-- manki-recap:{"resolved":2,"open":1,"replied":0} -->\n<!-- manki-review-complete -->',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toEqual({ resolved: 2, open: 1, replied: 0 });
+  });
+
+  it('returns null when no bot comment exists', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({ data: [] }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toBeNull();
+  });
+
+  it('ignores non-Bot user comments with recap marker', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'User' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":5,"open":0,"replied":0} -->',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toBeNull();
+  });
+
+  it('returns null when bot comment has no recap tag', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              { user: { type: 'Bot' }, body: '<!-- manki-bot -->\n**Manki** — Review complete\n<!-- manki-review-complete -->' },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toBeNull();
+  });
+
+  it('returns null on API error', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockRejectedValue(new Error('API error')),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toBeNull();
+  });
+
+  it('returns first matching recap stats when multiple bot comments exist', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":3,"open":1,"replied":0} -->\nLatest review',
+              },
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":1,"open":3,"replied":0} -->\nOlder review',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toEqual({ resolved: 3, open: 1, replied: 0 });
+  });
+
+  it('skips malformed recap JSON and returns next valid match', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{malformed} -->\nBroken',
+              },
+              {
+                user: { type: 'Bot' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":2,"open":0,"replied":1} -->\nValid',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toEqual({ resolved: 2, open: 0, replied: 1 });
   });
 });
 
@@ -769,7 +907,7 @@ describe('fetchRecapState', () => {
 });
 
 describe('resolveAddressedThreads edge cases', () => {
-  it('returns 0 when no open findings have threadIds', async () => {
+  it('returns empty array when no open findings have threadIds', async () => {
     const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
     const findings = [makePrevious({
       title: 'Missing null check',
@@ -789,10 +927,10 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
-  it('returns 0 when no findings match diff files', async () => {
+  it('returns empty array when no findings match diff files', async () => {
     const mockOctokit = {} as ReturnType<typeof import('@actions/github').getOctokit>;
     const findings = [makePrevious({
       title: 'Missing null check',
@@ -812,7 +950,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
   it('handles Claude response with code fence wrapping', async () => {
@@ -842,7 +980,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(1);
+    expect(result).toEqual(['Missing null check']);
   });
 
   it('handles Claude validation error gracefully', async () => {
@@ -869,7 +1007,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
   it('handles graphql resolve mutation failure gracefully', async () => {
@@ -899,7 +1037,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
   it('skips resolved findings', async () => {
@@ -922,7 +1060,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, null, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
   });
 
   it('handles out-of-range index in Claude response', async () => {
@@ -952,7 +1090,7 @@ describe('resolveAddressedThreads edge cases', () => {
     };
 
     const result = await resolveAddressedThreads(mockOctokit, mockClient, 'owner', 'repo', 1, findings, diff);
-    expect(result).toBe(0);
+    expect(result).toEqual([]);
     expect(graphqlMock).not.toHaveBeenCalled();
   });
 });

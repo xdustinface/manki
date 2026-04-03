@@ -173,12 +173,6 @@ export interface ReviewMetadata {
     nitHandling: string;
   };
   judgeDecisions: JudgeDecision[];
-  recap: {
-    newFindings: number;
-    previouslyFlagged: number;
-    resolved: number;
-    suppressionsApplied: number;
-  };
   timing: {
     parseMs: number;
     reviewMs: number;

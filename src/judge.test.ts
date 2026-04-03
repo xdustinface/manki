@@ -10,6 +10,7 @@ import {
   JudgeInput,
   JudgedFinding,
   RecapStats,
+  RecapDelta,
 } from './judge';
 import { ClaudeClient } from './claude';
 import { RepoMemory, Learning, Suppression } from './memory';
@@ -186,7 +187,7 @@ describe('buildJudgeSystemPrompt', () => {
   });
 
   it('uses follow-up summary instruction when recapStats is provided', () => {
-    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0, resolvedTitles: [] };
+    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0 };
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats);
     expect(prompt).toContain('Since last review');
     expect(prompt).not.toContain('1-2 sentence review summary');
@@ -196,6 +197,68 @@ describe('buildJudgeSystemPrompt', () => {
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5);
     expect(prompt).toContain('1-2 sentence review summary');
     expect(prompt).not.toContain('Since last review');
+  });
+
+  it('includes recap delta context when both recapStats and recapDelta are provided', () => {
+    const recapStats: RecapStats = { resolved: 2, open: 1, replied: 0 };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Fix A', 'Fix B'],
+      stillOpen: ['Bug C'],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('2 findings resolved, 1 still open');
+    expect(prompt).toContain('Follow-Up Review Context');
+    expect(prompt).toContain('Findings resolved since last review');
+    expect(prompt).toContain('"Fix A"');
+    expect(prompt).toContain('"Fix B"');
+    expect(prompt).toContain('Findings still open');
+    expect(prompt).toContain('"Bug C"');
+    expect(prompt).toContain('Write your summary as a progress update');
+  });
+
+  it('uses singular form and omits open count when no findings are still open', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0 };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Fix A'],
+      stillOpen: [],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('1 finding resolved');
+    expect(prompt).not.toContain('still open');
+  });
+
+  it('shows no resolved message when delta has no resolved findings', () => {
+    const recapStats: RecapStats = { resolved: 0, open: 2, replied: 0 };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: [],
+      stillOpen: ['Bug A', 'Bug B'],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('0 findings resolved, 2 still open');
+    expect(prompt).toContain('No findings were resolved since the last review.');
+    expect(prompt).toContain('"Bug A"');
+    expect(prompt).toContain('"Bug B"');
+  });
+
+  it('omits recap delta section when recapDelta is not provided', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0 };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats);
+    expect(prompt).not.toContain('Follow-Up Review Context');
+    expect(prompt).toContain('Since last review');
+    expect(prompt).toContain('[summarize what changed]');
+  });
+
+  it('sanitizes recap delta titles containing newlines and backticks', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 1, replied: 0 };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Fix with\nnewline'],
+      stillOpen: ['Bug with ```backticks```'],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).not.toContain('\n"Fix with\nnewline"');
+    expect(prompt).toContain('Fix with newline');
+    expect(prompt).not.toContain('```backticks```');
+    expect(prompt).toContain('Bug with backticks');
   });
 });
 
@@ -306,23 +369,26 @@ describe('buildJudgeUserMessage', () => {
       resolved: 2,
       open: 1,
       replied: 3,
-      resolvedTitles: ['Null check missing', 'Unused import'],
     };
-    const msg = buildJudgeUserMessage(findings, new Map(), '', undefined, undefined, undefined, recapStats);
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Null check missing', 'Unused import'],
+      stillOpen: ['Bug A'],
+    };
+    const msg = buildJudgeUserMessage(findings, new Map(), '', undefined, undefined, undefined, recapStats, recapDelta);
 
-    expect(msg).toContain('## Previous Review Recap');
-    expect(msg).toContain('**Resolved**: 2 findings');
+    expect(msg).toContain('## Changes Since Last Review');
+    expect(msg).toContain('**Resolved**: 2 findings since last review');
     expect(msg).toContain('- Null check missing');
     expect(msg).toContain('- Unused import');
     expect(msg).toContain('**Still open**: 1 finding');
-    expect(msg).toContain('**Author replied**: 3 findings');
+    expect(msg).toContain('**Author replied**: 3 findings since last review');
   });
 
   it('omits recap section when recapStats is undefined', () => {
     const findings = [makeFinding()];
     const msg = buildJudgeUserMessage(findings, new Map(), '');
 
-    expect(msg).not.toContain('## Previous Review Recap');
+    expect(msg).not.toContain('## Changes Since Last Review');
   });
 });
 

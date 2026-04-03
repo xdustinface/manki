@@ -19,7 +19,11 @@ export interface RecapStats {
   resolved: number;
   open: number;
   replied: number;
-  resolvedTitles: string[];
+}
+
+export interface RecapDelta {
+  resolvedSinceLastReview: string[];
+  stillOpen: string[];
 }
 
 export interface JudgeInput {
@@ -32,6 +36,7 @@ export interface JudgeInput {
   linkedIssues?: LinkedIssue[];
   agentCount: number;
   recapStats?: RecapStats;
+  recapDelta?: RecapDelta;
 }
 
 export interface JudgedFinding {
@@ -48,7 +53,34 @@ export interface JudgeResult {
 
 const CONTEXT_LINES = 10;
 
-export function buildJudgeSystemPrompt(config: ReviewConfig, agentCount: number, recapStats?: RecapStats): string {
+function buildRecapDeltaSection(delta: RecapDelta): string {
+  const parts: string[] = ['## Follow-Up Review Context\n'];
+
+  if (delta.resolvedSinceLastReview.length > 0) {
+    parts.push('Findings resolved since last review:');
+    for (const t of delta.resolvedSinceLastReview) {
+      parts.push(`- "${sanitizeForPrompt(t)}"`);
+    }
+  } else {
+    parts.push('No findings were resolved since the last review.');
+  }
+
+  if (delta.stillOpen.length > 0) {
+    parts.push('');
+    parts.push('Findings still open:');
+    for (const t of delta.stillOpen) {
+      parts.push(`- "${sanitizeForPrompt(t)}"`);
+    }
+  }
+
+  parts.push('');
+  parts.push('Write your summary as a progress update: what the author fixed, what remains open, and your assessment of the new changes. Do NOT re-summarize the entire PR purpose.');
+  parts.push('');
+
+  return parts.join('\n');
+}
+
+export function buildJudgeSystemPrompt(config: ReviewConfig, agentCount: number, recapStats?: RecapStats, recapDelta?: RecapDelta): string {
   const isFollowUp = recapStats !== undefined;
   const majorityThreshold = Math.max(1, Math.ceil(agentCount / 2));
 
@@ -159,11 +191,11 @@ ${isFollowUp ? `## Follow-Up Summary Format
 
 This is a follow-up review (not the first review of this PR). Structure your summary using this exact markdown format:
 
-**Since last review** — [X findings resolved (list key ones briefly), Y with author reply, Z still open]
+**Since last review** — ${recapDelta ? `${recapDelta.resolvedSinceLastReview.length} finding${recapDelta.resolvedSinceLastReview.length !== 1 ? 's' : ''} resolved${recapDelta.stillOpen.length > 0 ? `, ${recapDelta.stillOpen.length} still open` : ''}` : '[summarize what changed]'}
 
 **This cycle** — [1-2 sentences about new findings, leading with the most impactful one. Be conversational and professional. Do not re-introduce the overall PR opinion.]
 
-` : ''}## Output Format
+${recapDelta ? buildRecapDeltaSection(recapDelta) : ''}` : ''}## Output Format
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 
@@ -198,6 +230,7 @@ export function buildJudgeUserMessage(
   linkedIssues?: LinkedIssue[],
   changedFiles?: DiffFile[],
   recapStats?: RecapStats,
+  recapDelta?: RecapDelta,
 ): string {
   const parts: string[] = [];
 
@@ -208,16 +241,17 @@ export function buildJudgeUserMessage(
   }
 
   if (recapStats) {
-    parts.push(`## Previous Review Recap\n`);
-    parts.push(`- **Resolved**: ${recapStats.resolved} finding${recapStats.resolved !== 1 ? 's' : ''}`);
-    if (recapStats.resolvedTitles.length > 0) {
-      for (const title of recapStats.resolvedTitles) {
+    parts.push(`## Changes Since Last Review\n`);
+    parts.push(`- **Resolved**: ${recapStats.resolved} finding${recapStats.resolved !== 1 ? 's' : ''} since last review`);
+    const resolvedTitles = recapDelta?.resolvedSinceLastReview ?? [];
+    if (resolvedTitles.length > 0) {
+      for (const title of resolvedTitles) {
         const safeTitle = sanitizeForPrompt(title);
         parts.push(`  - ${safeTitle}`);
       }
     }
     parts.push(`- **Still open**: ${recapStats.open} finding${recapStats.open !== 1 ? 's' : ''}`);
-    parts.push(`- **Author replied**: ${recapStats.replied} finding${recapStats.replied !== 1 ? 's' : ''}`);
+    parts.push(`- **Author replied**: ${recapStats.replied} finding${recapStats.replied !== 1 ? 's' : ''} since last review`);
     parts.push('');
   }
 
@@ -414,7 +448,7 @@ export async function runJudgeAgent(
   config: ReviewConfig,
   input: JudgeInput,
 ): Promise<{ findings: Finding[]; summary: string }> {
-  const { findings, diff, memory, prContext, linkedIssues, agentCount, recapStats } = input;
+  const { findings, diff, memory, prContext, linkedIssues, agentCount, recapStats, recapDelta } = input;
 
   if (findings.length === 0) return { findings, summary: 'Review complete.' };
 
@@ -432,8 +466,8 @@ export async function runJudgeAgent(
 
   const changedFiles = diff.files;
 
-  const systemPrompt = buildJudgeSystemPrompt(config, agentCount, recapStats);
-  const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, recapStats);
+  const systemPrompt = buildJudgeSystemPrompt(config, agentCount, recapStats, recapDelta);
+  const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, recapStats, recapDelta);
 
   const response = await client.sendMessage(systemPrompt, userMessage, { effort: 'high' });
   const judgeResult = parseJudgeResponse(response.content);
