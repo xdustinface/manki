@@ -275,12 +275,6 @@ export async function updateProgressComment(
       parts.push('');
     }
 
-    parts.push('**Recap:**');
-    parts.push(`- ${metadata.recap.newFindings} new findings`);
-    if (metadata.recap.previouslyFlagged > 0) parts.push(`- ${metadata.recap.previouslyFlagged} previously flagged`);
-    if (metadata.recap.resolved > 0) parts.push(`- ${metadata.recap.resolved} resolved`);
-    if (metadata.recap.suppressionsApplied > 0) parts.push(`- ${metadata.recap.suppressionsApplied} suppressions applied`);
-    parts.push('');
 
     parts.push('**Timing:**');
     parts.push(`- Parse: ${(metadata.timing.parseMs / 1000).toFixed(1)}s`);

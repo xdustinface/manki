@@ -733,12 +733,6 @@ async function runFullReview(
         confidence: f.judgeConfidence || 'medium',
         kept: f.severity !== 'ignore',
       })),
-      recap: {
-        newFindings: result.findings.length,
-        previouslyFlagged: recapDelta?.stillOpen.length ?? currentOpen,
-        resolved: recapDelta?.resolvedSinceLastReview.length ?? currentResolved,
-        suppressionsApplied: totalDuplicates,
-      },
       timing,
     };
 

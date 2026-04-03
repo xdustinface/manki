@@ -327,14 +327,7 @@ function buildRecapSummary(
   duplicateCount: number,
   duplicateMatches?: DuplicateMatch[],
 ): string {
-  const parts: string[] = [];
-
-  if (newCount > 0) parts.push(`${newCount} new`);
-  if (duplicateCount > 0) parts.push(`${duplicateCount} skipped (already flagged)`);
-
-  const summary = parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
-
-  if (!duplicateMatches || duplicateMatches.length === 0) return summary;
+  if (duplicateCount === 0 || !duplicateMatches || duplicateMatches.length === 0) return '';
 
   const lines = duplicateMatches.map(d => {
     const title = sanitizeHtml(d.finding.title);
@@ -347,7 +340,7 @@ function buildRecapSummary(
     return `<details>\n<summary>${emoji} "${title}" (${file}:${line}, ${sanitizeHtml(severity)})</summary>\n\n**Description:** ${description}\n\n*Matches previously flagged: "${matched}"*\n</details>`;
   });
   const count = duplicateMatches.length;
-  return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n\n')}\n\n</details>`;
+  return `<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n\n')}\n\n</details>`;
 }
 
 /**

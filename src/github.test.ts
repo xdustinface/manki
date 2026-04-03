@@ -1465,12 +1465,6 @@ describe('updateProgressComment', () => {
       { title: 'Null dereference', severity: 'required', reasoning: 'Valid bug', confidence: 'high', kept: true },
       { title: 'Style nitpick', severity: 'ignore', reasoning: 'Intentional pattern', confidence: 'medium', kept: false },
     ],
-    recap: {
-      newFindings: 3,
-      previouslyFlagged: 1,
-      resolved: 2,
-      suppressionsApplied: 1,
-    },
     timing: {
       parseMs: 500,
       reviewMs: 12000,
@@ -1516,27 +1510,10 @@ describe('updateProgressComment', () => {
     expect(body).toContain('(ignore, medium confidence)');
   });
 
-  it('renders recap section', async () => {
+  it('does not render recap section in metadata', async () => {
     await updateProgressComment(mockOctokit, 'owner', 'repo', 123, baseDashboard, baseMetadata);
     const body = mockUpdateComment.mock.calls[0][0].body as string;
-    expect(body).toContain('**Recap:**');
-    expect(body).toContain('3 new findings');
-    expect(body).toContain('1 previously flagged');
-    expect(body).toContain('2 resolved');
-    expect(body).toContain('1 suppressions applied');
-  });
-
-  it('omits zero recap counters', async () => {
-    const metadata: ReviewMetadata = {
-      ...baseMetadata,
-      recap: { newFindings: 5, previouslyFlagged: 0, resolved: 0, suppressionsApplied: 0 },
-    };
-    await updateProgressComment(mockOctokit, 'owner', 'repo', 123, baseDashboard, metadata);
-    const body = mockUpdateComment.mock.calls[0][0].body as string;
-    expect(body).toContain('5 new findings');
-    expect(body).not.toContain('previously flagged');
-    expect(body).not.toContain('resolved');
-    expect(body).not.toContain('suppressions applied');
+    expect(body).not.toContain('**Recap:**');
   });
 
   it('renders timing section', async () => {

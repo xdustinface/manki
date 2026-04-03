@@ -513,27 +513,25 @@ describe('resolveAddressedThreads', () => {
 });
 
 describe('buildRecapSummary', () => {
-  it('includes new and skipped counts when present', () => {
-    const summary = buildRecapSummary(3, 2);
-    expect(summary).toBe('Findings: 3 new, 2 skipped (already flagged)');
+  it('returns empty string when no duplicates', () => {
+    expect(buildRecapSummary(3, 0)).toBe('');
   });
 
-  it('shows only new findings when duplicates are zero', () => {
-    const summary = buildRecapSummary(5, 0);
-    expect(summary).toBe('Findings: 5 new');
+  it('returns empty string when all counts are zero', () => {
+    expect(buildRecapSummary(0, 0)).toBe('');
   });
 
-  it('returns "No findings" when all counts are zero', () => {
-    const summary = buildRecapSummary(0, 0);
-    expect(summary).toBe('No findings');
+  it('returns empty string when duplicateCount > 0 but no matches provided', () => {
+    expect(buildRecapSummary(1, 2)).toBe('');
+    expect(buildRecapSummary(1, 2, [])).toBe('');
   });
 
-  it('appends collapsed dedup details with per-finding collapsible sections', () => {
+  it('returns collapsible dedup details when duplicates exist', () => {
     const matches = [
       { finding: makeFinding({ title: 'Unused import', file: 'src/index.ts', line: 10, severity: 'suggestion', description: 'The import is not used anywhere' }), matchedTitle: 'Remove unused import' },
     ];
     const summary = buildRecapSummary(1, 1, matches);
-    expect(summary).toContain('Findings: 1 new, 1 skipped (already flagged)');
+    expect(summary).not.toContain('Findings:');
     expect(summary).toContain('1 finding skipped (previously flagged)');
     expect(summary).toContain('💡 "Unused import" (src/index.ts:10, suggestion)</summary>');
     expect(summary).toContain('**Description:** The import is not used anywhere');
