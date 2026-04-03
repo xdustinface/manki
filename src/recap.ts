@@ -323,7 +323,6 @@ function sanitizeHtml(s: string): string {
  * Progression (resolved/open) is handled by the judge summary.
  */
 function buildRecapSummary(
-  newCount: number,
   duplicateCount: number,
   duplicateMatches?: DuplicateMatch[],
 ): string {

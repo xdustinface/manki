@@ -514,23 +514,23 @@ describe('resolveAddressedThreads', () => {
 
 describe('buildRecapSummary', () => {
   it('returns empty string when no duplicates', () => {
-    expect(buildRecapSummary(3, 0)).toBe('');
+    expect(buildRecapSummary(0)).toBe('');
   });
 
   it('returns empty string when all counts are zero', () => {
-    expect(buildRecapSummary(0, 0)).toBe('');
+    expect(buildRecapSummary(0)).toBe('');
   });
 
   it('returns empty string when duplicateCount > 0 but no matches provided', () => {
-    expect(buildRecapSummary(1, 2)).toBe('');
-    expect(buildRecapSummary(1, 2, [])).toBe('');
+    expect(buildRecapSummary(2)).toBe('');
+    expect(buildRecapSummary(2, [])).toBe('');
   });
 
   it('returns collapsible dedup details when duplicates exist', () => {
     const matches = [
       { finding: makeFinding({ title: 'Unused import', file: 'src/index.ts', line: 10, severity: 'suggestion', description: 'The import is not used anywhere' }), matchedTitle: 'Remove unused import' },
     ];
-    const summary = buildRecapSummary(1, 1, matches);
+    const summary = buildRecapSummary(1, matches);
     expect(summary).not.toContain('Findings:');
     expect(summary).toContain('1 finding skipped (previously flagged)');
     expect(summary).toContain('💡 "Unused import" (src/index.ts:10, suggestion)</summary>');
@@ -542,7 +542,7 @@ describe('buildRecapSummary', () => {
     const matches = [
       { finding: makeFinding({ title: '<script>alert("xss")</script>' }), matchedTitle: 'legit "title"' },
     ];
-    const summary = buildRecapSummary(0, 1, matches);
+    const summary = buildRecapSummary(1, matches);
     expect(summary).not.toContain('<script>');
     expect(summary).toContain('&lt;script&gt;');
     expect(summary).toContain('&quot;xss&quot;');
@@ -553,7 +553,7 @@ describe('buildRecapSummary', () => {
     const matches = [
       { finding: makeFinding({ title: 'a &lt;b&gt; issue' }), matchedTitle: 'foo & bar' },
     ];
-    const summary = buildRecapSummary(0, 1, matches);
+    const summary = buildRecapSummary(1, matches);
     expect(summary).toContain('&amp;lt;b&amp;gt;');
     expect(summary).toContain('foo &amp; bar');
     expect(summary).not.toContain('foo & bar');

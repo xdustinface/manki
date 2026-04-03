@@ -1833,7 +1833,7 @@ describe('runFullReview orchestration', () => {
     expect(finalCall[6]).toBeUndefined();
   });
 
-  it('calls buildRecapSummary with finding count and duplicate count', async () => {
+  it('calls buildRecapSummary with duplicate count', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1857,7 +1857,7 @@ describe('runFullReview orchestration', () => {
     await callRunFullReview();
 
     expect(jest.mocked(recapModule.buildRecapSummary)).toHaveBeenCalledWith(
-      1, 1, expect.any(Array),
+      1, expect.any(Array),
     );
   });
 });

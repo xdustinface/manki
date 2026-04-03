@@ -673,7 +673,7 @@ async function runFullReview(
       judgeModel,
     };
 
-    const recapSummary = buildRecapSummary(result.findings.length, totalDuplicates, allDuplicateMatches);
+    const recapSummary = buildRecapSummary(totalDuplicates, allDuplicateMatches);
 
     const reviewResult = { ...result, findings: inlineFindings };
     const reviewId = await postReview(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
