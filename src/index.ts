@@ -413,17 +413,18 @@ async function runFullReview(
       }
     }
 
-    let autoResolved = 0;
+    let autoResolvedTitles: string[] = [];
     if (recap.previousFindings.length > 0) {
-      autoResolved = await resolveAddressedThreads(
+      autoResolvedTitles = await resolveAddressedThreads(
         octokit, judgeClient, owner, repo, prNumber,
         recap.previousFindings, diff,
       );
-      if (autoResolved > 0) {
-        core.info(`Auto-resolved ${autoResolved} findings addressed in latest push`);
+      if (autoResolvedTitles.length > 0) {
+        core.info(`Auto-resolved ${autoResolvedTitles.length} findings addressed in latest push`);
       }
     }
 
+    const autoResolved = autoResolvedTitles.length;
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
 
     const previousRecap = recap.previousFindings.length > 0
@@ -434,38 +435,34 @@ async function runFullReview(
     const currentOpen = recap.previousFindings.filter(f => f.status === 'open').length - autoResolved;
     const currentReplied = recap.previousFindings.filter(f => f.status === 'replied').length;
 
+    const autoResolvedSet = new Set(autoResolvedTitles);
+
     let recapStats: RecapStats | undefined;
     let recapDelta: RecapDelta | undefined;
     if (recap.previousFindings.length > 0) {
+      const allResolvedTitles = recap.previousFindings
+        .filter(f => f.status === 'resolved')
+        .map(f => f.title)
+        .filter(t => t.length > 0)
+        .concat(autoResolvedTitles.filter(t => t.length > 0));
+
       recapStats = {
         resolved: currentResolved,
         open: currentOpen,
         replied: currentReplied,
-        resolvedTitles: recap.previousFindings
-          .filter(f => f.status === 'resolved')
-          .map(f => f.title)
-          .filter(t => t.length > 0),
+        resolvedTitles: allResolvedTitles,
       };
 
-      const rawDeltaResolved = currentResolved - (previousRecap?.resolved ?? 0);
-
-      const resolvedTitles = recap.previousFindings
-        .filter(f => f.status === 'resolved')
-        .map(f => f.title)
-        .filter(t => t.length > 0);
-
-      // Cap to available titles since auto-resolved findings don't carry titles
-      const deltaResolved = Math.min(rawDeltaResolved, resolvedTitles.length);
+      const previousResolvedCount = previousRecap?.resolved ?? 0;
 
       const openTitles = recap.previousFindings
-        .filter(f => f.status === 'open')
+        .filter(f => f.status === 'open' || f.status === 'replied')
         .map(f => f.title)
-        .filter(t => t.length > 0);
+        .filter(t => t.length > 0 && !autoResolvedSet.has(t));
 
       recapDelta = {
-        resolvedSinceLastReview: deltaResolved > 0 ? resolvedTitles.slice(-deltaResolved) : [],
+        resolvedSinceLastReview: allResolvedTitles.slice(previousResolvedCount),
         stillOpen: openTitles,
-        newThisCycle: 0,
       };
     }
 

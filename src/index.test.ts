@@ -87,7 +87,7 @@ jest.mock('./recap', () => ({
   formatRecapStatsTag: jest.fn().mockReturnValue(''),
   deduplicateFindings: jest.fn().mockReturnValue({ unique: [], duplicates: [] }),
   buildRecapSummary: jest.fn().mockReturnValue(''),
-  resolveAddressedThreads: jest.fn().mockResolvedValue(0),
+  resolveAddressedThreads: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('./review', () => ({
@@ -905,7 +905,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({ previousFindings: [], recapContext: '' });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
     jest.mocked(recapModule.buildRecapSummary).mockReturnValue('');
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(0);
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
     jest.mocked(stateModule.resolveStaleThreads).mockResolvedValue(0);
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
@@ -1670,7 +1670,7 @@ describe('runFullReview orchestration', () => {
       recapContext: 'previous context',
     });
     jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(0);
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
 
     await callRunFullReview();
 
@@ -1687,8 +1687,7 @@ describe('runFullReview orchestration', () => {
     });
     expect(recapDelta).toEqual({
       resolvedSinceLastReview: ['Bug A'],
-      stillOpen: ['Bug B'],
-      newThisCycle: 0,
+      stillOpen: ['Bug B', 'Bug C'],
     });
   });
 
@@ -1716,19 +1715,17 @@ describe('runFullReview orchestration', () => {
     jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue({
       resolved: 1, open: 2, replied: 0,
     });
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(0);
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
 
     await callRunFullReview();
 
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
     const recapDelta = runReviewCall[11];
 
-    // deltaResolved = currentResolved(2) - previousRecap.resolved(1) = 1
-    // Take from the tail: newest resolved findings are more likely the ones resolved this cycle
+    // resolvedSinceLastReview = allResolvedTitles.slice(previousRecap.resolved=1) = ['Bug B']
     expect(recapDelta).toEqual({
       resolvedSinceLastReview: ['Bug B'],
       stillOpen: ['Bug C'],
-      newThisCycle: 0,
     });
   });
 
@@ -1754,7 +1751,7 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
     // One finding was auto-resolved from the diff
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(1);
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(['Bug B']);
 
     await callRunFullReview();
 
@@ -1767,14 +1764,13 @@ describe('runFullReview orchestration', () => {
       resolved: 2,
       open: 1,
       replied: 0,
-      resolvedTitles: ['Bug A'],
+      resolvedTitles: ['Bug A', 'Bug B'],
     });
 
     const recapDelta = runReviewCall[11];
     expect(recapDelta).toEqual({
-      resolvedSinceLastReview: ['Bug A'],
-      stillOpen: ['Bug B', 'Bug C'],
-      newThisCycle: 0,
+      resolvedSinceLastReview: ['Bug A', 'Bug B'],
+      stillOpen: ['Bug C'],
     });
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
@@ -1802,7 +1798,7 @@ describe('runFullReview orchestration', () => {
       recapContext: 'context',
     });
     jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(0);
+    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
     jest.mocked(recapModule.formatRecapStatsTag).mockReturnValue('<!-- recap:1/1/0 -->');
 
     await callRunFullReview();

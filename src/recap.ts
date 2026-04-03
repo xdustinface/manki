@@ -62,7 +62,12 @@ async function fetchPreviousRecapStats(
 
       const match = comment.body.match(RECAP_STATS_REGEX);
       if (match) {
-        return JSON.parse(match[1]) as CumulativeRecapStats;
+        try {
+          return JSON.parse(match[1]) as CumulativeRecapStats;
+        } catch {
+          core.debug(`Malformed recap stats JSON in comment, skipping: ${match[1]}`);
+          continue;
+        }
       }
     }
   } catch (error) {
@@ -358,8 +363,8 @@ async function resolveAddressedThreads(
   prNumber: number,
   previousFindings: PreviousFinding[],
   diff: ParsedDiff,
-): Promise<number> {
-  let resolvedCount = 0;
+): Promise<string[]> {
+  const resolvedTitles: string[] = [];
 
   const openFindings = previousFindings.filter(f => f.status === 'open' && f.threadId);
 
@@ -378,11 +383,11 @@ async function resolveAddressedThreads(
     }
   }
 
-  if (candidates.length === 0) return 0;
+  if (candidates.length === 0) return [];
 
   if (!client) {
     core.info(`${candidates.length} findings may have been addressed but cannot validate without Claude client`);
-    return 0;
+    return [];
   }
 
   const prompt = candidates.map((c, i) =>
@@ -415,7 +420,7 @@ async function resolveAddressedThreads(
               }
             `, { threadId: candidate.finding.threadId });
 
-            resolvedCount++;
+            resolvedTitles.push(candidate.finding.title);
             core.info(`Auto-resolved: "${candidate.finding.title}" — ${result.reason}`);
           } catch (error) {
             core.debug(`Failed to resolve thread: ${error}`);
@@ -427,7 +432,7 @@ async function resolveAddressedThreads(
     core.warning(`Failed to validate addressed findings: ${error}`);
   }
 
-  return resolvedCount;
+  return resolvedTitles;
 }
 
 async function llmDeduplicateFindings(

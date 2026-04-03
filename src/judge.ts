@@ -25,7 +25,6 @@ export interface RecapStats {
 export interface RecapDelta {
   resolvedSinceLastReview: string[];
   stillOpen: string[];
-  newThisCycle: number;
 }
 
 export interface JudgeInput {

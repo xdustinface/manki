@@ -204,7 +204,6 @@ describe('buildJudgeSystemPrompt', () => {
     const recapDelta: RecapDelta = {
       resolvedSinceLastReview: ['Fix A', 'Fix B'],
       stillOpen: ['Bug C'],
-      newThisCycle: 0,
     };
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
     expect(prompt).toContain('Follow-Up Review Context');
@@ -221,7 +220,6 @@ describe('buildJudgeSystemPrompt', () => {
     const recapDelta: RecapDelta = {
       resolvedSinceLastReview: [],
       stillOpen: ['Bug A', 'Bug B'],
-      newThisCycle: 0,
     };
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
     expect(prompt).toContain('No findings were resolved since the last review.');
@@ -234,6 +232,19 @@ describe('buildJudgeSystemPrompt', () => {
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats);
     expect(prompt).not.toContain('Follow-Up Review Context');
     expect(prompt).toContain('Since last review');
+  });
+
+  it('sanitizes recap delta titles containing newlines and backticks', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 1, replied: 0, resolvedTitles: ['Fix A'] };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Fix with\nnewline'],
+      stillOpen: ['Bug with ```backticks```'],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).not.toContain('\n"Fix with\nnewline"');
+    expect(prompt).toContain('Fix with newline');
+    expect(prompt).not.toContain('```backticks```');
+    expect(prompt).toContain('Bug with backticks');
   });
 });
 
