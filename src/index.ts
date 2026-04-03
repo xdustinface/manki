@@ -447,12 +447,15 @@ async function runFullReview(
           .filter(t => t.length > 0),
       };
 
-      const deltaResolved = currentResolved - (previousRecap?.resolved ?? 0);
+      const rawDeltaResolved = currentResolved - (previousRecap?.resolved ?? 0);
 
       const resolvedTitles = recap.previousFindings
         .filter(f => f.status === 'resolved')
         .map(f => f.title)
         .filter(t => t.length > 0);
+
+      // Cap to available titles since auto-resolved findings don't carry titles
+      const deltaResolved = Math.min(rawDeltaResolved, resolvedTitles.length);
 
       const openTitles = recap.previousFindings
         .filter(f => f.status === 'open')
@@ -460,7 +463,7 @@ async function runFullReview(
         .filter(t => t.length > 0);
 
       recapDelta = {
-        resolvedSinceLastReview: deltaResolved > 0 ? resolvedTitles.slice(0, deltaResolved) : [],
+        resolvedSinceLastReview: deltaResolved > 0 ? resolvedTitles.slice(-deltaResolved) : [],
         stillOpen: openTitles,
         newThisCycle: 0,
       };

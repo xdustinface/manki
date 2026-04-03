@@ -61,7 +61,7 @@ function buildRecapDeltaSection(delta: RecapDelta): string {
   if (delta.resolvedSinceLastReview.length > 0) {
     parts.push('Findings resolved since last review:');
     for (const t of delta.resolvedSinceLastReview) {
-      parts.push(`- "${t}"`);
+      parts.push(`- "${sanitizeForPrompt(t)}"`);
     }
   } else {
     parts.push('No findings were resolved since the last review.');
@@ -71,7 +71,7 @@ function buildRecapDeltaSection(delta: RecapDelta): string {
     parts.push('');
     parts.push('Findings still open:');
     for (const t of delta.stillOpen) {
-      parts.push(`- "${t}"`);
+      parts.push(`- "${sanitizeForPrompt(t)}"`);
     }
   }
 

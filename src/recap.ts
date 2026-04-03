@@ -57,6 +57,7 @@ async function fetchPreviousRecapStats(
     });
 
     for (const comment of comments) {
+      if (comment.user?.type !== 'Bot') continue;
       if (!comment.body?.includes(PROGRESS_BOT_MARKER)) continue;
 
       const match = comment.body.match(RECAP_STATS_REGEX);

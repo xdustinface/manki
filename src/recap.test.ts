@@ -577,6 +577,7 @@ describe('fetchPreviousRecapStats', () => {
           listComments: jest.fn().mockResolvedValue({
             data: [
               {
+                user: { type: 'Bot' },
                 body: '<!-- manki-bot -->\n**Manki** — Review complete\n<!-- manki-recap:{"resolved":2,"open":1,"replied":0} -->\n<!-- manki-review-complete -->',
               },
             ],
@@ -602,13 +603,33 @@ describe('fetchPreviousRecapStats', () => {
     expect(stats).toBeNull();
   });
 
+  it('ignores non-Bot user comments with recap marker', async () => {
+    const mockOctokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: [
+              {
+                user: { type: 'User' },
+                body: '<!-- manki-bot -->\n<!-- manki-recap:{"resolved":5,"open":0,"replied":0} -->',
+              },
+            ],
+          }),
+        },
+      },
+    } as unknown as Parameters<typeof fetchPreviousRecapStats>[0];
+
+    const stats = await fetchPreviousRecapStats(mockOctokit, 'owner', 'repo', 1);
+    expect(stats).toBeNull();
+  });
+
   it('returns null when bot comment has no recap tag', async () => {
     const mockOctokit = {
       rest: {
         issues: {
           listComments: jest.fn().mockResolvedValue({
             data: [
-              { body: '<!-- manki-bot -->\n**Manki** — Review complete\n<!-- manki-review-complete -->' },
+              { user: { type: 'Bot' }, body: '<!-- manki-bot -->\n**Manki** — Review complete\n<!-- manki-review-complete -->' },
             ],
           }),
         },

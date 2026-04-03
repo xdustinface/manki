@@ -1724,9 +1724,9 @@ describe('runFullReview orchestration', () => {
     const recapDelta = runReviewCall[11];
 
     // deltaResolved = currentResolved(2) - previousRecap.resolved(1) = 1
-    // So only 1 resolved title should appear in resolvedSinceLastReview
+    // Take from the tail: newest resolved findings are more likely the ones resolved this cycle
     expect(recapDelta).toEqual({
-      resolvedSinceLastReview: ['Bug A'],
+      resolvedSinceLastReview: ['Bug B'],
       stillOpen: ['Bug C'],
       newThisCycle: 0,
     });
@@ -1768,6 +1768,13 @@ describe('runFullReview orchestration', () => {
       open: 1,
       replied: 0,
       resolvedTitles: ['Bug A'],
+    });
+
+    const recapDelta = runReviewCall[11];
+    expect(recapDelta).toEqual({
+      resolvedSinceLastReview: ['Bug A'],
+      stillOpen: ['Bug B', 'Bug C'],
+      newThisCycle: 0,
     });
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
