@@ -192,7 +192,7 @@ ${isFollowUp ? `## Follow-Up Summary Format
 
 This is a follow-up review (not the first review of this PR). Structure your summary using this exact markdown format:
 
-**Since last review** — [X findings resolved (list key ones briefly), Y with author reply, Z still open]
+**Since last review** — ${recapDelta ? `${recapDelta.resolvedSinceLastReview.length} finding${recapDelta.resolvedSinceLastReview.length !== 1 ? 's' : ''} resolved${recapDelta.stillOpen.length > 0 ? `, ${recapDelta.stillOpen.length} still open` : ''}` : '[summarize what changed]'}
 
 **This cycle** — [1-2 sentences about new findings, leading with the most impactful one. Be conversational and professional. Do not re-introduce the overall PR opinion.]
 
@@ -241,8 +241,8 @@ export function buildJudgeUserMessage(
   }
 
   if (recapStats) {
-    parts.push(`## Previous Review Recap\n`);
-    parts.push(`- **Resolved**: ${recapStats.resolved} finding${recapStats.resolved !== 1 ? 's' : ''}`);
+    parts.push(`## Changes Since Last Review\n`);
+    parts.push(`- **Resolved**: ${recapStats.resolved} finding${recapStats.resolved !== 1 ? 's' : ''} since last review`);
     if (recapStats.resolvedTitles.length > 0) {
       for (const title of recapStats.resolvedTitles) {
         const safeTitle = sanitizeForPrompt(title);
@@ -250,7 +250,7 @@ export function buildJudgeUserMessage(
       }
     }
     parts.push(`- **Still open**: ${recapStats.open} finding${recapStats.open !== 1 ? 's' : ''}`);
-    parts.push(`- **Author replied**: ${recapStats.replied} finding${recapStats.replied !== 1 ? 's' : ''}`);
+    parts.push(`- **Author replied**: ${recapStats.replied} finding${recapStats.replied !== 1 ? 's' : ''} since last review`);
     parts.push('');
   }
 

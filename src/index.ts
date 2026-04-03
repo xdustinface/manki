@@ -446,14 +446,19 @@ async function runFullReview(
         .filter(t => t.length > 0)
         .concat(autoResolvedTitles.filter(t => t.length > 0));
 
-      recapStats = {
-        resolved: currentResolved,
-        open: currentOpen,
-        replied: currentReplied,
-        resolvedTitles: allResolvedTitles,
-      };
-
       const previousResolvedCount = previousRecap?.resolved ?? 0;
+      const previousReplied = previousRecap?.replied ?? 0;
+
+      const deltaResolvedTitles = allResolvedTitles.slice(previousResolvedCount);
+      const deltaResolved = Math.max(0, currentResolved - previousResolvedCount);
+      const deltaReplied = Math.max(0, currentReplied - previousReplied);
+
+      recapStats = {
+        resolved: deltaResolved,
+        open: currentOpen,
+        replied: deltaReplied,
+        resolvedTitles: deltaResolvedTitles,
+      };
 
       const openTitles = recap.previousFindings
         .filter(f => f.status === 'open' || f.status === 'replied')
@@ -461,7 +466,7 @@ async function runFullReview(
         .filter(t => t.length > 0 && !autoResolvedSet.has(t));
 
       recapDelta = {
-        resolvedSinceLastReview: allResolvedTitles.slice(previousResolvedCount),
+        resolvedSinceLastReview: deltaResolvedTitles,
         stillOpen: openTitles,
       };
     }

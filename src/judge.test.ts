@@ -206,6 +206,7 @@ describe('buildJudgeSystemPrompt', () => {
       stillOpen: ['Bug C'],
     };
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('2 findings resolved, 1 still open');
     expect(prompt).toContain('Follow-Up Review Context');
     expect(prompt).toContain('Findings resolved since last review');
     expect(prompt).toContain('"Fix A"');
@@ -215,6 +216,17 @@ describe('buildJudgeSystemPrompt', () => {
     expect(prompt).toContain('Write your summary as a progress update');
   });
 
+  it('uses singular form and omits open count when no findings are still open', () => {
+    const recapStats: RecapStats = { resolved: 1, open: 0, replied: 0, resolvedTitles: ['Fix A'] };
+    const recapDelta: RecapDelta = {
+      resolvedSinceLastReview: ['Fix A'],
+      stillOpen: [],
+    };
+    const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('1 finding resolved');
+    expect(prompt).not.toContain('still open');
+  });
+
   it('shows no resolved message when delta has no resolved findings', () => {
     const recapStats: RecapStats = { resolved: 0, open: 2, replied: 0, resolvedTitles: [] };
     const recapDelta: RecapDelta = {
@@ -222,6 +234,7 @@ describe('buildJudgeSystemPrompt', () => {
       stillOpen: ['Bug A', 'Bug B'],
     };
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats, recapDelta);
+    expect(prompt).toContain('0 findings resolved, 2 still open');
     expect(prompt).toContain('No findings were resolved since the last review.');
     expect(prompt).toContain('"Bug A"');
     expect(prompt).toContain('"Bug B"');
@@ -232,6 +245,7 @@ describe('buildJudgeSystemPrompt', () => {
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, recapStats);
     expect(prompt).not.toContain('Follow-Up Review Context');
     expect(prompt).toContain('Since last review');
+    expect(prompt).toContain('[summarize what changed]');
   });
 
   it('sanitizes recap delta titles containing newlines and backticks', () => {
@@ -359,19 +373,19 @@ describe('buildJudgeUserMessage', () => {
     };
     const msg = buildJudgeUserMessage(findings, new Map(), '', undefined, undefined, undefined, recapStats);
 
-    expect(msg).toContain('## Previous Review Recap');
-    expect(msg).toContain('**Resolved**: 2 findings');
+    expect(msg).toContain('## Changes Since Last Review');
+    expect(msg).toContain('**Resolved**: 2 findings since last review');
     expect(msg).toContain('- Null check missing');
     expect(msg).toContain('- Unused import');
     expect(msg).toContain('**Still open**: 1 finding');
-    expect(msg).toContain('**Author replied**: 3 findings');
+    expect(msg).toContain('**Author replied**: 3 findings since last review');
   });
 
   it('omits recap section when recapStats is undefined', () => {
     const findings = [makeFinding()];
     const msg = buildJudgeUserMessage(findings, new Map(), '');
 
-    expect(msg).not.toContain('## Previous Review Recap');
+    expect(msg).not.toContain('## Changes Since Last Review');
   });
 });
 
