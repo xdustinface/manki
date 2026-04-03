@@ -784,7 +784,7 @@ async function handleReviewStateCheck(): Promise<void> {
 
   const approved = await checkAndAutoApprove(octokit, owner, repo, prNumber);
   if (approved) {
-    core.info(`PR #${prNumber} auto-approved after all required issues resolved`);
+    core.info(`PR #${prNumber} auto-approved after all findings resolved`);
   }
 }
 
@@ -916,10 +916,12 @@ async function handleReviewCommentInteraction(): Promise<void> {
     await handleReviewCommentReply(octokit, claude, owner, repo, prNumber, memoryConfig, memoryToken);
   }
 
-  if (config.auto_approve) {
-    const prNumber = payload.pull_request?.number;
-    if (prNumber) {
-      await checkAndAutoApprove(octokit, owner, repo, prNumber);
+  // Check if all review threads are now resolved (e.g. the reply resolved the last conversation)
+  const prNum = payload.pull_request?.number;
+  if (prNum && config.auto_approve) {
+    const approved = await checkAndAutoApprove(octokit, owner, repo, prNum);
+    if (approved) {
+      core.info(`PR #${prNum} auto-approved after all findings resolved`);
     }
   }
 }
