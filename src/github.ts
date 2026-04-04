@@ -182,6 +182,10 @@ export function buildDashboard(data: DashboardData): string {
 
   lines.push(`\u2713 Parsed diff — ${data.lineCount} lines`);
 
+  if (data.plannerInfo) {
+    lines.push(`\u2713 Planner — ${data.plannerInfo.teamSize} agents, reviewer: ${data.plannerInfo.reviewerEffort}, judge: ${data.plannerInfo.judgeEffort} (${data.plannerInfo.prType})`);
+  }
+
   if (data.phase === 'started') {
     if (hasAgentProgress) {
       const done = agents.filter(a => a.status === 'done' || a.status === 'failed').length;

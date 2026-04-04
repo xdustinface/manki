@@ -25,18 +25,19 @@ export interface ReviewResult {
   agentNames?: string[];
   allJudgedFindings?: Finding[];
   resolveThreads?: Array<{ threadId: string; reason: string }>;
+  plannerResult?: PlannerResult;
 }
 
 export interface ReviewerAgent {
   name: string;
   focus: string;
-  focusArea?: string;
 }
 
 export interface PlannerResult {
-  agents: string[];
-  focusAreas: Record<string, string>;
-  prType?: string;
+  teamSize: 3 | 5 | 7;
+  reviewerEffort: 'low' | 'medium' | 'high';
+  judgeEffort: 'low' | 'medium' | 'high';
+  prType: string;
 }
 
 export type ReviewLevel = 'auto' | 'small' | 'medium' | 'large';
@@ -163,6 +164,12 @@ export interface DashboardData {
   keptCount?: number;
   droppedCount?: number;
   agentProgress?: AgentProgressEntry[];
+  plannerInfo?: {
+    teamSize: number;
+    reviewerEffort: string;
+    judgeEffort: string;
+    prType: string;
+  };
 }
 
 export interface JudgeDecision {

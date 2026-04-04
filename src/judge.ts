@@ -26,6 +26,7 @@ export interface JudgeInput {
   agentCount: number;
   isFollowUp?: boolean;
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>;
+  effort?: 'low' | 'medium' | 'high';
 }
 
 export interface JudgedFinding {
@@ -440,7 +441,7 @@ export async function runJudgeAgent(
   const systemPrompt = buildJudgeSystemPrompt(config, agentCount, isFollowUp, hasOpenThreads);
   const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads);
 
-  const response = await client.sendMessage(systemPrompt, userMessage, { effort: 'high' });
+  const response = await client.sendMessage(systemPrompt, userMessage, { effort: input.effort ?? 'high' });
   const judgeResult = parseJudgeResponse(response.content);
 
   if (judgeResult.findings.length === 0) {

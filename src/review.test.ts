@@ -1308,16 +1308,11 @@ describe('runReview', () => {
     expect(result.verdict).toBe('APPROVE');
   });
 
-  it('uses planner result to shape team when planner client is provided', async () => {
+  it('uses planner result to set team size and effort when planner client is provided', async () => {
     const plannerResponse = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Testing & Coverage', 'Performance & Efficiency', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': 'Check auth token handling in src/auth.ts',
-        'Correctness & Logic': 'Verify error propagation in handlers',
-        'Testing & Coverage': 'Ensure new auth flow has tests',
-        'Performance & Efficiency': 'Check for unnecessary allocations in hot path',
-        'Architecture & Design': 'Review module boundaries',
-      },
+      teamSize: 5,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
       prType: 'feature',
     });
 
@@ -1339,37 +1334,29 @@ describe('runReview', () => {
     const onProgress = jest.fn();
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context', null, undefined, undefined, undefined, onProgress);
     expect(result.reviewComplete).toBe(true);
-    expect(result.agentNames).toContain('Security & Safety');
-    expect(result.agentNames).toContain('Testing & Coverage');
-    expect(result.agentNames).toContain('Performance & Efficiency');
-    expect(result.agentNames).toContain('Architecture & Design');
     expect(result.agentNames).toHaveLength(5);
 
     // Planner client should have been called
     expect((clients.planner!.sendMessage as jest.Mock)).toHaveBeenCalledTimes(1);
 
-    // Planning and team-selected phases should have been emitted
+    // Planning phase should have been emitted
     const planningCalls = onProgress.mock.calls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'planning',
     );
     expect(planningCalls).toHaveLength(1);
 
-    const teamSelectedCalls = onProgress.mock.calls.filter(
-      (call: [import('./review').ReviewProgress]) => call[0].phase === 'team-selected',
-    );
-    expect(teamSelectedCalls).toHaveLength(1);
-    expect(teamSelectedCalls[0][0].agentNames).toEqual(
-      expect.arrayContaining(['Security & Safety', 'Correctness & Logic', 'Testing & Coverage', 'Performance & Efficiency', 'Architecture & Design']),
-    );
-    expect(teamSelectedCalls[0][0].agentNames).toHaveLength(5);
+    // Planner result should be in the review result
+    expect(result.plannerResult).toBeDefined();
+    expect(result.plannerResult!.teamSize).toBe(5);
+    expect(result.plannerResult!.reviewerEffort).toBe('medium');
+    expect(result.plannerResult!.judgeEffort).toBe('medium');
+    expect(result.plannerResult!.prType).toBe('feature');
 
-    // Reviewer agents should receive focus areas from the planner in their system prompts
+    // Reviewer agents should receive effort from planner
     const reviewerCalls = (clients.reviewer.sendMessage as jest.Mock).mock.calls;
-    const securityCall = reviewerCalls.find(
-      (call: string[]) => call[0].includes('Security & Safety'),
-    );
-    expect(securityCall).toBeDefined();
-    expect(securityCall![0]).toContain('Check auth token handling in src/auth.ts');
+    for (const call of reviewerCalls) {
+      expect(call[2]).toEqual({ effort: 'medium' });
+    }
   });
 
   it('falls back to selectTeam when planner client is not provided', async () => {
@@ -1414,19 +1401,11 @@ describe('runReview', () => {
     expect(result.agentNames).toHaveLength(7);
   });
 
-  it('assigns large level when planner selects more than 5 agents via custom reviewers', async () => {
+  it('includes custom reviewers when planner sets team size', async () => {
     const plannerResponse = JSON.stringify({
-      agents: [
-        'Security & Safety', 'Correctness & Logic', 'Testing & Coverage',
-        'Performance & Efficiency', 'Architecture & Design',
-      ],
-      focusAreas: {
-        'Security & Safety': 'Focus',
-        'Correctness & Logic': 'Focus',
-        'Testing & Coverage': 'Focus',
-        'Performance & Efficiency': 'Focus',
-        'Architecture & Design': 'Focus',
-      },
+      teamSize: 5,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
       prType: 'feature',
     });
 
@@ -1449,49 +1428,8 @@ describe('runReview', () => {
 
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
     expect(result.reviewComplete).toBe(true);
-    // 5 from planner + 1 custom = 6 agents, which triggers 'large' level
-    expect(result.agentNames).toHaveLength(6);
+    // Custom reviewers are always included via selectTeam
     expect(result.agentNames).toContain('Domain Expert');
-  });
-
-  it('merges custom reviewers with planner-selected agents', async () => {
-    const plannerResponse = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': 'Check auth',
-        'Correctness & Logic': 'Check logic',
-        'Architecture & Design': 'Check design',
-      },
-      prType: 'feature',
-    });
-
-    const customReviewer: ReviewerAgent = {
-      name: 'Custom Reviewer',
-      focus: 'custom domain logic',
-    };
-
-    const clients: ReviewClients = {
-      reviewer: {
-        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
-      } as unknown as import('./claude').ClaudeClient,
-      judge: {
-        sendMessage: jest.fn(),
-      } as unknown as import('./claude').ClaudeClient,
-      planner: {
-        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
-      } as unknown as import('./claude').ClaudeClient,
-    };
-
-    const config = makeConfig({ review_level: 'auto', reviewers: [customReviewer] });
-    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
-
-    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
-    expect(result.reviewComplete).toBe(true);
-    expect(result.agentNames).toContain('Custom Reviewer');
-    expect(result.agentNames).toHaveLength(4);
-    // Custom reviewer is appended after planner-selected agents
-    expect(result.agentNames!.indexOf('Custom Reviewer')).toBe(3);
-    expect(result.agentNames!.slice(0, 3)).toEqual(['Security & Safety', 'Correctness & Logic', 'Architecture & Design']);
   });
 
   it('falls back to selectTeam when planner returns error', async () => {
@@ -1525,14 +1463,8 @@ describe('runPlanner', () => {
   it('returns valid PlannerResult from mocked LLM response', async () => {
     const response = JSON.stringify({
       teamSize: 5,
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design', 'Testing & Coverage', 'Performance & Efficiency'],
-      focusAreas: {
-        'Security & Safety': 'Check for injection in query params',
-        'Correctness & Logic': 'Verify null handling in new parser',
-        'Architecture & Design': 'Review module boundaries',
-        'Testing & Coverage': 'Verify edge case coverage',
-        'Performance & Efficiency': 'Check hot path allocations',
-      },
+      reviewerEffort: 'medium',
+      judgeEffort: 'high',
       prType: 'feature',
     });
 
@@ -1545,12 +1477,11 @@ describe('runPlanner', () => {
 
     const result = await runPlanner(client, diff);
     expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(5);
-    expect(result!.agents).toContain('Security & Safety');
-    expect(result!.focusAreas['Security & Safety']).toBe('Check for injection in query params');
+    expect(result!.teamSize).toBe(5);
+    expect(result!.reviewerEffort).toBe('medium');
+    expect(result!.judgeEffort).toBe('high');
     expect(result!.prType).toBe('feature');
 
-    // Planner must use low effort to stay fast
     expect(client.sendMessage).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
@@ -1575,6 +1506,30 @@ describe('runPlanner', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null when teamSize is invalid', async () => {
+    const client = makeClient(JSON.stringify({
+      teamSize: 4,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+    }));
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when effort values are invalid', async () => {
+    const client = makeClient(JSON.stringify({
+      teamSize: 5,
+      reviewerEffort: 'max',
+      judgeEffort: 'medium',
+      prType: 'feature',
+    }));
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
   it('returns null when response has wrong structure', async () => {
     const client = makeClient(JSON.stringify({ foo: 'bar' }));
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
@@ -1582,142 +1537,54 @@ describe('runPlanner', () => {
     expect(result).toBeNull();
   });
 
-  it('filters out invalid agent names', async () => {
-    const response = JSON.stringify({
-      teamSize: 4,
-      agents: ['Security & Safety', 'Correctness & Logic', 'Nonexistent Agent', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': 'Focus here',
-        'Correctness & Logic': 'Focus there',
-        'Architecture & Design': 'Focus everywhere',
-      },
-      prType: 'refactor',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
-    const result = await runPlanner(client, diff);
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(3);
-    expect(result!.agents).not.toContain('Nonexistent Agent');
+  it('accepts all valid team sizes', async () => {
+    for (const size of [3, 5, 7]) {
+      const client = makeClient(JSON.stringify({
+        teamSize: size,
+        reviewerEffort: 'low',
+        judgeEffort: 'low',
+        prType: 'chore',
+      }));
+      const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+      const result = await runPlanner(client, diff);
+      expect(result).not.toBeNull();
+      expect(result!.teamSize).toBe(size);
+    }
   });
 
-  it('trims even agent count to odd for majority voting', async () => {
-    const response = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design', 'Testing & Coverage'],
-      focusAreas: {
-        'Security & Safety': 'Focus',
-        'Correctness & Logic': 'Focus',
-        'Architecture & Design': 'Focus',
-        'Testing & Coverage': 'Focus',
-      },
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
-    const result = await runPlanner(client, diff);
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(3);
-    expect(result!.agents).not.toContain('Testing & Coverage');
+  it('accepts all valid effort levels', async () => {
+    for (const effort of ['low', 'medium', 'high']) {
+      const client = makeClient(JSON.stringify({
+        teamSize: 3,
+        reviewerEffort: effort,
+        judgeEffort: effort,
+        prType: 'chore',
+      }));
+      const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+      const result = await runPlanner(client, diff);
+      expect(result).not.toBeNull();
+      expect(result!.reviewerEffort).toBe(effort);
+      expect(result!.judgeEffort).toBe(effort);
+    }
   });
 
-  it('trims 6 agents to 5 for majority voting', async () => {
-    const response = JSON.stringify({
-      agents: [
-        'Security & Safety', 'Correctness & Logic', 'Architecture & Design',
-        'Testing & Coverage', 'Performance & Efficiency', 'Maintainability & Readability',
-      ],
-      focusAreas: {
-        'Security & Safety': 'Focus',
-        'Correctness & Logic': 'Focus',
-        'Architecture & Design': 'Focus',
-        'Testing & Coverage': 'Focus',
-        'Performance & Efficiency': 'Focus',
-        'Maintainability & Readability': 'Focus',
-      },
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 200, totalDeletions: 50 });
-    const result = await runPlanner(client, diff);
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(5);
-    expect(result!.agents).not.toContain('Maintainability & Readability');
-  });
-
-  it('returns null when even trim would drop below 3 agents', async () => {
-    const response = JSON.stringify({
-      agents: ['Security & Safety', 'Fake Agent 1', 'Correctness & Logic', 'Fake Agent 2'],
-      focusAreas: { 'Security & Safety': 'Focus', 'Correctness & Logic': 'Focus' },
-      prType: 'chore',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
-    const result = await runPlanner(client, diff);
-    // 4 agents, 2 invalid → 2 valid → < 3 → null
-    expect(result).toBeNull();
-  });
-
-  it('returns null when fewer than 3 valid agents after filtering', async () => {
-    const response = JSON.stringify({
+  it('defaults prType to unknown when missing', async () => {
+    const client = makeClient(JSON.stringify({
       teamSize: 3,
-      agents: ['Security & Safety', 'Fake Agent 1', 'Fake Agent 2'],
-      focusAreas: { 'Security & Safety': 'Focus' },
-      prType: 'chore',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
-    const result = await runPlanner(client, diff);
-    expect(result).toBeNull();
-  });
-
-  it('returns null when focusAreas is null', async () => {
-    const response = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: null,
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
-    const result = await runPlanner(client, diff);
-    expect(result).toBeNull();
-  });
-
-  it('filters non-string focusArea values and truncates long ones', async () => {
-    const longFocus = 'x'.repeat(600);
-    const response = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': longFocus,
-        'Correctness & Logic': 123,
-        'Architecture & Design': 'Valid focus',
-      },
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
+    }));
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     const result = await runPlanner(client, diff);
     expect(result).not.toBeNull();
-    expect(result!.focusAreas['Security & Safety']).toHaveLength(500);
-    expect(result!.focusAreas['Correctness & Logic']).toBeUndefined();
-    expect(result!.focusAreas['Architecture & Design']).toBe('Valid focus');
+    expect(result!.prType).toBe('unknown');
   });
 
   it('includes PR context in planner message', async () => {
     const response = JSON.stringify({
       teamSize: 3,
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': 'Focus',
-        'Correctness & Logic': 'Focus',
-        'Architecture & Design': 'Focus',
-      },
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
       prType: 'bugfix',
     });
 
@@ -1736,13 +1603,37 @@ describe('runPlanner', () => {
     expect(sentMessage).toContain('Fixes crash on null user');
   });
 
-  it('includes hunk descriptions for the first 5 files', async () => {
-    const validResponse = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: { 'Security & Safety': 'F', 'Correctness & Logic': 'F', 'Architecture & Design': 'F' },
+  it('truncates PR body to 200 chars in planner summary', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
       prType: 'feature',
     });
-    const client = makeClient(validResponse);
+
+    const client = makeClient(response);
+    const longBody = 'x'.repeat(500);
+    const diff = makeDiff({
+      totalAdditions: 10,
+      totalDeletions: 5,
+      files: [{ path: 'src/a.ts', changeType: 'modified', hunks: [] }],
+    });
+    const prContext = { title: 'Big PR', body: longBody, baseBranch: 'main' };
+
+    await runPlanner(client, diff, prContext);
+
+    const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
+    expect(sentMessage).not.toContain('x'.repeat(500));
+  });
+
+  it('does not include hunk content in planner summary', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
+      prType: 'feature',
+    });
+    const client = makeClient(response);
     const diff = makeDiff({
       totalAdditions: 20,
       totalDeletions: 5,
@@ -1751,26 +1642,23 @@ describe('runPlanner', () => {
           path: 'src/auth.ts', changeType: 'modified',
           hunks: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 5, content: '+function validate() {\n+  return true;\n+}' }],
         },
-        {
-          path: 'src/handler.ts', changeType: 'modified',
-          hunks: [{ oldStart: 10, oldLines: 2, newStart: 10, newLines: 4, content: '+export async function handle() {' }],
-        },
       ],
     });
 
     await runPlanner(client, diff);
     const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
-    expect(sentMessage).toContain('[hunks:');
+    expect(sentMessage).not.toContain('[hunks:');
     expect(sentMessage).toContain('src/auth.ts');
   });
 
   it('truncates summary when it exceeds 1800 characters', async () => {
-    const validResponse = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: { 'Security & Safety': 'F', 'Correctness & Logic': 'F', 'Architecture & Design': 'F' },
+    const response = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
       prType: 'refactor',
     });
-    const client = makeClient(validResponse);
+    const client = makeClient(response);
     const files = Array.from({ length: 50 }, (_, i) => ({
       path: `src/very/long/path/to/deeply/nested/module_${i}_with_extra_padding.ts`,
       changeType: 'modified' as const,
@@ -1783,49 +1671,6 @@ describe('runPlanner', () => {
     expect(sentMessage.length).toBeLessThanOrEqual(2000);
     expect(sentMessage).toContain('... and');
     expect(sentMessage).toContain('more files');
-  });
-
-  it('prepends required agents when LLM omits them', async () => {
-    const response = JSON.stringify({
-      agents: ['Architecture & Design', 'Testing & Coverage', 'Performance & Efficiency'],
-      focusAreas: {
-        'Architecture & Design': 'Focus',
-        'Testing & Coverage': 'Focus',
-        'Performance & Efficiency': 'Focus',
-      },
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
-    const result = await runPlanner(client, diff);
-    expect(result).not.toBeNull();
-    expect(result!.agents).toContain('Security & Safety');
-    expect(result!.agents).toContain('Correctness & Logic');
-    expect(result!.agents.indexOf('Security & Safety')).toBe(0);
-    expect(result!.agents.indexOf('Correctness & Logic')).toBe(1);
-    // 3 original + 2 prepended = 5 (odd, no trim needed)
-    expect(result!.agents).toHaveLength(5);
-  });
-
-  it('does not duplicate required agents already present', async () => {
-    const response = JSON.stringify({
-      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
-      focusAreas: {
-        'Security & Safety': 'Focus',
-        'Correctness & Logic': 'Focus',
-        'Architecture & Design': 'Focus',
-      },
-      prType: 'feature',
-    });
-
-    const client = makeClient(response);
-    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
-    const result = await runPlanner(client, diff);
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(3);
-    expect(result!.agents.filter(a => a === 'Security & Safety')).toHaveLength(1);
-    expect(result!.agents.filter(a => a === 'Correctness & Logic')).toHaveLength(1);
   });
 
   it('returns null on timeout', async () => {
@@ -1847,26 +1692,40 @@ describe('runPlanner', () => {
   });
 });
 
-describe('buildReviewerSystemPrompt with focus area', () => {
-  it('includes focus area when present on reviewer', () => {
-    const reviewer: ReviewerAgent = {
-      name: 'Security & Safety',
-      focus: 'authentication, authorization',
-      focusArea: 'Check token validation in src/auth.ts for injection risks',
-    };
-    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
-    expect(prompt).toContain('## Focus Area (from pre-review analysis)');
-    expect(prompt).toContain('Check token validation in src/auth.ts for injection risks');
-    expect(prompt).toContain('this is guidance, not a restriction');
+describe('selectTeam with teamSizeOverride', () => {
+  it('uses override instead of line-count-based sizing', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config, undefined, 7);
+    expect(roster.agents).toHaveLength(7);
+    expect(roster.level).toBe('large');
   });
 
-  it('does not include focus area section when absent', () => {
-    const reviewer: ReviewerAgent = {
-      name: 'Security & Safety',
-      focus: 'authentication, authorization',
-    };
-    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
-    expect(prompt).not.toContain('## Focus Area');
-    expect(prompt).not.toContain('guidance, not a restriction');
+  it('maps override of 3 to small level', () => {
+    const diff = makeDiff({ totalAdditions: 500, totalDeletions: 500 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config, undefined, 3);
+    expect(roster.agents).toHaveLength(3);
+    expect(roster.level).toBe('small');
+  });
+
+  it('maps override of 5 to medium level', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config, undefined, 5);
+    expect(roster.agents).toHaveLength(5);
+    expect(roster.level).toBe('medium');
+  });
+
+  it('keeps heuristic agent scoring with override', () => {
+    const diff = makeDiff({
+      totalAdditions: 10,
+      totalDeletions: 5,
+      files: [{ path: 'src/review.test.ts', changeType: 'modified', hunks: [] }],
+    });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config, undefined, 5);
+    expect(roster.agents).toHaveLength(5);
+    expect(roster.agents.map(a => a.name)).toContain('Testing & Coverage');
   });
 });
