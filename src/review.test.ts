@@ -1408,6 +1408,83 @@ describe('runReview', () => {
     expect(result.agentNames).toHaveLength(7);
   });
 
+  it('assigns large level when planner selects more than 5 agents via custom reviewers', async () => {
+    const plannerResponse = JSON.stringify({
+      agents: [
+        'Security & Safety', 'Correctness & Logic', 'Testing & Coverage',
+        'Performance & Efficiency', 'Architecture & Design',
+      ],
+      focusAreas: {
+        'Security & Safety': 'Focus',
+        'Correctness & Logic': 'Focus',
+        'Testing & Coverage': 'Focus',
+        'Performance & Efficiency': 'Focus',
+        'Architecture & Design': 'Focus',
+      },
+      prType: 'feature',
+    });
+
+    const customReviewer: ReviewerAgent = { name: 'Domain Expert', focus: 'domain logic' };
+
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto', reviewers: [customReviewer] });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    // 5 from planner + 1 custom = 6 agents, which triggers 'large' level
+    expect(result.agentNames).toHaveLength(6);
+    expect(result.agentNames).toContain('Domain Expert');
+  });
+
+  it('merges custom reviewers with planner-selected agents', async () => {
+    const plannerResponse = JSON.stringify({
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+      focusAreas: {
+        'Security & Safety': 'Check auth',
+        'Correctness & Logic': 'Check logic',
+        'Architecture & Design': 'Check design',
+      },
+      prType: 'feature',
+    });
+
+    const customReviewer: ReviewerAgent = {
+      name: 'Custom Reviewer',
+      focus: 'custom domain logic',
+    };
+
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto', reviewers: [customReviewer] });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    expect(result.agentNames).toContain('Custom Reviewer');
+    expect(result.agentNames).toHaveLength(4);
+  });
+
   it('falls back to selectTeam when planner returns error', async () => {
     const clients: ReviewClients = {
       reviewer: {
@@ -1582,6 +1659,55 @@ describe('runPlanner', () => {
     const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
     expect(sentMessage).toContain('Fix login bug');
     expect(sentMessage).toContain('Fixes crash on null user');
+  });
+
+  it('includes hunk descriptions for the first 5 files', async () => {
+    const validResponse = JSON.stringify({
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+      focusAreas: { 'Security & Safety': 'F', 'Correctness & Logic': 'F', 'Architecture & Design': 'F' },
+      prType: 'feature',
+    });
+    const client = makeClient(validResponse);
+    const diff = makeDiff({
+      totalAdditions: 20,
+      totalDeletions: 5,
+      files: [
+        {
+          path: 'src/auth.ts', changeType: 'modified',
+          hunks: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 5, content: '+function validate() {\n+  return true;\n+}' }],
+        },
+        {
+          path: 'src/handler.ts', changeType: 'modified',
+          hunks: [{ oldStart: 10, oldLines: 2, newStart: 10, newLines: 4, content: '+export async function handle() {' }],
+        },
+      ],
+    });
+
+    await runPlanner(client, diff);
+    const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
+    expect(sentMessage).toContain('[hunks:');
+    expect(sentMessage).toContain('src/auth.ts');
+  });
+
+  it('truncates summary when it exceeds 1800 characters', async () => {
+    const validResponse = JSON.stringify({
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+      focusAreas: { 'Security & Safety': 'F', 'Correctness & Logic': 'F', 'Architecture & Design': 'F' },
+      prType: 'refactor',
+    });
+    const client = makeClient(validResponse);
+    const files = Array.from({ length: 50 }, (_, i) => ({
+      path: `src/very/long/path/to/deeply/nested/module_${i}_with_extra_padding.ts`,
+      changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 10, newStart: 1, newLines: 15, content: '+' + 'x'.repeat(80) }],
+    }));
+    const diff = makeDiff({ totalAdditions: 500, totalDeletions: 200, files });
+
+    await runPlanner(client, diff);
+    const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
+    expect(sentMessage.length).toBeLessThanOrEqual(2000);
+    expect(sentMessage).toContain('... and');
+    expect(sentMessage).toContain('more files');
   });
 });
 
