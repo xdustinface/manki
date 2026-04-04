@@ -1193,6 +1193,9 @@ describe('runReview', () => {
       expect(progress.agentStatus).toBe('success');
       expect(progress.agentFindingCount).toBeGreaterThanOrEqual(0);
     }
+
+    // Judge should not run when agents fail
+    expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
   });
 
   it('applies suppressions from memory before judge', async () => {
