@@ -31,12 +31,15 @@ const mockListReactionsForIssueComment = jest.fn().mockResolvedValue({ data: [] 
 
 const mockListComments = jest.fn().mockResolvedValue({ data: [] });
 
+const mockGraphql = jest.fn().mockResolvedValue({ resolveReviewThread: { thread: { isResolved: true } } });
+
 const mockOctokitInstance = {
   rest: {
     pulls: { get: mockPullsGet },
     issues: { deleteComment: jest.fn().mockResolvedValue(undefined), listComments: mockListComments, createComment: jest.fn().mockResolvedValue({ data: { id: 999 } }), updateComment: jest.fn().mockResolvedValue({}) },
     reactions: { listForIssueComment: mockListReactionsForIssueComment },
   },
+  graphql: mockGraphql,
 };
 
 jest.mock('./auth', () => ({
@@ -83,11 +86,8 @@ jest.mock('./memory', () => ({
 
 jest.mock('./recap', () => ({
   fetchRecapState: jest.fn().mockResolvedValue({ previousFindings: [], recapContext: '' }),
-  fetchPreviousRecapStats: jest.fn().mockResolvedValue(null),
-  formatRecapStatsTag: jest.fn().mockReturnValue(''),
   deduplicateFindings: jest.fn().mockReturnValue({ unique: [], duplicates: [] }),
-  buildRecapSummary: jest.fn().mockReturnValue(''),
-  resolveAddressedThreads: jest.fn().mockResolvedValue([]),
+  llmDeduplicateFindings: jest.fn().mockResolvedValue({ unique: [], duplicates: [] }),
 }));
 
 jest.mock('./review', () => ({
@@ -904,8 +904,6 @@ describe('runFullReview orchestration', () => {
     jest.mocked(authModule.getMemoryToken).mockReturnValue(null);
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({ previousFindings: [], recapContext: '' });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
-    jest.mocked(recapModule.buildRecapSummary).mockReturnValue('');
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
     jest.mocked(stateModule.resolveStaleThreads).mockResolvedValue(0);
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
@@ -1073,7 +1071,6 @@ describe('runFullReview orchestration', () => {
       expect.objectContaining({ verdict: 'REQUEST_CHANGES' }),
       expect.anything(),
       expect.anything(),
-      expect.anything(),
     );
     // Outputs set
     expect(jest.mocked(core.setOutput)).toHaveBeenCalledWith('verdict', 'REQUEST_CHANGES');
@@ -1227,7 +1224,7 @@ describe('runFullReview orchestration', () => {
       expect.objectContaining({
         findings: [expect.objectContaining({ severity: 'nit' })],
       }),
-      expect.anything(), expect.anything(), expect.anything(),
+      expect.anything(), expect.anything(),
     );
   });
 
@@ -1255,7 +1252,7 @@ describe('runFullReview orchestration', () => {
     expect(jest.mocked(ghUtils.postReview)).toHaveBeenCalledWith(
       expect.anything(), 'test-owner', 'test-repo', 42, 'abc123',
       expect.objectContaining({ verdict: 'COMMENT' }),
-      expect.anything(), expect.anything(), expect.anything(),
+      expect.anything(), expect.anything(),
     );
   });
 
@@ -1649,7 +1646,7 @@ describe('runFullReview orchestration', () => {
     );
   });
 
-  it('computes recap delta with previous findings and passes it to runReview', async () => {
+  it('passes isFollowUp and openThreads to runReview when previous findings exist', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1662,35 +1659,28 @@ describe('runFullReview orchestration', () => {
 
     const previousFindings = [
       { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const },
-      { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'nit' as const, status: 'replied' as const },
+      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_123' },
     ];
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
       previousFindings,
       recapContext: 'previous context',
     });
-    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
 
     await callRunFullReview();
 
-    // runReview should receive recapStats and recapDelta as the last two args
+    // runReview should receive isFollowUp and openThreads as the last two args
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const recapStats = runReviewCall[10];
-    const recapDelta = runReviewCall[11];
+    const isFollowUp = runReviewCall[10];
+    const openThreads = runReviewCall[11];
 
-    expect(recapStats).toEqual({
-      resolved: 1,
-      open: 2,
-      replied: 1,
-    });
-    expect(recapDelta).toEqual({
-      resolvedSinceLastReview: ['Bug A'],
-      stillOpen: ['Bug B', 'Bug C'],
-    });
+    expect(isFollowUp).toBe(true);
+    expect(openThreads).toEqual([
+      { threadId: 'PRRT_123', title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' },
+    ]);
   });
 
-  it('computes delta with non-null previousRecap (subtraction logic)', async () => {
+  it('updates dashboard on planning and team-selected progress', async () => {
+    jest.useFakeTimers();
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1701,34 +1691,40 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
 
-    const previousFindings = [
-      { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const },
-    ];
-    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
-      previousFindings,
-      recapContext: 'context',
-    });
-    // Previous review already had 1 resolved, so delta should be 2 - 1 = 1
-    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue({
-      resolved: 1, open: 2, replied: 0,
-    });
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({ phase: 'planning', rawFindingCount: 0 });
+          onProgress({
+            phase: 'team-selected',
+            rawFindingCount: 0,
+            agentNames: ['security', 'performance'],
+          });
+        }
+        jest.advanceTimersByTime(600);
+        await Promise.resolve();
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
 
     await callRunFullReview();
+    jest.useRealTimers();
 
-    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const recapDelta = runReviewCall[11];
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith('Planner analyzing PR content...');
 
-    // resolvedSinceLastReview = allResolvedTitles.slice(previousRecap.resolved=1) = ['Bug B']
-    expect(recapDelta).toEqual({
-      resolvedSinceLastReview: ['Bug B'],
-      stillOpen: ['Bug C'],
-    });
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    const teamDashboard = dashboardCalls.find(c => c[4].agentCount === 2)?.[4];
+    expect(teamDashboard).toBeDefined();
+    expect(teamDashboard!.agentProgress).toEqual([
+      { name: 'security', status: 'reviewing' },
+      { name: 'performance', status: 'reviewing' },
+    ]);
   });
 
-  it('adjusts counts when autoResolved > 0', async () => {
+  it('resolves threads the judge identified as addressed', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1739,44 +1735,39 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
 
-    const previousFindings = [
-      { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const },
-      { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const },
-    ];
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
-      previousFindings,
-      recapContext: 'context',
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'open' as const, threadId: 'PRRT_abc' },
+        { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_def' },
+      ],
+      recapContext: 'previous context',
     });
-    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
-    // One finding was auto-resolved from the diff
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue(['Bug B']);
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      resolveThreads: [
+        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
+        { threadId: 'PRRT_def', reason: 'Addressed by refactoring' },
+      ],
+    });
 
     await callRunFullReview();
 
-    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const recapStats = runReviewCall[10];
-
-    // currentResolved = 1 (resolved status) + 1 (autoResolved) = 2
-    // currentOpen = 2 (open status) - 1 (autoResolved) = 1, currentReplied = 0
-    expect(recapStats).toEqual({
-      resolved: 2,
-      open: 1,
-      replied: 0,
-    });
-
-    const recapDelta = runReviewCall[11];
-    expect(recapDelta).toEqual({
-      resolvedSinceLastReview: ['Bug A', 'Bug B'],
-      stillOpen: ['Bug C'],
-    });
-
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_abc' },
+    );
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_def' },
+    );
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
-      'Auto-resolved 1 findings addressed in latest push',
+      'Judge resolved: "Fixed in new diff" — thread PRRT_abc',
     );
   });
 
-  it('subtracts previousRecap.replied when computing deltaReplied', async () => {
+  it('skips resolving threads not in the openThreads allowlist', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1787,38 +1778,69 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
 
-    const previousFindings = [
-      { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'replied' as const },
-      { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'replied' as const },
-      { title: 'Bug D', file: 'src/app.ts', line: 4, severity: 'nit' as const, status: 'open' as const },
-    ];
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
-      previousFindings,
-      recapContext: 'context',
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'open' as const, threadId: 'PRRT_known' },
+      ],
+      recapContext: 'previous context',
     });
-    // Previous review already counted 1 replied, so delta should be 2 - 1 = 1
-    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue({
-      resolved: 0, open: 3, replied: 1,
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      resolveThreads: [
+        { threadId: 'PRRT_known', reason: 'Legit fix' },
+        { threadId: 'PRRT_unknown', reason: 'Injected by adversary' },
+      ],
     });
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
+
+    await callRunFullReview();
+
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_known' },
+    );
+    expect(mockGraphql).not.toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_unknown' },
+    );
+    expect(jest.mocked(core.debug)).toHaveBeenCalledWith(
+      expect.stringContaining('Skipping unknown thread PRRT_unknown'),
+    );
+  });
+
+  it('includes replied threads in openThreads for judge evaluation', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'open' as const, threadId: 'PRRT_open' },
+        { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'replied' as const, threadId: 'PRRT_replied' },
+        { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'nit' as const, status: 'resolved' as const, threadId: 'PRRT_resolved' },
+      ],
+      recapContext: 'previous context',
+    });
 
     await callRunFullReview();
 
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const recapStats = runReviewCall[10];
+    const openThreads = runReviewCall[11] as Array<{ threadId: string }>;
+    const threadIds = openThreads.map(t => t.threadId);
 
-    // currentResolved = 1, currentOpen = 1, currentReplied = 2
-    // deltaResolved = 1 - 0 = 1, deltaReplied = 2 - 1 = 1
-    // open = currentOpen + currentReplied = 1 + 2 = 3
-    expect(recapStats).toEqual({
-      resolved: 1,
-      open: 3,
-      replied: 1,
-    });
+    expect(threadIds).toContain('PRRT_open');
+    expect(threadIds).toContain('PRRT_replied');
+    expect(threadIds).not.toContain('PRRT_resolved');
   });
 
-  it('passes cumulativeTag to updateProgressComment when previousFindings exist', async () => {
+  it('logs debug message when thread resolution fails', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1829,75 +1851,27 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
 
-    const previousFindings = [
-      { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'resolved' as const },
-      { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const },
-    ];
     jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
-      previousFindings,
-      recapContext: 'context',
-    });
-    jest.mocked(recapModule.fetchPreviousRecapStats).mockResolvedValue(null);
-    jest.mocked(recapModule.resolveAddressedThreads).mockResolvedValue([]);
-    jest.mocked(recapModule.formatRecapStatsTag).mockReturnValue('<!-- recap:1/1/0 -->');
-
-    await callRunFullReview();
-
-    // formatRecapStatsTag should have been called with cumulative counts
-    expect(jest.mocked(recapModule.formatRecapStatsTag)).toHaveBeenCalledWith({
-      resolved: 1,
-      open: 1,
-      replied: 0,
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'required' as const, status: 'open' as const, threadId: 'PRRT_fail' },
+      ],
+      recapContext: 'previous context',
     });
 
-    // updateProgressComment should receive the cumulativeTag as the last arg
-    const updateCall = jest.mocked(ghUtils.updateProgressComment).mock.calls;
-    const finalCall = updateCall[updateCall.length - 1];
-    expect(finalCall[6]).toBe('<!-- recap:1/1/0 -->');
-  });
+    mockGraphql.mockRejectedValueOnce(new Error('GraphQL error'));
 
-  it('does not pass cumulativeTag when no previous findings', async () => {
-    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
-      previousFindings: [],
-      recapContext: '',
-    });
-
-    await callRunFullReview();
-
-    // formatRecapStatsTag should not have been called
-    expect(jest.mocked(recapModule.formatRecapStatsTag)).not.toHaveBeenCalled();
-
-    // The final updateProgressComment call should have undefined as cumulativeTag
-    const updateCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
-    const finalCall = updateCalls[updateCalls.length - 1];
-    expect(finalCall[6]).toBeUndefined();
-  });
-
-  it('calls buildRecapSummary with duplicate count', async () => {
-    const testFile = {
-      path: 'src/app.ts', changeType: 'modified' as const,
-      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
-    };
-    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
-    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
-      files: [testFile], totalAdditions: 10, totalDeletions: 5,
-    });
-    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
-
-    const finding = { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['general'] };
     jest.mocked(reviewModule.runReview).mockResolvedValue({
-      verdict: 'REQUEST_CHANGES', summary: 'Issues',
-      findings: [finding], highlights: [], reviewComplete: true,
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      resolveThreads: [
+        { threadId: 'PRRT_fail', reason: 'Should fail' },
+      ],
     });
-    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
-      unique: [finding], duplicates: [{ finding: { ...finding, title: 'Old Bug' }, matchedTitle: 'Bug' }],
-    });
-    jest.mocked(reviewModule.determineVerdict).mockReturnValue('REQUEST_CHANGES');
 
     await callRunFullReview();
 
-    expect(jest.mocked(recapModule.buildRecapSummary)).toHaveBeenCalledWith(
-      1, expect.any(Array),
+    expect(jest.mocked(core.debug)).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve thread PRRT_fail'),
     );
   });
 });
