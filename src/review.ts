@@ -265,12 +265,18 @@ export async function runPlanner(
   diff: ParsedDiff,
   prContext?: PrContext,
 ): Promise<PlannerResult | null> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Planner timed out')), PLANNER_TIMEOUT_MS);
+  });
+
   try {
     const userMessage = buildPlannerSummary(diff, prContext);
     const response = await Promise.race([
       client.sendMessage(buildPlannerSystemPrompt(), userMessage, { effort: 'low' }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Planner timed out')), PLANNER_TIMEOUT_MS)),
+      timeoutPromise,
     ]);
+    clearTimeout(timeoutId!);
 
     const jsonText = extractJSON(response.content);
     const parsed = JSON.parse(jsonText);
@@ -313,6 +319,7 @@ export async function runPlanner(
       prType: parsed.prType,
     };
   } catch (error) {
+    clearTimeout(timeoutId!);
     core.warning(`Planner failed: ${error} — falling back to heuristic team selection`);
     return null;
   }
