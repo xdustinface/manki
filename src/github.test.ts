@@ -2286,6 +2286,15 @@ describe('isApprovedOnCommit', () => {
     expect(await isApprovedOnCommit(octokit, 'owner', 'repo', 1, 'sha-123')).toBe(true);
   });
 
+  it('returns false when latest non-dismissed review is CHANGES_REQUESTED', async () => {
+    const octokit = makeMockOctokit([
+      { body: `${BOT_MARKER}\nOld`, state: 'APPROVED', commit_id: 'sha-123', user: { login: BOT_LOGIN, type: 'Bot' } },
+      { body: `${BOT_MARKER}\nNew`, state: 'CHANGES_REQUESTED', commit_id: 'sha-123', user: { login: BOT_LOGIN, type: 'Bot' } },
+    ]);
+
+    expect(await isApprovedOnCommit(octokit, 'owner', 'repo', 1, 'sha-123')).toBe(false);
+  });
+
   it('ignores reviews from other bots without the bot marker', async () => {
     const octokit = makeMockOctokit([
       { body: 'Some other bot review', state: 'APPROVED', commit_id: 'sha-123', user: { type: 'Bot' } },
