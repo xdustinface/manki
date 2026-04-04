@@ -1679,7 +1679,7 @@ describe('runFullReview orchestration', () => {
     ]);
   });
 
-  it('updates dashboard on planning and team-selected progress', async () => {
+  it('includes planner info in dashboard when planner result is available', async () => {
     jest.useFakeTimers();
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
@@ -1695,17 +1695,15 @@ describe('runFullReview orchestration', () => {
       async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
         if (onProgress) {
           onProgress({ phase: 'planning', rawFindingCount: 0 });
-          onProgress({
-            phase: 'team-selected',
-            rawFindingCount: 0,
-            agentNames: ['security', 'performance'],
-          });
+          onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult: { teamSize: 3 as const, reviewerEffort: 'low' as const, judgeEffort: 'low' as const, prType: 'chore' } });
         }
         jest.advanceTimersByTime(600);
         await Promise.resolve();
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+          plannerResult: { teamSize: 3 as const, reviewerEffort: 'low' as const, judgeEffort: 'low' as const, prType: 'chore' },
         };
       },
     );
@@ -1716,12 +1714,11 @@ describe('runFullReview orchestration', () => {
     expect(jest.mocked(core.info)).toHaveBeenCalledWith('Planner analyzing PR content...');
 
     const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
-    const teamDashboard = dashboardCalls.find(c => c[4].agentCount === 2)?.[4];
-    expect(teamDashboard).toBeDefined();
-    expect(teamDashboard!.agentProgress).toEqual([
-      { name: 'security', status: 'reviewing' },
-      { name: 'performance', status: 'reviewing' },
-    ]);
+    const dashboardWithPlanner = dashboardCalls.find(call => call[4]?.plannerInfo !== undefined);
+    expect(dashboardWithPlanner).toBeDefined();
+    expect(dashboardWithPlanner![4].plannerInfo).toEqual({
+      teamSize: 3, reviewerEffort: 'low', judgeEffort: 'low', prType: 'chore',
+    });
   });
 
   it('resolves threads the judge identified as addressed', async () => {

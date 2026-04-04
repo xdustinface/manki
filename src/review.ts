@@ -9,8 +9,6 @@ import { extractJSON } from './json';
 
 export const HIGH_CONF_SUGGESTION_THRESHOLD = 1;
 
-export const REQUIRED_AGENTS = ['Security & Safety', 'Correctness & Logic'] as const;
-
 export const PLANNER_TIMEOUT_MS = 30_000;
 
 export const AGENT_POOL: readonly ReviewerAgent[] = Object.freeze([
@@ -50,24 +48,33 @@ export function selectTeam(
   diff: ParsedDiff,
   config: ReviewConfig,
   customReviewers?: ReviewerAgent[],
+  teamSizeOverride?: number,
 ): TeamRoster {
   const lineCount = diff.totalAdditions + diff.totalDeletions;
 
+  let teamSize: number;
   let level: 'small' | 'medium' | 'large';
-  const configLevel = config.review_level;
-  if (configLevel === 'auto' || !['small', 'medium', 'large'].includes(configLevel)) {
-    if (configLevel !== 'auto') {
-      core.warning(`Unrecognized review_level "${configLevel}", using auto`);
-    }
-    const thresholds = config.review_thresholds || { small: 200, medium: 1000 };
-    if (lineCount < thresholds.small) level = 'small';
-    else if (lineCount < thresholds.medium) level = 'medium';
+
+  if (teamSizeOverride) {
+    teamSize = teamSizeOverride;
+    if (teamSize <= 3) level = 'small';
+    else if (teamSize <= 5) level = 'medium';
     else level = 'large';
   } else {
-    level = configLevel as 'small' | 'medium' | 'large';
+    const configLevel = config.review_level;
+    if (configLevel === 'auto' || !['small', 'medium', 'large'].includes(configLevel)) {
+      if (configLevel !== 'auto') {
+        core.warning(`Unrecognized review_level "${configLevel}", using auto`);
+      }
+      const thresholds = config.review_thresholds || { small: 200, medium: 1000 };
+      if (lineCount < thresholds.small) level = 'small';
+      else if (lineCount < thresholds.medium) level = 'medium';
+      else level = 'large';
+    } else {
+      level = configLevel as 'small' | 'medium' | 'large';
+    }
+    teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
   }
-
-  const teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
 
   const pool = [...AGENT_POOL];
   for (const custom of (customReviewers || [])) {
@@ -183,7 +190,7 @@ export interface ReviewClients {
 }
 
 export interface ReviewProgress {
-  phase: 'planning' | 'team-selected' | 'agent-complete' | 'reviewed' | 'judging';
+  phase: 'planning' | 'agent-complete' | 'reviewed' | 'judging';
   agentName?: string;
   agentFindingCount?: number;
   agentDurationMs?: number;
@@ -192,7 +199,7 @@ export interface ReviewProgress {
   judgeInputCount?: number;
   completedAgents?: number;
   totalAgents?: number;
-  agentNames?: string[];
+  plannerResult?: PlannerResult;
 }
 
 function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
@@ -203,7 +210,7 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
     if (prContext.baseBranch) summary += ` (${prContext.baseBranch})`;
     summary += '\n';
     if (prContext.body) {
-      summary += prContext.body.slice(0, 500) + '\n';
+      summary += prContext.body.slice(0, 200) + '\n';
     }
   }
 
@@ -213,19 +220,7 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
     const file = diff.files[i];
     const additions = file.hunks.reduce((sum, h) => sum + h.content.split('\n').filter(l => l.startsWith('+')).length, 0);
     const deletions = file.hunks.reduce((sum, h) => sum + h.content.split('\n').filter(l => l.startsWith('-')).length, 0);
-    let line = `- ${file.path} (${file.changeType}, +${additions} -${deletions})`;
-
-    if (i < 5 && file.hunks.length > 0) {
-      const hunkDescs = file.hunks.slice(0, 3).map(h => {
-        const firstLine = h.content.split('\n').find(l => l.trim().length > 0) || '';
-        return firstLine.slice(0, 60).trim();
-      }).filter(Boolean);
-      if (hunkDescs.length > 0) {
-        line += ` [hunks: ${hunkDescs.join(', ')}]`;
-      }
-    }
-
-    summary += line + '\n';
+    summary += `- ${file.path} (${file.changeType}, +${additions} -${deletions})\n`;
 
     if (summary.length > 1800) {
       summary += `... and ${diff.files.length - i - 1} more files\n`;
@@ -236,29 +231,33 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
   return summary.slice(0, 2000);
 }
 
-function buildPlannerSystemPrompt(): string {
-  const agentList = AGENT_POOL.map(a => `- ${a.name}: ${a.focus}`).join('\n');
-  return `You are a code review planning assistant. Analyze this PR and decide how to review it.
-
-Available reviewer agents:
-${agentList}
+const PLANNER_SYSTEM_PROMPT = `You are a code review planning assistant. Analyze this PR and decide how to review it.
 
 Decide:
-1. agents: select exactly 3, 5, or 7 agents by exact name (odd numbers for majority voting).
+1. teamSize: 3, 5, or 7 reviewer agents (odd numbers for majority voting).
    - 3: simple changes — docs, renames, config tweaks, small bug fixes
    - 5: typical features, moderate refactors, multi-file changes
    - 7: security-sensitive, complex architectural changes, crypto, auth
-   Always include "Security & Safety" and "Correctness & Logic". Pick based on complexity, not line count.
-2. focusAreas: for each selected agent, a 1-2 sentence directive on what to focus on in THIS specific PR. Be specific — reference actual files, patterns, or concerns visible in the diff.
-3. prType: one of "feature", "bugfix", "refactor", "docs", "test", "chore"
+2. reviewerEffort: "low", "medium", or "high" — how much effort each reviewer agent should spend.
+   - low: trivial changes, obvious intent
+   - medium: standard features and refactors
+   - high: complex logic, security-sensitive, subtle edge cases
+3. judgeEffort: "low", "medium", or "high" — how much effort the judge should spend evaluating findings.
+   - low: few expected findings, straightforward changes
+   - medium: moderate findings expected
+   - high: many findings expected, nuanced severity decisions
+4. prType: one of "feature", "bugfix", "refactor", "docs", "test", "chore", "rename"
 
 Respond with ONLY a JSON object (no markdown fences):
 {
-  "agents": ["agent name", ...],
-  "focusAreas": { "agent name": "focus directive", ... },
+  "teamSize": 5,
+  "reviewerEffort": "medium",
+  "judgeEffort": "medium",
   "prType": "feature"
 }`;
-}
+
+const VALID_TEAM_SIZES = new Set([3, 5, 7]);
+const VALID_EFFORTS = new Set(['low', 'medium', 'high']);
 
 export async function runPlanner(
   client: ClaudeClient,
@@ -273,7 +272,7 @@ export async function runPlanner(
   try {
     const userMessage = buildPlannerSummary(diff, prContext);
     const response = await Promise.race([
-      client.sendMessage(buildPlannerSystemPrompt(), userMessage, { effort: 'low' }),
+      client.sendMessage(PLANNER_SYSTEM_PROMPT, userMessage, { effort: 'low' }),
       timeoutPromise,
     ]);
     clearTimeout(timeoutId!);
@@ -281,54 +280,27 @@ export async function runPlanner(
     const jsonText = extractJSON(response.content);
     const parsed = JSON.parse(jsonText);
 
-    if (!Array.isArray(parsed.agents) || typeof parsed.focusAreas !== 'object' || parsed.focusAreas === null) {
-      core.warning('Planner returned malformed result — falling back to heuristic team selection');
+    const teamSize = parsed.teamSize;
+    if (!VALID_TEAM_SIZES.has(teamSize)) {
+      core.warning(`Planner returned invalid teamSize ${teamSize} — falling back to heuristic`);
       return null;
     }
 
-    const validAgentNames = new Set(AGENT_POOL.map(a => a.name));
-    let agents: string[] = parsed.agents.filter((name: string) => validAgentNames.has(name));
-
-    // Enforce required agents — prepend any that the LLM omitted (reverse to preserve order)
-    for (let i = REQUIRED_AGENTS.length - 1; i >= 0; i--) {
-      if (!agents.includes(REQUIRED_AGENTS[i])) {
-        agents.unshift(REQUIRED_AGENTS[i]);
-      }
-    }
-
-    if (agents.length < 3) {
-      core.warning('Planner selected fewer than 3 valid agents — falling back to heuristic team selection');
+    const reviewerEffort = parsed.reviewerEffort;
+    const judgeEffort = parsed.judgeEffort;
+    if (!VALID_EFFORTS.has(reviewerEffort) || !VALID_EFFORTS.has(judgeEffort)) {
+      core.warning('Planner returned invalid effort values — falling back to heuristic');
       return null;
     }
 
-    // Enforce odd team size for majority voting — trim last agent if even
-    if (agents.length % 2 === 0) {
-      agents = agents.slice(0, agents.length - 1);
-    }
+    const prType = typeof parsed.prType === 'string' ? parsed.prType : 'unknown';
 
-    const focusAreas: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed.focusAreas)) {
-      if (typeof value === 'string' && validAgentNames.has(key)) {
-        focusAreas[key] = value.slice(0, 500);
-      }
-    }
-
-    return {
-      agents,
-      focusAreas,
-      prType: parsed.prType,
-    };
+    return { teamSize, reviewerEffort, judgeEffort, prType };
   } catch (error) {
     clearTimeout(timeoutId!);
     core.warning(`Planner failed: ${error} — falling back to heuristic team selection`);
     return null;
   }
-}
-
-function determineLevelFromSize(size: number): 'small' | 'medium' | 'large' {
-  if (size <= 3) return 'small';
-  if (size <= 5) return 'medium';
-  return 'large';
 }
 
 function heuristicFallback(diff: ParsedDiff, config: ReviewConfig): TeamRoster {
@@ -352,35 +324,19 @@ export async function runReview(
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>,
 ): Promise<ReviewResult> {
   let team: TeamRoster;
+  let plannerResult: PlannerResult | null = null;
 
   if (clients.planner && config.review_level === 'auto') {
     if (onProgress) {
       onProgress({ phase: 'planning', rawFindingCount: 0 });
     }
-    const plannerResult = await runPlanner(clients.planner, diff, prContext);
+    plannerResult = await runPlanner(clients.planner, diff, prContext);
     if (plannerResult) {
-      const selectedAgents: ReviewerAgent[] = plannerResult.agents
-        .map(name => AGENT_POOL.find(a => a.name === name))
-        .filter((a): a is ReviewerAgent => a !== undefined)
-        .map(agent => ({
-          ...agent,
-          focusArea: plannerResult.focusAreas[agent.name],
-        }));
-
-      if (config.reviewers) {
-        for (const custom of config.reviewers) {
-          if (!selectedAgents.some(s => s.name === custom.name)) {
-            selectedAgents.push(custom);
-          }
-        }
+      team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize);
+      core.info(`Planner: ${plannerResult.teamSize} agents, reviewer: ${plannerResult.reviewerEffort}, judge: ${plannerResult.judgeEffort} (${plannerResult.prType})`);
+      if (onProgress) {
+        onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult });
       }
-
-      team = {
-        level: determineLevelFromSize(selectedAgents.length),
-        agents: selectedAgents,
-        lineCount: diff.totalAdditions + diff.totalDeletions,
-      };
-      core.info(`Planner selected team (${plannerResult.prType || 'unknown'}): ${team.agents.map(a => a.name).join(', ')}`);
     } else {
       team = heuristicFallback(diff, config);
     }
@@ -388,11 +344,9 @@ export async function runReview(
     team = heuristicFallback(diff, config);
   }
 
-  if (onProgress) {
-    onProgress({ phase: 'team-selected', rawFindingCount: 0, agentNames: team.agents.map(a => a.name) });
-  }
-
   const memoryContext = memory ? buildMemoryContext(memory) : '';
+  const reviewerEffort = plannerResult?.reviewerEffort;
+  const judgeEffort = plannerResult?.judgeEffort ?? 'high';
 
   const passes = config.review_passes ?? 1;
   const multiPass = passes > 1;
@@ -411,7 +365,7 @@ export async function runReview(
         Array.from({ length: passes }, () => {
           const shuffledDiff = shuffleDiffFiles(diff);
           const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
-          return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
+          return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort);
         })
       );
 
@@ -467,7 +421,7 @@ export async function runReview(
     core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
     const agentPromises = team.agents.map(agent => {
       const startTime = Date.now();
-      return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
+      return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort)
         .then(findings => {
           completedCount++;
           progressFindingCount += findings.length;
@@ -570,6 +524,7 @@ export async function runReview(
         agentCount: team.agents.length,
         isFollowUp,
         openThreads,
+        effort: judgeEffort as 'low' | 'medium' | 'high',
       };
       const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
       judgeSummary = judgeResult.summary;
@@ -609,6 +564,7 @@ export async function runReview(
     agentNames: team.agents.map(a => a.name),
     allJudgedFindings,
     resolveThreads: judgeResolveThreads,
+    plannerResult: plannerResult ?? undefined,
   };
 }
 
@@ -622,11 +578,13 @@ async function runReviewerAgent(
   prContext?: PrContext,
   memoryContext?: string,
   linkedIssues?: LinkedIssue[],
+  effort?: 'low' | 'medium' | 'high',
 ): Promise<Finding[]> {
   const systemPrompt = buildReviewerSystemPrompt(reviewer, config);
   const userMessage = buildReviewerUserMessage(rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
 
-  const response = await client.sendMessage(systemPrompt, userMessage);
+  const options = effort ? { effort } : undefined;
+  const response = await client.sendMessage(systemPrompt, userMessage, options);
   return parseFindings(response.content, reviewer.name);
 }
 
@@ -634,16 +592,6 @@ export function buildReviewerSystemPrompt(reviewer: ReviewerAgent, config: Revie
   let prompt = `You are a code reviewer specializing in: ${reviewer.focus}
 
 Your role: ${reviewer.name}`;
-
-  if (reviewer.focusArea) {
-    prompt += `
-
-## Focus Area (from pre-review analysis)
-
-${reviewer.focusArea}
-
-Note: this is guidance, not a restriction. Flag any other issues you find.`;
-  }
 
   prompt += `
 

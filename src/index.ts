@@ -338,7 +338,6 @@ async function runFullReview(
     const diff = parsePRDiff(rawDiff);
     const parseEndTime = Date.now();
     const team = selectTeam(diff, config, config.reviewers);
-    let actualTeamAgents: string[] = team.agents.map(a => a.name);
     const lineCount = diff.totalAdditions + diff.totalDeletions;
 
     const dashboard: DashboardData = {
@@ -473,11 +472,18 @@ async function runFullReview(
       (progress) => {
         if (progress.phase === 'planning') {
           core.info('Planner analyzing PR content...');
-        } else if (progress.phase === 'team-selected' && progress.agentNames) {
-          actualTeamAgents = progress.agentNames;
-          dashboard.agentCount = progress.agentNames.length;
-          dashboard.agentProgress = progress.agentNames.map(name => ({ name, status: 'reviewing' as const }));
-          scheduleDashboardFlush();
+          if (progress.plannerResult) {
+            dashboard.plannerInfo = {
+              teamSize: progress.plannerResult.teamSize,
+              reviewerEffort: progress.plannerResult.reviewerEffort,
+              judgeEffort: progress.plannerResult.judgeEffort,
+              prType: progress.plannerResult.prType,
+            };
+            dashboard.agentCount = progress.plannerResult.teamSize;
+            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize);
+            dashboard.agentProgress = plannerTeam.agents.map(a => ({ name: a.name, status: 'reviewing' as const }));
+            scheduleDashboardFlush();
+          }
         } else if (progress.phase === 'agent-complete') {
           rawFindingCount = progress.rawFindingCount;
           if (dashboard.agentProgress && progress.agentName) {
@@ -682,6 +688,20 @@ async function runFullReview(
       }
     }
 
+    if (result.plannerResult) {
+      dashboard.plannerInfo = {
+        teamSize: result.plannerResult.teamSize,
+        reviewerEffort: result.plannerResult.reviewerEffort,
+        judgeEffort: result.plannerResult.judgeEffort,
+        prType: result.plannerResult.prType,
+      };
+      dashboard.agentCount = result.agentNames?.length ?? dashboard.agentCount;
+      dashboard.agentProgress = result.agentNames?.map(name => {
+        const existing = dashboard.agentProgress?.find(a => a.name === name);
+        return existing ?? { name, status: 'done' as const };
+      });
+    }
+
     const droppedCount = rawFindingCount - result.findings.length;
     const completeDashboard: DashboardData = {
       ...dashboard,
@@ -703,7 +723,7 @@ async function runFullReview(
         judgeModel,
         reviewLevel: team.level,
         reviewLevelReason: `auto, ${diff.totalAdditions + diff.totalDeletions} lines`,
-        teamAgents: actualTeamAgents,
+        teamAgents: result.agentNames ?? team.agents.map(a => a.name),
         memoryEnabled: config.memory?.enabled ?? false,
         memoryRepo: config.memory?.repo ?? '',
         nitHandling,
