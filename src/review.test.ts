@@ -1398,6 +1398,33 @@ describe('runReview', () => {
     expect(judgeInput.effort).toBe('high');
   });
 
+  it('uses default judgeEffort of high when planner is absent', async () => {
+    const findingJson = JSON.stringify([{
+      severity: 'required', title: 'Bug', file: 'a.ts', line: 1,
+      description: 'desc', suggestedFix: '', reviewers: [],
+    }]);
+
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: findingJson }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    await runReview(clients, config, diff, 'raw diff', 'repo context');
+
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.effort).toBe('high');
+  });
+
   it('falls back to selectTeam when planner client is not provided', async () => {
     const clients: ReviewClients = {
       reviewer: {

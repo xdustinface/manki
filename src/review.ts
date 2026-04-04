@@ -246,7 +246,7 @@ Decide:
    - low: few expected findings, straightforward changes
    - medium: moderate findings expected
    - high: many findings expected, nuanced severity decisions
-4. prType: one of "feature", "bugfix", "refactor", "docs", "test", "chore"
+4. prType: one of "feature", "bugfix", "refactor", "docs", "test", "chore", "rename"
 
 Respond with ONLY a JSON object (no markdown fences):
 {

@@ -480,6 +480,8 @@ async function runFullReview(
               prType: progress.plannerResult.prType,
             };
             dashboard.agentCount = progress.plannerResult.teamSize;
+            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize);
+            dashboard.agentProgress = plannerTeam.agents.map(a => ({ name: a.name, status: 'reviewing' as const }));
             scheduleDashboardFlush();
           }
         } else if (progress.phase === 'agent-complete') {
