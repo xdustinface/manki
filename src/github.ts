@@ -1013,6 +1013,7 @@ async function isRecentlyApproved(
   owner: string,
   repo: string,
   prNumber: number,
+  commitSha?: string,
 ): Promise<boolean> {
   try {
     const { data: reviews } = await octokit.rest.pulls.listReviews({
@@ -1027,6 +1028,8 @@ async function isRecentlyApproved(
 
     const latest = botReviews[botReviews.length - 1];
     if (latest.state !== 'APPROVED') return false;
+
+    if (commitSha && latest.commit_id !== commitSha) return false;
 
     const submittedAt = new Date(latest.submitted_at || 0);
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;

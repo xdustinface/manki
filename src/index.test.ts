@@ -776,6 +776,9 @@ describe('isRecentlyApproved guard', () => {
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith('Recently approved — skipping redundant review');
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
   });
 
   it('force review bypasses the recently approved check', async () => {

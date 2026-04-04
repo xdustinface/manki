@@ -220,7 +220,7 @@ async function handlePullRequest(): Promise<void> {
     return;
   }
 
-  if (await isRecentlyApproved(octokit, owner, repo, prNumber)) {
+  if (await isRecentlyApproved(octokit, owner, repo, prNumber, commitSha)) {
     core.info('Recently approved — skipping redundant review');
     return;
   }
@@ -248,6 +248,12 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
 
   const octokit = await getOctokit();
 
+  const { data: pr } = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: prNumber,
+  });
+
   if (!forceReview) {
     const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
     if (remaining !== false) {
@@ -259,7 +265,10 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
       return;
     }
 
-    if (await isRecentlyApproved(octokit, owner, repo, prNumber)) {
+    if (await isRecentlyApproved(octokit, owner, repo, prNumber, pr.head.sha)) {
+      if (payload.comment?.id) {
+        await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
+      }
       core.info('Recently approved — skipping redundant review');
       return;
     }
@@ -269,12 +278,6 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   if (!forceReview && payload.comment?.id) {
     await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
   }
-
-  const { data: pr } = await octokit.rest.pulls.get({
-    owner,
-    repo,
-    pull_number: prNumber,
-  });
 
   const prContext: PrContext = {
     title: pr.title,

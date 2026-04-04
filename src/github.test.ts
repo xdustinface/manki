@@ -2206,7 +2206,7 @@ describe('isReviewInProgress', () => {
 describe('isRecentlyApproved', () => {
   type Octokit = ReturnType<typeof import('@actions/github').getOctokit>;
 
-  function makeMockOctokit(reviews: Array<{ user: { login: string; type?: string }; state: string; submitted_at: string }>) {
+  function makeMockOctokit(reviews: Array<{ user: { login: string; type?: string }; state: string; submitted_at: string; commit_id?: string }>) {
     return {
       rest: {
         pulls: {
@@ -2280,5 +2280,52 @@ describe('isRecentlyApproved', () => {
     expect(octokit.rest.pulls.listReviews).toHaveBeenCalledWith({
       owner: 'owner', repo: 'repo', pull_number: 1, per_page: 100,
     });
+  });
+
+  it('returns false when commitSha does not match approval commit_id', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const octokit = makeMockOctokit([
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'APPROVED', submitted_at: twoMinutesAgo, commit_id: 'old-sha' },
+    ]);
+
+    expect(await isRecentlyApproved(octokit, 'owner', 'repo', 1, 'new-sha')).toBe(false);
+  });
+
+  it('returns true when commitSha matches approval commit_id', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const octokit = makeMockOctokit([
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'APPROVED', submitted_at: twoMinutesAgo, commit_id: 'same-sha' },
+    ]);
+
+    expect(await isRecentlyApproved(octokit, 'owner', 'repo', 1, 'same-sha')).toBe(true);
+  });
+
+  it('skips commitSha check when not provided', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const octokit = makeMockOctokit([
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'APPROVED', submitted_at: twoMinutesAgo, commit_id: 'any-sha' },
+    ]);
+
+    expect(await isRecentlyApproved(octokit, 'owner', 'repo', 1)).toBe(true);
+  });
+
+  it('returns true when multiple non-dismissed reviews end with APPROVED', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const octokit = makeMockOctokit([
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'CHANGES_REQUESTED', submitted_at: twoMinutesAgo },
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'APPROVED', submitted_at: twoMinutesAgo },
+    ]);
+
+    expect(await isRecentlyApproved(octokit, 'owner', 'repo', 1)).toBe(true);
+  });
+
+  it('returns false when multiple non-dismissed reviews end with CHANGES_REQUESTED', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const octokit = makeMockOctokit([
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'APPROVED', submitted_at: twoMinutesAgo },
+      { user: { login: 'manki-review[bot]', type: 'Bot' }, state: 'CHANGES_REQUESTED', submitted_at: twoMinutesAgo },
+    ]);
+
+    expect(await isRecentlyApproved(octokit, 'owner', 'repo', 1)).toBe(false);
   });
 });
