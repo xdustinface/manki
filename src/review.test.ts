@@ -12,6 +12,7 @@ import {
   findingsMatch,
   intersectFindings,
   runReview,
+  runPlanner,
   ReviewClients,
   AGENT_POOL,
 } from './review';
@@ -1304,5 +1305,277 @@ describe('runReview', () => {
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
     expect(result.reviewComplete).toBe(true);
     expect(result.verdict).toBe('APPROVE');
+  });
+
+  it('uses planner result to shape team when planner client is provided', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 4,
+      agents: ['Security & Safety', 'Correctness & Logic', 'Testing & Coverage', 'Performance & Efficiency'],
+      focusAreas: {
+        'Security & Safety': 'Check auth token handling in src/auth.ts',
+        'Correctness & Logic': 'Verify error propagation in handlers',
+        'Testing & Coverage': 'Ensure new auth flow has tests',
+        'Performance & Efficiency': 'Check for unnecessary allocations in hot path',
+      },
+      prType: 'feature',
+    });
+
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    expect(result.agentNames).toContain('Security & Safety');
+    expect(result.agentNames).toContain('Testing & Coverage');
+    expect(result.agentNames).toContain('Performance & Efficiency');
+    expect(result.agentNames).toHaveLength(4);
+
+    // Planner client should have been called
+    expect((clients.planner!.sendMessage as jest.Mock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to selectTeam when planner is disabled', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto', planner: { enabled: false } });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    // Planner should not have been called
+    expect((clients.planner!.sendMessage as jest.Mock)).not.toHaveBeenCalled();
+    // Should fall back to heuristic (small team = 3 agents)
+    expect(result.agentNames).toHaveLength(3);
+  });
+
+  it('falls back to selectTeam when review_level is not auto', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'large' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    // Planner should not have been called since review_level is explicit
+    expect((clients.planner!.sendMessage as jest.Mock)).not.toHaveBeenCalled();
+    expect(result.agentNames).toHaveLength(7);
+  });
+
+  it('falls back to selectTeam when planner returns error', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockRejectedValue(new Error('Planner API error')),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    // Should gracefully fall back to heuristic
+    expect(result.agentNames).toHaveLength(3);
+  });
+});
+
+describe('runPlanner', () => {
+  const makeClient = (response: string) => ({
+    sendMessage: jest.fn().mockResolvedValue({ content: response }),
+  } as unknown as import('./claude').ClaudeClient);
+
+  it('returns valid PlannerResult from mocked LLM response', async () => {
+    const response = JSON.stringify({
+      teamSize: 5,
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design', 'Testing & Coverage', 'Performance & Efficiency'],
+      focusAreas: {
+        'Security & Safety': 'Check for injection in query params',
+        'Correctness & Logic': 'Verify null handling in new parser',
+        'Architecture & Design': 'Review module boundaries',
+        'Testing & Coverage': 'Verify edge case coverage',
+        'Performance & Efficiency': 'Check hot path allocations',
+      },
+      prType: 'feature',
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({
+      totalAdditions: 100,
+      totalDeletions: 20,
+      files: [{ path: 'src/auth.ts', changeType: 'modified', hunks: [] }],
+    });
+
+    const result = await runPlanner(client, diff);
+    expect(result).not.toBeNull();
+    expect(result!.teamSize).toBe(5);
+    expect(result!.agents).toHaveLength(5);
+    expect(result!.agents).toContain('Security & Safety');
+    expect(result!.focusAreas['Security & Safety']).toBe('Check for injection in query params');
+    expect(result!.prType).toBe('feature');
+  });
+
+  it('returns null on LLM error', async () => {
+    const client = {
+      sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
+    } as unknown as import('./claude').ClaudeClient;
+
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
+  it('returns null on malformed JSON', async () => {
+    const client = makeClient('this is not valid json at all');
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when response has wrong structure', async () => {
+    const client = makeClient(JSON.stringify({ foo: 'bar' }));
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
+  it('filters out invalid agent names', async () => {
+    const response = JSON.stringify({
+      teamSize: 4,
+      agents: ['Security & Safety', 'Correctness & Logic', 'Nonexistent Agent', 'Architecture & Design'],
+      focusAreas: {
+        'Security & Safety': 'Focus here',
+        'Correctness & Logic': 'Focus there',
+        'Architecture & Design': 'Focus everywhere',
+      },
+      prType: 'refactor',
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
+    const result = await runPlanner(client, diff);
+    expect(result).not.toBeNull();
+    expect(result!.agents).toHaveLength(3);
+    expect(result!.agents).not.toContain('Nonexistent Agent');
+  });
+
+  it('returns null when fewer than 3 valid agents after filtering', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      agents: ['Security & Safety', 'Fake Agent 1', 'Fake Agent 2'],
+      focusAreas: { 'Security & Safety': 'Focus' },
+      prType: 'chore',
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).toBeNull();
+  });
+
+  it('clamps teamSize to valid range', async () => {
+    const response = JSON.stringify({
+      teamSize: 10,
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+      focusAreas: {
+        'Security & Safety': 'Focus',
+        'Correctness & Logic': 'Focus',
+        'Architecture & Design': 'Focus',
+      },
+      prType: 'feature',
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+    expect(result).not.toBeNull();
+    expect(result!.teamSize).toBe(7);
+  });
+
+  it('includes PR context in planner message', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      agents: ['Security & Safety', 'Correctness & Logic', 'Architecture & Design'],
+      focusAreas: {
+        'Security & Safety': 'Focus',
+        'Correctness & Logic': 'Focus',
+        'Architecture & Design': 'Focus',
+      },
+      prType: 'bugfix',
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({
+      totalAdditions: 10,
+      totalDeletions: 5,
+      files: [{ path: 'src/fix.ts', changeType: 'modified', hunks: [] }],
+    });
+    const prContext = { title: 'Fix login bug', body: 'Fixes crash on null user', baseBranch: 'main' };
+
+    await runPlanner(client, diff, prContext);
+
+    const sentMessage = (client.sendMessage as jest.Mock).mock.calls[0][1] as string;
+    expect(sentMessage).toContain('Fix login bug');
+    expect(sentMessage).toContain('Fixes crash on null user');
+  });
+});
+
+describe('buildReviewerSystemPrompt with focus area', () => {
+  it('includes focus area when present on reviewer', () => {
+    const reviewer: ReviewerAgent = {
+      name: 'Security & Safety',
+      focus: 'authentication, authorization',
+      focusArea: 'Check token validation in src/auth.ts for injection risks',
+    };
+    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
+    expect(prompt).toContain('## Focus Area (from pre-review analysis)');
+    expect(prompt).toContain('Check token validation in src/auth.ts for injection risks');
+    expect(prompt).toContain('this is guidance, not a restriction');
+  });
+
+  it('does not include focus area section when absent', () => {
+    const reviewer: ReviewerAgent = {
+      name: 'Security & Safety',
+      focus: 'authentication, authorization',
+    };
+    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
+    expect(prompt).not.toContain('## Focus Area');
+    expect(prompt).not.toContain('guidance, not a restriction');
   });
 });
