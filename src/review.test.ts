@@ -15,7 +15,6 @@ import {
   runPlanner,
   ReviewClients,
   AGENT_POOL,
-  REQUIRED_AGENTS,
   PLANNER_TIMEOUT_MS,
 } from './review';
 import { LinkedIssue } from './github';
