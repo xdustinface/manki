@@ -31,12 +31,15 @@ const mockListReactionsForIssueComment = jest.fn().mockResolvedValue({ data: [] 
 
 const mockListComments = jest.fn().mockResolvedValue({ data: [] });
 
+const mockGraphql = jest.fn().mockResolvedValue({ resolveReviewThread: { thread: { isResolved: true } } });
+
 const mockOctokitInstance = {
   rest: {
     pulls: { get: mockPullsGet },
     issues: { deleteComment: jest.fn().mockResolvedValue(undefined), listComments: mockListComments, createComment: jest.fn().mockResolvedValue({ data: { id: 999 } }), updateComment: jest.fn().mockResolvedValue({}) },
     reactions: { listForIssueComment: mockListReactionsForIssueComment },
   },
+  graphql: mockGraphql,
 };
 
 jest.mock('./auth', () => ({
@@ -1674,6 +1677,115 @@ describe('runFullReview orchestration', () => {
     expect(openThreads).toEqual([
       { threadId: 'PRRT_123', title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' },
     ]);
+  });
+
+  it('updates dashboard on planning and team-selected progress', async () => {
+    jest.useFakeTimers();
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockImplementation(
+      async (_clients, _config, _diff, _rawDiff, _repoContext, _memory, _fileContents, _prContext, _linkedIssues, onProgress) => {
+        if (onProgress) {
+          onProgress({ phase: 'planning', rawFindingCount: 0 });
+          onProgress({
+            phase: 'team-selected',
+            rawFindingCount: 0,
+            agentNames: ['security', 'performance'],
+          });
+        }
+        jest.advanceTimersByTime(600);
+        await Promise.resolve();
+        return {
+          verdict: 'APPROVE', summary: 'ok', findings: [],
+          highlights: [], reviewComplete: true,
+        };
+      },
+    );
+
+    await callRunFullReview();
+    jest.useRealTimers();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith('Planner analyzing PR content...');
+
+    const dashboardCalls = jest.mocked(ghUtils.updateProgressDashboard).mock.calls;
+    const teamDashboard = dashboardCalls.find(c => c[4].agentCount === 2)?.[4];
+    expect(teamDashboard).toBeDefined();
+    expect(teamDashboard!.agentProgress).toEqual([
+      { name: 'security', status: 'reviewing' },
+      { name: 'performance', status: 'reviewing' },
+    ]);
+  });
+
+  it('resolves threads the judge identified as addressed', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      resolveThreads: [
+        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
+        { threadId: 'PRRT_def', reason: 'Addressed by refactoring' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(mockGraphql).toHaveBeenCalledTimes(2);
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_abc' },
+    );
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_def' },
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Judge resolved: "Fixed in new diff" — thread PRRT_abc',
+    );
+  });
+
+  it('logs debug message when thread resolution fails', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    mockGraphql.mockRejectedValueOnce(new Error('GraphQL error'));
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      resolveThreads: [
+        { threadId: 'PRRT_fail', reason: 'Should fail' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(core.debug)).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve thread PRRT_fail'),
+    );
   });
 });
 
