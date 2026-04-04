@@ -1362,6 +1362,14 @@ describe('runReview', () => {
       expect.arrayContaining(['Security & Safety', 'Correctness & Logic', 'Testing & Coverage', 'Performance & Efficiency', 'Architecture & Design']),
     );
     expect(teamSelectedCalls[0][0].agentNames).toHaveLength(5);
+
+    // Reviewer agents should receive focus areas from the planner in their system prompts
+    const reviewerCalls = (clients.reviewer.sendMessage as jest.Mock).mock.calls;
+    const securityCall = reviewerCalls.find(
+      (call: string[]) => call[0].includes('Security & Safety'),
+    );
+    expect(securityCall).toBeDefined();
+    expect(securityCall![0]).toContain('Check auth token handling in src/auth.ts');
   });
 
   it('falls back to selectTeam when planner is disabled', async () => {
@@ -1546,6 +1554,13 @@ describe('runPlanner', () => {
     expect(result!.agents).toContain('Security & Safety');
     expect(result!.focusAreas['Security & Safety']).toBe('Check for injection in query params');
     expect(result!.prType).toBe('feature');
+
+    // Planner must use low effort to stay fast
+    expect(client.sendMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      { effort: 'low' },
+    );
   });
 
   it('returns null on LLM error', async () => {

@@ -331,6 +331,12 @@ function determineLevelFromSize(size: number): 'small' | 'medium' | 'large' {
   return 'large';
 }
 
+function heuristicFallback(diff: ParsedDiff, config: ReviewConfig): TeamRoster {
+  const team = selectTeam(diff, config, config.reviewers);
+  core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
+  return team;
+}
+
 export async function runReview(
   clients: ReviewClients,
   config: ReviewConfig,
@@ -375,12 +381,10 @@ export async function runReview(
       };
       core.info(`Planner selected team (${plannerResult.prType || 'unknown'}): ${team.agents.map(a => a.name).join(', ')}`);
     } else {
-      team = selectTeam(diff, config, config.reviewers);
-      core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
+      team = heuristicFallback(diff, config);
     }
   } else {
-    team = selectTeam(diff, config, config.reviewers);
-    core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
+    team = heuristicFallback(diff, config);
   }
 
   if (onProgress) {
