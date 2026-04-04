@@ -11,7 +11,7 @@ import {
   RepoMemory,
 } from './memory';
 import { LinkedIssue } from './github';
-import { titlesOverlap } from './recap';
+import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
 import { DiffFile, Finding, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
 
@@ -214,7 +214,7 @@ export function buildJudgeUserMessage(
     parts.push(`## Open Review Threads\n`);
     parts.push('These are unresolved review threads from the previous review. If the new changes address any of them, include them in `resolveThreads`.\n');
     for (const t of openThreads) {
-      parts.push(`- **${t.threadId}**: [${t.severity}] "${t.title}" at ${t.file}:${t.line}`);
+      parts.push(`- **${t.threadId}**: [${t.severity}] "${sanitize(t.title)}" at ${sanitize(t.file)}:${t.line}`);
     }
     parts.push('');
   }
@@ -419,7 +419,9 @@ export async function runJudgeAgent(
 ): Promise<{ findings: Finding[]; summary: string; resolveThreads?: ResolveThread[] }> {
   const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads } = input;
 
-  if (findings.length === 0) return { findings, summary: 'Review complete.' };
+  const hasOpenThreads = (openThreads?.length ?? 0) > 0;
+
+  if (findings.length === 0 && !hasOpenThreads) return { findings, summary: 'Review complete.' };
 
   const codeContextMap = new Map<string, string>();
   for (const f of findings) {
@@ -434,7 +436,6 @@ export async function runJudgeAgent(
     : '';
 
   const changedFiles = diff.files;
-  const hasOpenThreads = (openThreads?.length ?? 0) > 0;
 
   const systemPrompt = buildJudgeSystemPrompt(config, agentCount, isFollowUp, hasOpenThreads);
   const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads);
@@ -443,7 +444,9 @@ export async function runJudgeAgent(
   const judgeResult = parseJudgeResponse(response.content);
 
   if (judgeResult.findings.length === 0) {
-    core.warning('Judge returned no findings — returning originals unchanged');
+    if (findings.length > 0) {
+      core.warning('Judge returned no findings — returning originals unchanged');
+    }
     return { findings, summary: judgeResult.summary, resolveThreads: judgeResult.resolveThreads };
   }
 

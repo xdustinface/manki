@@ -733,6 +733,67 @@ describe('runJudgeAgent', () => {
     const [, userMessage] = mockSendMessage.mock.calls[0];
     expect(userMessage).toContain('Relevant Suppressions');
   });
+
+  it('calls judge and returns resolveThreads when openThreads provided', async () => {
+    const judgedResponse = JSON.stringify({
+      summary: 'Thread addressed.',
+      findings: [
+        { title: 'Unused variable', severity: 'suggestion', reasoning: 'Valid.', confidence: 'high' },
+      ],
+      resolveThreads: [
+        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const input: JudgeInput = {
+      findings: [makeFinding()],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [
+        { threadId: 'PRRT_abc', title: 'Null check missing', file: 'src/foo.ts', line: 10, severity: 'required' },
+      ],
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(result.resolveThreads).toHaveLength(1);
+    expect(result.resolveThreads![0]).toEqual({ threadId: 'PRRT_abc', reason: 'Fixed in new diff' });
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+
+    const [systemPrompt, userMessage] = mockSendMessage.mock.calls[0];
+    expect(systemPrompt).toContain('resolveThreads');
+    expect(userMessage).toContain('PRRT_abc');
+    expect(userMessage).toContain('Null check missing');
+  });
+
+  it('calls judge with only openThreads when findings are empty', async () => {
+    const judgedResponse = JSON.stringify({
+      summary: 'Threads evaluated.',
+      findings: [],
+      resolveThreads: [
+        { threadId: 'PRRT_xyz', reason: 'Issue resolved' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const input: JudgeInput = {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [
+        { threadId: 'PRRT_xyz', title: 'Error handling', file: 'src/utils.ts', line: 5, severity: 'suggestion' },
+      ],
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(result.resolveThreads).toHaveLength(1);
+    expect(result.resolveThreads![0].threadId).toBe('PRRT_xyz');
+  });
 });
 
 describe('mapJudgedToFindings', () => {

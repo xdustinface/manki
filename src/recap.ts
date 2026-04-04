@@ -9,8 +9,9 @@ type Octokit = ReturnType<typeof github.getOctokit>;
 const BOT_MARKER = '<!-- manki';
 
 /** Escape double quotes and strip triple-backtick sequences from untrusted text before LLM interpolation. */
-export function sanitize(s: string): string {
-  return s.replace(/[\r\n]/g, ' ').replace(/`{3,}/g, '').replace(/"/g, '\\"');
+export function sanitize(s: string, maxLength = 200): string {
+  const cleaned = s.replace(/[\r\n]/g, ' ').replace(/`/g, '').replace(/"/g, '\\"');
+  return cleaned.length > maxLength ? cleaned.slice(0, maxLength) + '...' : cleaned;
 }
 
 

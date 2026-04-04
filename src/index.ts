@@ -421,7 +421,7 @@ async function runFullReview(
 
     const isFollowUp = recap.previousFindings.length > 0;
     const openThreads = recap.previousFindings
-      .filter(f => f.status === 'open' && f.threadId)
+      .filter(f => (f.status === 'open' || f.status === 'replied') && f.threadId)
       .map(f => ({
         threadId: f.threadId!,
         title: f.title,
@@ -637,7 +637,12 @@ async function runFullReview(
 
     // Resolve threads the judge identified as addressed
     if (result.resolveThreads && result.resolveThreads.length > 0) {
+      const knownThreadIds = new Set(openThreads.map(t => t.threadId));
       for (const { threadId, reason } of result.resolveThreads) {
+        if (!knownThreadIds.has(threadId)) {
+          core.debug(`Skipping unknown thread ${threadId} — not in openThreads allowlist`);
+          continue;
+        }
         try {
           await octokit.graphql(`mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }`, { threadId });
           core.info(`Judge resolved: "${reason}" — thread ${threadId}`);
