@@ -1006,6 +1006,140 @@ describe('main', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
     exitSpy.mockRestore();
   });
+
+  it('saves state to signal post phase on first (main) invocation', async () => {
+    setContext({ eventName: 'push', payload: { sender: { login: 'user' } } });
+    jest.mocked(core.getState).mockReturnValueOnce('');
+
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => {}) as any,
+    );
+
+    await main();
+
+    expect(jest.mocked(core.saveState)).toHaveBeenCalledWith('manki_post_phase', 'true');
+    exitSpy.mockRestore();
+  });
+});
+
+describe('postCleanup (via main dispatch)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+    jest.mocked(core.getInput).mockImplementation((name: string) =>
+      name === 'anthropic_api_key' ? 'test-api-key' : '',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (github.context as any).runId = 12345;
+  });
+
+  afterEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (github.context as any).runId = undefined;
+  });
+
+  function runPostPhase(): Promise<void> {
+    jest.mocked(core.getState).mockReturnValueOnce('true');
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => {}) as any,
+    );
+    return main().finally(() => exitSpy.mockRestore());
+  }
+
+  it('marks progress comment cancelled for the current run when PR is in payload', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 42 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(true);
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 12345,
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('marked progress comment for run 12345 as cancelled'),
+    );
+  });
+
+  it('logs that no comment was found when markOwnProgressCommentCancelled returns false', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 7 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(false);
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no progress comment found for run 12345'),
+    );
+  });
+
+  it('falls back to issue.pull_request when PR is not directly in payload', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: { issue: { number: 55, pull_request: { url: 'https://api.github.com/pr/55' } } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(true);
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 55, 12345,
+    );
+  });
+
+  it('skips when no PR number can be derived from event payload', async () => {
+    setContext({ eventName: 'push', payload: { sender: { login: 'user' } } });
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).not.toHaveBeenCalled();
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no PR number in event payload'),
+    );
+  });
+
+  it('skips when event payload has issue without pull_request (plain issue comment)', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: { issue: { number: 99 } },
+    });
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).not.toHaveBeenCalled();
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no PR number in event payload'),
+    );
+  });
+
+  it('warns when the cleanup helper throws', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 42 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockRejectedValueOnce(new Error('boom'));
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining('Post-cleanup failed: boom'),
+    );
+  });
+
+  it('does not save state again when running in post phase', async () => {
+    setContext({ eventName: 'pull_request', payload: { pull_request: { number: 1 } } });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(false);
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.saveState)).not.toHaveBeenCalled();
+  });
 });
 
 describe('runFullReview orchestration', () => {
