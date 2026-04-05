@@ -387,6 +387,16 @@ After setup, create a test PR to verify everything works:
 
 You can also trigger a review manually by commenting `/manki review` on any PR.
 
+## Security
+
+Manki handles untrusted PR content and cross-repo tokens. The security model rests on these guarantees:
+
+- **Prompt injection** — PR diffs are untrusted content passed into LLM prompts. All findings are sanitized before posting to GitHub so that embedded HTML, scripts, and `@mention` strings cannot be used to inject content or trigger notifications.
+- **Token handling** — All secrets are masked in workflow logs via `core.setSecret()`. The memory repo uses a separate `memory_repo_token` so that the review token never has write access to code repositories.
+- **Memory access control** — Only repository owners, members, and collaborators can use `/manki remember`, `/manki forget`, and `/manki dismiss`. Commands from outside contributors are ignored so memory cannot be poisoned by drive-by PRs.
+- **Judge trust model** — The judge agent has final say on severity and can downgrade `required` to `ignore`. This is intentional: a single precise judge produces fewer false positives than trusting individual reviewers.
+- **OIDC authentication** — When using the GitHub App identity, token service requests are authenticated via GitHub Actions OIDC tokens. The request is cryptographically proven to come from a legitimate workflow run, so no shared secret is exchanged between your workflow and the token service.
+
 ## Troubleshooting
 
 | Problem | Solution |
