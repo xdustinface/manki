@@ -35692,8 +35692,9 @@ exports.getMemoryToken = getMemoryToken;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const auth_app_1 = __nccwpck_require__(8844);
+const github_1 = __nccwpck_require__(9248);
 /**
- * Auto-detect manki-labs GitHub App installation and fetch an app token
+ * Auto-detect manki-review GitHub App installation and fetch an app token
  * from the token service. Falls back to the provided github_token on any failure.
  */
 async function resolveGitHubToken(githubToken, tokenUrl, owner, repo) {
@@ -35728,7 +35729,7 @@ async function resolveGitHubToken(githubToken, tokenUrl, owner, repo) {
             core.warning('Token service returned invalid response — falling back to github-actions[bot]');
             return { token: githubToken, identity: 'actions' };
         }
-        core.info(`Using manki-labs[bot] identity (token expires ${tokenData.expires_at})`);
+        core.info(`Using ${github_1.BOT_LOGIN} identity (token expires ${tokenData.expires_at})`);
         core.setSecret(tokenData.token);
         return { token: tokenData.token, identity: 'app' };
     }
@@ -35739,7 +35740,7 @@ async function resolveGitHubToken(githubToken, tokenUrl, owner, repo) {
 }
 /**
  * Create an authenticated Octokit client.
- * Priority: explicit App credentials > auto-detect manki-labs app > github_token.
+ * Priority: explicit App credentials > auto-detect manki-review app > github_token.
  */
 async function createAuthenticatedOctokit() {
     const appId = core.getInput('github_app_id');
@@ -36170,9 +36171,13 @@ exports.DEFAULT_CONFIG = {
     review_level: 'auto',
     review_thresholds: { small: 200, medium: 1000 },
     models: {
+        planner: 'claude-haiku-4-5',
         reviewer: 'claude-sonnet-4-6',
         judge: 'claude-opus-4-6',
         dedup: 'claude-haiku-4-5',
+    },
+    planner: {
+        enabled: true,
     },
     memory: {
         enabled: false,
@@ -36192,6 +36197,7 @@ const KNOWN_KEYS = new Set([
     'review_thresholds',
     'memory',
     'models',
+    'planner',
     'nit_handling',
     'review_passes',
 ]);
@@ -36274,6 +36280,9 @@ function validateConfig(config) {
             errors.push('`models` must be an object');
         }
         else {
+            if ('planner' in models && typeof models.planner !== 'string') {
+                errors.push('`models.planner` must be a string');
+            }
             if ('reviewer' in models && typeof models.reviewer !== 'string') {
                 errors.push('`models.reviewer` must be a string');
             }
@@ -36282,6 +36291,17 @@ function validateConfig(config) {
             }
             if ('dedup' in models && typeof models.dedup !== 'string') {
                 errors.push('`models.dedup` must be a string');
+            }
+        }
+    }
+    if ('planner' in config) {
+        const planner = config.planner;
+        if (!planner || typeof planner !== 'object' || Array.isArray(planner)) {
+            errors.push('`planner` must be an object');
+        }
+        else {
+            if ('enabled' in planner && typeof planner.enabled !== 'boolean') {
+                errors.push('`planner.enabled` must be a boolean');
             }
         }
     }
@@ -36327,6 +36347,9 @@ function deepMerge(defaults, overrides) {
         }
         else if (key === 'models' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
             result.models = { ...defaults.models, ...value };
+        }
+        else if (key === 'planner' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            result.planner = { ...defaults.planner, ...value };
         }
         else if (key === 'review_thresholds' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
             result.review_thresholds = { ...defaults.review_thresholds, ...value };
@@ -36561,7 +36584,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BOT_MARKER = void 0;
+exports.FORCE_REVIEW_MARKER = exports.REVIEW_COMPLETE_MARKER = exports.BOT_MARKER = exports.BOT_LOGIN = void 0;
 exports.fetchPRDiff = fetchPRDiff;
 exports.fetchConfigFile = fetchConfigFile;
 exports.fetchRepoContext = fetchRepoContext;
@@ -36590,10 +36613,18 @@ exports.safeTruncate = safeTruncate;
 exports.sanitizeFilePath = sanitizeFilePath;
 exports.sanitizeMarkdown = sanitizeMarkdown;
 exports.truncateBody = truncateBody;
+exports.isReviewInProgress = isReviewInProgress;
+exports.isApprovedOnCommit = isApprovedOnCommit;
 const core = __importStar(__nccwpck_require__(7484));
 const diff_1 = __nccwpck_require__(9952);
+const BOT_LOGIN = 'manki-review[bot]';
+exports.BOT_LOGIN = BOT_LOGIN;
 const BOT_MARKER = '<!-- manki-bot -->';
 exports.BOT_MARKER = BOT_MARKER;
+const REVIEW_COMPLETE_MARKER = '<!-- manki-review-complete -->';
+exports.REVIEW_COMPLETE_MARKER = REVIEW_COMPLETE_MARKER;
+const FORCE_REVIEW_MARKER = '<!-- manki-force-review -->';
+exports.FORCE_REVIEW_MARKER = FORCE_REVIEW_MARKER;
 // Covers all standard HTML elements including `base` (can inject a base URL that hijacks relative links)
 const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
 // The `[^>]*` in these regexes is anchored by a literal `>`, so backtracking is
@@ -36724,6 +36755,10 @@ function renderAgentLines(agents) {
 function formatDuration(ms) {
     return ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
 }
+const VALID_PR_TYPES = new Set(['feature', 'bugfix', 'refactor', 'docs', 'test', 'chore', 'rename']);
+function sanitizePrType(prType) {
+    return VALID_PR_TYPES.has(prType) ? prType : 'unknown';
+}
 function buildDashboard(data) {
     const agents = data.agentProgress;
     const hasAgentProgress = agents && agents.length > 0;
@@ -36732,6 +36767,10 @@ function buildDashboard(data) {
         lines.push('**Manki** — Review in progress', '');
     }
     lines.push(`\u2713 Parsed diff — ${data.lineCount} lines`);
+    if (data.plannerInfo) {
+        const prType = sanitizePrType(data.plannerInfo.prType);
+        lines.push(`\u2713 Planner — ${data.plannerInfo.teamSize} agents, reviewer: ${data.plannerInfo.reviewerEffort}, judge: ${data.plannerInfo.judgeEffort} (${prType})`);
+    }
     if (data.phase === 'started') {
         if (hasAgentProgress) {
             const done = agents.filter(a => a.status === 'done' || a.status === 'failed').length;
@@ -36806,15 +36845,6 @@ async function updateProgressComment(octokit, owner, repo, commentId, dashboard,
             }
             parts.push('');
         }
-        parts.push('**Recap:**');
-        parts.push(`- ${metadata.recap.newFindings} new findings`);
-        if (metadata.recap.previouslyFlagged > 0)
-            parts.push(`- ${metadata.recap.previouslyFlagged} previously flagged`);
-        if (metadata.recap.resolved > 0)
-            parts.push(`- ${metadata.recap.resolved} resolved`);
-        if (metadata.recap.suppressionsApplied > 0)
-            parts.push(`- ${metadata.recap.suppressionsApplied} suppressions applied`);
-        parts.push('');
         parts.push('**Timing:**');
         parts.push(`- Parse: ${(metadata.timing.parseMs / 1000).toFixed(1)}s`);
         parts.push(`- Review agents: ${(metadata.timing.reviewMs / 1000).toFixed(1)}s`);
@@ -36823,6 +36853,7 @@ async function updateProgressComment(octokit, owner, repo, commentId, dashboard,
         parts.push('');
         parts.push('</details>');
     }
+    parts.push(REVIEW_COMPLETE_MARKER);
     await octokit.rest.issues.updateComment({
         owner,
         repo,
@@ -36888,7 +36919,7 @@ function formatStatsJson(stats) {
 /**
  * Post the review with inline comments.
  */
-async function postReview(octokit, owner, repo, prNumber, commitSha, result, diff, stats, recapSummary) {
+async function postReview(octokit, owner, repo, prNumber, commitSha, result, diff, stats) {
     const event = mapVerdictToEvent(result.verdict);
     // Validate and filter inline comments against the diff
     const validComments = [];
@@ -36946,9 +36977,6 @@ async function postReview(octokit, owner, repo, prNumber, commitSha, result, dif
         }
     }
     let body = `${BOT_MARKER}\n${sanitizeMarkdown(result.summary)}`;
-    if (recapSummary) {
-        body += `\n\n${recapSummary}`;
-    }
     if (stats) {
         body += `\n\n${formatStatsOneLiner(stats)}`;
         body += `\n\n${formatStatsJson(stats)}`;
@@ -37384,6 +37412,56 @@ async function fetchSubdirClaudeMd(octokit, owner, repo, ref, changedPaths) {
     }
     return parts.join('\n\n---\n\n');
 }
+/**
+ * Check whether a review is currently in progress for a PR.
+ * Returns the number of minutes remaining until timeout, or `false` if no review is active.
+ */
+async function isReviewInProgress(octokit, owner, repo, prNumber) {
+    try {
+        const { data: comments } = await octokit.rest.issues.listComments({
+            owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
+        });
+        const progressComment = comments.find(c => c.user?.type === 'Bot' &&
+            c.body?.includes(BOT_MARKER) &&
+            !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
+            !c.body?.includes(FORCE_REVIEW_MARKER));
+        if (!progressComment)
+            return false;
+        const updatedAt = new Date(progressComment.updated_at).getTime();
+        const ageMinutes = (Date.now() - updatedAt) / 60000;
+        if (ageMinutes < 10) {
+            const remaining = Math.ceil(10 - ageMinutes);
+            core.info(`Skipping — review already in progress (progress comment updated ${ageMinutes.toFixed(1)}m ago)`);
+            return remaining;
+        }
+        return false;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Check whether the bot already has an active (non-dismissed) APPROVED review
+ * on the given commit SHA.
+ */
+async function isApprovedOnCommit(octokit, owner, repo, prNumber, commitSha) {
+    try {
+        const { data: reviews } = await octokit.rest.pulls.listReviews({
+            owner,
+            repo,
+            pull_number: prNumber,
+            per_page: 100,
+        });
+        const botReviews = reviews.filter((r) => r.user?.login === BOT_LOGIN && r.user?.type === 'Bot' && r.state !== 'DISMISSED');
+        const latest = botReviews[botReviews.length - 1];
+        if (!latest || latest.state !== 'APPROVED')
+            return false;
+        return latest.commit_id === commitSha;
+    }
+    catch {
+        return false;
+    }
+}
 
 
 /***/ }),
@@ -37437,7 +37515,6 @@ exports.handleReviewStateCheck = handleReviewStateCheck;
 exports.runFullReview = runFullReview;
 exports.main = main;
 exports._resetOctokitCache = _resetOctokitCache;
-exports.isReviewInProgress = isReviewInProgress;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const auth_1 = __nccwpck_require__(9081);
@@ -37490,7 +37567,9 @@ async function run() {
             return;
         }
         const body = github.context.payload.comment?.body ?? '';
-        if (!(0, interaction_1.hasBotMention)(body) && !(0, interaction_1.isReviewRequest)(body)) {
+        const isForceReview = action === 'edited' &&
+            body.includes(github_1.FORCE_REVIEW_MARKER) && body.includes('- [x] Force review');
+        if (!isForceReview && !(0, interaction_1.hasBotMention)(body) && !(0, interaction_1.isReviewRequest)(body)) {
             core.info('Comment does not mention Manki — ignoring');
             return;
         }
@@ -37505,7 +37584,7 @@ async function run() {
                         owner, repo, comment_id: commentId,
                     });
                     const alreadyProcessed = reactions.some(r => r.content === 'eyes' &&
-                        (r.user?.login === 'manki-labs[bot]' || r.user?.login === 'github-actions[bot]'));
+                        (r.user?.login === github_1.BOT_LOGIN || r.user?.login === 'github-actions[bot]'));
                     if (alreadyProcessed) {
                         core.info('Edited comment already processed (has eyes reaction) — skipping');
                         return;
@@ -37546,7 +37625,17 @@ async function run() {
             break;
         case 'issue_comment': {
             const commentBody = github.context.payload.comment?.body ?? '';
-            if ((0, interaction_1.isReviewRequest)(commentBody) && github.context.payload.issue?.pull_request) {
+            const forceReviewChecked = action === 'edited' && commentBody.includes(github_1.FORCE_REVIEW_MARKER) && commentBody.includes('- [x] Force review');
+            if (forceReviewChecked && github.context.payload.issue?.pull_request) {
+                const commentId = github.context.payload.comment?.id;
+                if (commentId) {
+                    const octokit = await getOctokit();
+                    const { owner, repo } = github.context.repo;
+                    await (0, github_1.reactToIssueComment)(octokit, owner, repo, commentId, 'eyes');
+                }
+                await handleCommentTrigger(true);
+            }
+            else if ((0, interaction_1.isReviewRequest)(commentBody) && github.context.payload.issue?.pull_request) {
                 await handleCommentTrigger();
             }
             else if ((0, interaction_1.isBotMentionNonReview)(commentBody) && github.context.payload.issue?.pull_request) {
@@ -37566,25 +37655,31 @@ async function run() {
             break;
     }
 }
-async function isReviewInProgress(octokit, owner, repo, prNumber) {
+async function postReviewSkippedComment(octokit, owner, repo, prNumber, remaining) {
     try {
+        const body = [
+            github_1.BOT_MARKER,
+            `**Review skipped** — a review is currently in progress. Retry in ~${remaining} minutes, or force now:`,
+            '',
+            '- [ ] Force review',
+            '',
+            github_1.FORCE_REVIEW_MARKER,
+        ].join('\n');
+        // Update an existing skip comment instead of creating a duplicate
         const { data: comments } = await octokit.rest.issues.listComments({
             owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
         });
-        const progressComment = comments.find(c => c.user?.type === 'Bot' &&
-            c.body?.includes(github_1.BOT_MARKER) && c.body?.includes('Review in progress'));
-        if (!progressComment)
-            return false;
-        const updatedAt = new Date(progressComment.updated_at).getTime();
-        const ageMinutes = (Date.now() - updatedAt) / 60000;
-        if (ageMinutes < 10) {
-            core.info(`Skipping — review already in progress (progress comment updated ${ageMinutes.toFixed(1)}m ago)`);
-            return true;
+        const existing = comments.find(c => c.user?.type === 'Bot' &&
+            c.body?.includes(github_1.BOT_MARKER) && c.body?.includes('Review skipped'));
+        if (existing) {
+            await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
         }
-        return false;
+        else {
+            await octokit.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+        }
     }
-    catch {
-        return false;
+    catch (error) {
+        core.warning(`Failed to post review-skipped comment: ${error instanceof Error ? error.message : error}`);
     }
 }
 async function handlePullRequest() {
@@ -37602,7 +37697,13 @@ async function handlePullRequest() {
         return;
     }
     const octokit = await getOctokit();
-    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
+    const remaining = await (0, github_1.isReviewInProgress)(octokit, owner, repo, prNumber);
+    if (remaining !== false) {
+        await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+        return;
+    }
+    if (await (0, github_1.isApprovedOnCommit)(octokit, owner, repo, prNumber, commitSha)) {
+        core.info('Already approved on this commit — skipping review');
         return;
     }
     const prContext = {
@@ -37612,7 +37713,7 @@ async function handlePullRequest() {
     };
     await runFullReview(owner, repo, prNumber, commitSha, pr.base.ref, prContext);
 }
-async function handleCommentTrigger() {
+async function handleCommentTrigger(forceReview) {
     const payload = github.context.payload;
     if (!payload.issue?.pull_request) {
         core.info('Comment is on an issue, not a PR — skipping');
@@ -37622,22 +37723,33 @@ async function handleCommentTrigger() {
     const repo = github.context.repo.repo;
     const prNumber = payload.issue.number;
     const octokit = await getOctokit();
-    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
-        if (payload.comment?.id) {
-            await (0, github_1.reactToIssueComment)(octokit, owner, repo, payload.comment.id, 'eyes');
-        }
-        core.info('Review already in progress — skipping');
-        return;
-    }
-    // Acknowledge the review request
-    if (payload.comment?.id) {
-        await (0, github_1.reactToIssueComment)(octokit, owner, repo, payload.comment.id, 'eyes');
-    }
     const { data: pr } = await octokit.rest.pulls.get({
         owner,
         repo,
         pull_number: prNumber,
     });
+    if (!forceReview) {
+        const remaining = await (0, github_1.isReviewInProgress)(octokit, owner, repo, prNumber);
+        if (remaining !== false) {
+            if (payload.comment?.id) {
+                await (0, github_1.reactToIssueComment)(octokit, owner, repo, payload.comment.id, 'eyes');
+            }
+            await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+            core.info('Review already in progress — skipping');
+            return;
+        }
+        if (await (0, github_1.isApprovedOnCommit)(octokit, owner, repo, prNumber, pr.head.sha)) {
+            if (payload.comment?.id) {
+                await (0, github_1.reactToIssueComment)(octokit, owner, repo, payload.comment.id, 'eyes');
+            }
+            core.info('Already approved on this commit — skipping review');
+            return;
+        }
+    }
+    // Acknowledge the review request (skip when forceReview — already reacted in run())
+    if (!forceReview && payload.comment?.id) {
+        await (0, github_1.reactToIssueComment)(octokit, owner, repo, payload.comment.id, 'eyes');
+    }
     const prContext = {
         title: pr.title,
         body: pr.body || '',
@@ -37647,9 +37759,13 @@ async function handleCommentTrigger() {
 }
 async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContext) {
     core.info(`Starting review for ${owner}/${repo}#${prNumber}`);
-    const startTime = Date.now();
     const oauthToken = core.getInput('claude_code_oauth_token');
     const apiKey = core.getInput('anthropic_api_key');
+    if (!oauthToken && !apiKey) {
+        core.setFailed('No API key configured — set claude_code_oauth_token or anthropic_api_key');
+        return;
+    }
+    const startTime = Date.now();
     const configPathInput = core.getInput('config_path');
     const octokit = await getOctokit();
     const progressCommentId = await (0, github_1.postProgressComment)(octokit, owner, repo, prNumber);
@@ -37679,12 +37795,16 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
             oauthToken: oauthToken || undefined,
             apiKey: apiKey || undefined,
         };
+        const plannerModel = (0, config_1.resolveModel)(config, 'planner');
         const reviewerModel = (0, config_1.resolveModel)(config, 'reviewer');
         const judgeModel = (0, config_1.resolveModel)(config, 'judge');
         const dedupModel = (0, config_1.resolveModel)(config, 'dedup');
-        core.info(`Models — reviewer: ${reviewerModel}, judge: ${judgeModel}, dedup: ${dedupModel}`);
+        core.info(`Models — planner: ${plannerModel}, reviewer: ${reviewerModel}, judge: ${judgeModel}, dedup: ${dedupModel}`);
         const reviewerClient = new claude_1.ClaudeClient({ ...authOptions, model: reviewerModel });
         const judgeClient = new claude_1.ClaudeClient({ ...authOptions, model: judgeModel });
+        const plannerClient = config.planner?.enabled !== false
+            ? new claude_1.ClaudeClient({ ...authOptions, model: plannerModel })
+            : undefined;
         const rawDiff = await (0, github_1.fetchPRDiff)(octokit, owner, repo, prNumber);
         const diff = (0, diff_1.parsePRDiff)(rawDiff);
         const parseEndTime = Date.now();
@@ -37762,13 +37882,17 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 }
             }
         }
-        if (recap.previousFindings.length > 0) {
-            const autoResolved = await (0, recap_1.resolveAddressedThreads)(octokit, judgeClient, owner, repo, prNumber, recap.previousFindings, diff);
-            if (autoResolved > 0) {
-                core.info(`Auto-resolved ${autoResolved} findings addressed in latest push`);
-            }
-        }
         const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
+        const isFollowUp = recap.previousFindings.length > 0;
+        const openThreads = recap.previousFindings
+            .filter(f => (f.status === 'open' || f.status === 'replied') && f.threadId)
+            .map(f => ({
+            threadId: f.threadId,
+            title: f.title,
+            file: f.file,
+            line: f.line,
+            severity: f.severity,
+        }));
         // Fetch full file contents for changed files so reviewers have surrounding context
         const filePaths = filteredFiles
             .filter(f => f.changeType !== 'deleted')
@@ -37804,8 +37928,23 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                     .catch(err => core.warning(`Failed to update dashboard: ${err}`));
             }, 500);
         }
-        const result = await (0, review_1.runReview)({ reviewer: reviewerClient, judge: judgeClient }, config, diff, rawDiff, fullContext, memory, fileContents, prContext, linkedIssues, (progress) => {
-            if (progress.phase === 'agent-complete') {
+        const result = await (0, review_1.runReview)({ reviewer: reviewerClient, judge: judgeClient, planner: plannerClient }, config, diff, rawDiff, fullContext, memory, fileContents, prContext, linkedIssues, (progress) => {
+            if (progress.phase === 'planning') {
+                core.info('Planner analyzing PR content...');
+                if (progress.plannerResult) {
+                    dashboard.plannerInfo = {
+                        teamSize: progress.plannerResult.teamSize,
+                        reviewerEffort: progress.plannerResult.reviewerEffort,
+                        judgeEffort: progress.plannerResult.judgeEffort,
+                        prType: progress.plannerResult.prType,
+                    };
+                    dashboard.agentCount = progress.plannerResult.teamSize;
+                    const plannerTeam = (0, review_1.selectTeam)(diff, config, config.reviewers, progress.plannerResult.teamSize);
+                    dashboard.agentProgress = plannerTeam.agents.map(a => ({ name: a.name, status: 'reviewing' }));
+                    scheduleDashboardFlush();
+                }
+            }
+            else if (progress.phase === 'agent-complete') {
                 rawFindingCount = progress.rawFindingCount;
                 if (dashboard.agentProgress && progress.agentName) {
                     const entry = dashboard.agentProgress.find(a => a.name === progress.agentName);
@@ -37840,14 +37979,21 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 (0, github_1.updateProgressDashboard)(octokit, owner, repo, progressCommentId, dashboard)
                     .catch(err => core.warning(`Failed to update dashboard: ${err}`));
             }
-        });
+        }, isFollowUp, openThreads);
         const judgeEndTime = Date.now();
-        if (!result.reviewComplete && result.verdict === 'APPROVE') {
+        if (!result.reviewComplete) {
+            if (dashboardFlushTimer) {
+                clearTimeout(dashboardFlushTimer);
+                dashboardFlushTimer = null;
+            }
+            core.warning(`Review incomplete: ${result.summary}`);
             result.verdict = 'COMMENT';
+            await (0, github_1.postReview)(octokit, owner, repo, prNumber, commitSha, result, diff);
+            dashboard.phase = 'complete';
+            await (0, github_1.updateProgressComment)(octokit, owner, repo, progressCommentId, dashboard);
+            return;
         }
         const { unique, duplicates: staticDuplicates } = (0, recap_1.deduplicateFindings)(result.findings, recap.previousFindings, memory?.suppressions);
-        let totalDuplicates = staticDuplicates.length;
-        const allDuplicateMatches = [...staticDuplicates];
         if (staticDuplicates.length > 0 || unique.length !== result.findings.length) {
             core.info(`Deduplicated ${staticDuplicates.length} findings, ${result.findings.length - unique.length} total removed`);
             result.findings = unique;
@@ -37859,8 +38005,6 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
             const llmResult = await (0, recap_1.llmDeduplicateFindings)(result.findings, recap.previousFindings, dedupClient);
             if (llmResult.duplicates.length > 0) {
                 result.findings = llmResult.unique;
-                totalDuplicates += llmResult.duplicates.length;
-                allDuplicateMatches.push(...llmResult.duplicates);
                 result.verdict = (0, review_1.determineVerdict)(result.findings);
             }
         }
@@ -37954,11 +38098,25 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
             reviewerModel,
             judgeModel,
         };
-        const resolved = recap.previousFindings.filter(f => f.status === 'resolved').length;
-        const open = recap.previousFindings.filter(f => f.status === 'open').length;
-        const recapSummary = (0, recap_1.buildRecapSummary)(result.findings.length, totalDuplicates, resolved, open, allDuplicateMatches);
+        // Resolve threads the judge identified as addressed
+        if (result.resolveThreads && result.resolveThreads.length > 0) {
+            const knownThreadIds = new Set(openThreads.map(t => t.threadId));
+            for (const { threadId, reason } of result.resolveThreads) {
+                if (!knownThreadIds.has(threadId)) {
+                    core.debug(`Skipping unknown thread ${threadId} — not in openThreads allowlist`);
+                    continue;
+                }
+                try {
+                    await octokit.graphql(`mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }`, { threadId });
+                    core.info(`Judge resolved: "${reason}" — thread ${threadId}`);
+                }
+                catch (error) {
+                    core.debug(`Failed to resolve thread ${threadId}: ${error}`);
+                }
+            }
+        }
         const reviewResult = { ...result, findings: inlineFindings };
-        const reviewId = await (0, github_1.postReview)(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats, recapSummary);
+        const reviewId = await (0, github_1.postReview)(octokit, owner, repo, prNumber, commitSha, reviewResult, diff, stats);
         if (nitHandling === 'issues' && nitFindings.length > 0) {
             try {
                 await (0, github_1.createNitIssue)(octokit, owner, repo, prNumber, nitFindings, commitSha);
@@ -37986,6 +38144,19 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 core.info(`Updated ${result.findings.length} patterns in memory repo`);
             }
         }
+        if (result.plannerResult) {
+            dashboard.plannerInfo = {
+                teamSize: result.plannerResult.teamSize,
+                reviewerEffort: result.plannerResult.reviewerEffort,
+                judgeEffort: result.plannerResult.judgeEffort,
+                prType: result.plannerResult.prType,
+            };
+            dashboard.agentCount = result.agentNames?.length ?? dashboard.agentCount;
+            dashboard.agentProgress = result.agentNames?.map(name => {
+                const existing = dashboard.agentProgress?.find(a => a.name === name);
+                return existing ?? { name, status: 'done' };
+            });
+        }
         const droppedCount = rawFindingCount - result.findings.length;
         const completeDashboard = {
             ...dashboard,
@@ -38005,7 +38176,7 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 judgeModel,
                 reviewLevel: team.level,
                 reviewLevelReason: `auto, ${diff.totalAdditions + diff.totalDeletions} lines`,
-                teamAgents: team.agents.map(a => a.name),
+                teamAgents: result.agentNames ?? team.agents.map(a => a.name),
                 memoryEnabled: config.memory?.enabled ?? false,
                 memoryRepo: config.memory?.repo ?? '',
                 nitHandling,
@@ -38017,12 +38188,6 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 confidence: f.judgeConfidence || 'medium',
                 kept: f.severity !== 'ignore',
             })),
-            recap: {
-                newFindings: result.findings.length,
-                previouslyFlagged: recap.previousFindings.filter(f => f.status === 'open').length,
-                resolved: recap.previousFindings.filter(f => f.status === 'resolved').length,
-                suppressionsApplied: totalDuplicates,
-            },
             timing,
         };
         await (0, github_1.updateProgressComment)(octokit, owner, repo, progressCommentId, completeDashboard, metadata);
@@ -38083,7 +38248,7 @@ async function handleReviewStateCheck() {
     }
     const approved = await (0, state_1.checkAndAutoApprove)(octokit, owner, repo, prNumber);
     if (approved) {
-        core.info(`PR #${prNumber} auto-approved after all required issues resolved`);
+        core.info(`PR #${prNumber} auto-approved after all findings resolved`);
     }
 }
 async function handleInteraction() {
@@ -38197,10 +38362,12 @@ async function handleReviewCommentInteraction() {
         }
         await (0, interaction_1.handleReviewCommentReply)(octokit, claude, owner, repo, prNumber, memoryConfig, memoryToken);
     }
-    if (config.auto_approve) {
-        const prNumber = payload.pull_request?.number;
-        if (prNumber) {
-            await (0, state_1.checkAndAutoApprove)(octokit, owner, repo, prNumber);
+    // Check if all review threads are now resolved (e.g. the reply resolved the last conversation)
+    const prNum = payload.pull_request?.number;
+    if (prNum && config.auto_approve) {
+        const approved = await (0, state_1.checkAndAutoApprove)(octokit, owner, repo, prNum);
+        if (approved) {
+            core.info(`PR #${prNum} auto-approved after all findings resolved`);
         }
     }
 }
@@ -38452,9 +38619,9 @@ async function handlePRComment(octokit, client, owner, repo, issueNumber, memory
             await handleGenericQuestion(octokit, client, owner, repo, issueNumber, body);
     }
 }
-const BOT_MENTION_PATTERN = /(?:@manki-labs|@manki|\/manki)\b/;
+const BOT_MENTION_PATTERN = /(?:@manki-review|@manki|\/manki)\b/;
 exports.BOT_MENTION_PATTERN = BOT_MENTION_PATTERN;
-const BOT_PREFIX_PATTERN = /(?:@manki-labs|@manki|\/manki)\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/;
+const BOT_PREFIX_PATTERN = /(?:@manki-review|@manki|\/manki)\s+(explain|dismiss|help|remember|forget|check|triage)(?:\s+(.*))?/;
 function parseCommand(body) {
     const lower = body.toLowerCase();
     const match = lower.match(BOT_PREFIX_PATTERN);
@@ -38525,7 +38692,7 @@ async function handleHelp(octokit, owner, repo, prNumber) {
         owner,
         repo,
         issue_number: prNumber,
-        body: `${BOT_MARKER}\n**Manki** — Here's what I can do:\n\n| Command | |\n|---|---|\n| \`/manki review\` | Run a full review |\n| \`/manki explain [topic]\` | Explain something about this PR |\n| \`/manki check\` | Check required issues & auto-approve |\n| \`/manki dismiss [finding]\` | Dismiss a finding |\n| \`/manki triage\` | Process nit issue checkboxes |\n| \`/manki remember <instruction>\` | Teach me something for future reviews |\n| \`/manki forget <text>\` | Remove a learning or suppression |\n| \`/manki help\` | Show this message |\n\nYou can also use \`@manki\` or \`@manki-labs\` as the command prefix, or reply to any of my review comments.`,
+        body: `${BOT_MARKER}\n**Manki** — Here's what I can do:\n\n| Command | |\n|---|---|\n| \`/manki review\` | Run a full review |\n| \`/manki explain [topic]\` | Explain something about this PR |\n| \`/manki check\` | Check required issues & auto-approve |\n| \`/manki dismiss [finding]\` | Dismiss a finding |\n| \`/manki triage\` | Process nit issue checkboxes |\n| \`/manki remember <instruction>\` | Teach me something for future reviews |\n| \`/manki forget <text>\` | Remove a learning or suppression |\n| \`/manki help\` | Show this message |\n\nYou can also use \`@manki\` or \`@manki-review\` as the command prefix, or reply to any of my review comments.`,
     });
 }
 async function handleRemember(octokit, owner, repo, prNumber, instruction, memoryConfig, memoryToken) {
@@ -38971,10 +39138,18 @@ function extractPrNumber(issueTitle) {
     return match ? parseInt(match[1], 10) : null;
 }
 function isReviewRequest(body) {
-    return BOT_MENTION_PATTERN.test(body.toLowerCase()) && /\breview\b/i.test(body);
+    const lower = body.toLowerCase();
+    if (!BOT_MENTION_PATTERN.test(lower))
+        return false;
+    const afterMention = lower.replace(new RegExp(BOT_MENTION_PATTERN.source, 'g'), '');
+    return /\breview\b/.test(afterMention);
 }
 function isBotMentionNonReview(body) {
-    return BOT_MENTION_PATTERN.test(body.toLowerCase()) && !/\breview\b/i.test(body);
+    const lower = body.toLowerCase();
+    if (!BOT_MENTION_PATTERN.test(lower))
+        return false;
+    const afterMention = lower.replace(new RegExp(BOT_MENTION_PATTERN.source, 'g'), '');
+    return !/\breview\b/.test(afterMention);
 }
 /**
  * Handle a bot command posted as a reply to an inline review comment.
@@ -39158,8 +39333,25 @@ const memory_1 = __nccwpck_require__(8820);
 const recap_1 = __nccwpck_require__(5620);
 const review_1 = __nccwpck_require__(7491);
 const CONTEXT_LINES = 10;
-function buildJudgeSystemPrompt(config, agentCount) {
+function buildJudgeSystemPrompt(config, agentCount, isFollowUp, hasOpenThreads) {
     const majorityThreshold = Math.max(1, Math.ceil(agentCount / 2));
+    const summaryInstruction = isFollowUp
+        ? `Write a brief, opinionated progress update in 1-2 sentences. Focus on whether previous concerns were addressed and what's new. Be direct — don't re-describe the PR. Never start with "The author" or "Since last review —". Good examples:
+- "All previous findings addressed cleanly. Two new nits on test coverage but nothing blocking."
+- "The timeout leak is fixed but introduced a new issue: clearTimeout never fires on success."
+- "Previous concerns resolved. Nothing new — this is ready."
+Bad examples (do NOT write like this):
+- "The author addressed the positional slice ordering issue..."
+- "Since last review — All 11 previously open findings resolved."`
+        : `Write a concise, opinionated review summary in 1-2 sentences. Lead with what matters most — the biggest risk, the smartest decision, or the thing that needs attention. Be direct and conversational, not formal. Never start with "The author" or "This PR" or "The refactor". Vary your opening. Never list agent names. Never mention agent count or review level. Never say "after judge evaluation". Good examples:
+- "Clean refactor — the new planner is half the code with better results."
+- "One real issue buried in an otherwise solid change: the timeout handler leaks."
+- "Mostly mechanical, but the auth token validation path needs a closer look."
+- "Nothing to flag — straightforward config cleanup."
+Bad examples (do NOT write like this):
+- "The author addressed all issues from the prior cycle..."
+- "The refactor looks solid overall. The main actionable issue is..."
+- "This PR modifies the review pipeline to..."`;
     let prompt = `You are a code review judge. You evaluate findings from multiple specialist reviewers for accuracy, actionability, and severity.
 
 ## Severity Assessment
@@ -39260,13 +39452,20 @@ Multiple specialist reviewers may flag the same issue independently. When you se
 - Use the most detailed description
 - In your reasoning, note which findings you merged (e.g., "Merged findings 1 and 4 — same issue")
 
+${isFollowUp ? `## Follow-Up Review
+
+This is a follow-up review. The previous review state is included in the repository context.
+` : ''}## Summary Instructions
+
+${summaryInstruction}
+
 ## Output Format
 
 Respond with ONLY a JSON object (no markdown fences, no explanation):
 
 \`\`\`
 {
-  "summary": "1-2 sentence review summary. Be conversational but professional. Focus on what matters: what was found, what's good, what needs attention. Never list agent names. Never mention agent count or review level. Never say 'after judge evaluation'. For clean PRs: acknowledge briefly. For PRs with findings: highlight the most important finding(s).",
+  "summary": "Your review summary (see Summary Instructions above)",
   "findings": [
     {
       "title": "Short title matching or close to the original finding title",
@@ -39274,22 +39473,38 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
       "reasoning": "1-2 sentences explaining your judgment",
       "confidence": "high" | "medium" | "low"
     }
-  ]
+  ]${hasOpenThreads ? `,
+  "resolveThreads": [
+    {
+      "threadId": "PRRT_xxx",
+      "reason": "Brief reason why this thread should be resolved"
+    }
+  ]` : ''}
 }
 \`\`\`
-
+${hasOpenThreads ? `
+The \`resolveThreads\` array is optional. Include it only if you determine that open review threads from the previous review have been addressed by the new changes. Use the thread IDs provided in the open threads section below.
+` : ''}
 The findings array may be shorter than the input when duplicates are merged. Preserve the order of first appearance.`;
     if (config.instructions) {
         prompt += `\n\n## Project Instructions\n\n${config.instructions}`;
     }
     return prompt;
 }
-function buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles) {
+function buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads) {
     const parts = [];
     if (prContext) {
         parts.push(`## Pull Request\n`);
         parts.push(`**Title**: ${prContext.title}`);
         parts.push(`**Base branch**: ${prContext.baseBranch}\n`);
+    }
+    if (openThreads && openThreads.length > 0) {
+        parts.push(`## Open Review Threads\n`);
+        parts.push('These are unresolved review threads from the previous review. If the new changes address any of them, include them in `resolveThreads`.\n');
+        for (const t of openThreads) {
+            parts.push(`- **${t.threadId}**: [${t.severity}] "${(0, recap_1.sanitize)(t.title)}" at ${(0, recap_1.sanitize)(t.file)}:${t.line}`);
+        }
+        parts.push('');
     }
     if (changedFiles && changedFiles.length > 0) {
         parts.push(`## Changed Files in This PR\n`);
@@ -39420,13 +39635,18 @@ function parseJudgeResponse(responseText) {
             reasoning: String(f.reasoning || ''),
             confidence: validateConfidence(f.confidence),
         }));
-        // New object format with summary + findings
+        // New object format with summary + findings + resolveThreads
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             const findings = Array.isArray(parsed.findings) ? parseFindings(parsed.findings) : [];
             const summary = typeof parsed.summary === 'string' && parsed.summary
                 ? parsed.summary
                 : 'Review complete.';
-            return { summary, findings };
+            const resolveThreads = Array.isArray(parsed.resolveThreads)
+                ? parsed.resolveThreads
+                    .filter(t => typeof t.threadId === 'string' && typeof t.reason === 'string')
+                    .map(t => ({ threadId: String(t.threadId), reason: String(t.reason) }))
+                : undefined;
+            return { summary, findings, resolveThreads };
         }
         // Backward compat: plain JSON array
         if (Array.isArray(parsed)) {
@@ -39447,9 +39667,8 @@ function validateConfidence(value) {
     return 'medium';
 }
 async function runJudgeAgent(client, config, input) {
-    const { findings, diff, memory, prContext, linkedIssues, agentCount } = input;
-    if (findings.length === 0)
-        return { findings, summary: 'Review complete.' };
+    const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads } = input;
+    const hasOpenThreads = (openThreads?.length ?? 0) > 0;
     const codeContextMap = new Map();
     for (const f of findings) {
         const ctx = extractCodeContext(f, diff);
@@ -39461,17 +39680,20 @@ async function runJudgeAgent(client, config, input) {
         ? filterMemoryForFindings(findings, memory)
         : '';
     const changedFiles = diff.files;
-    const systemPrompt = buildJudgeSystemPrompt(config, agentCount);
-    const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles);
-    const response = await client.sendMessage(systemPrompt, userMessage, { effort: 'high' });
+    const systemPrompt = buildJudgeSystemPrompt(config, agentCount, isFollowUp, hasOpenThreads);
+    const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads);
+    const response = await client.sendMessage(systemPrompt, userMessage, { effort: input.effort ?? 'high' });
     const judgeResult = parseJudgeResponse(response.content);
     if (judgeResult.findings.length === 0) {
-        core.warning('Judge returned no findings — returning originals unchanged');
-        return { findings, summary: judgeResult.summary };
+        if (findings.length > 0) {
+            core.warning('Judge returned no findings — returning originals unchanged');
+        }
+        return { findings, summary: judgeResult.summary, resolveThreads: judgeResult.resolveThreads };
     }
     return {
         findings: deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings)),
         summary: judgeResult.summary,
+        resolveThreads: judgeResult.resolveThreads,
     };
 }
 function mapJudgedToFindings(original, judged) {
@@ -40040,15 +40262,19 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sanitize = sanitize;
 exports.fetchRecapState = fetchRecapState;
 exports.deduplicateFindings = deduplicateFindings;
-exports.buildRecapSummary = buildRecapSummary;
-exports.resolveAddressedThreads = resolveAddressedThreads;
 exports.titlesOverlap = titlesOverlap;
 exports.llmDeduplicateFindings = llmDeduplicateFindings;
 const core = __importStar(__nccwpck_require__(7484));
 const memory_1 = __nccwpck_require__(8820);
 const BOT_MARKER = '<!-- manki';
+/** Escape double quotes and strip triple-backtick sequences from untrusted text before LLM interpolation. */
+function sanitize(s, maxLength = 200) {
+    const cleaned = s.replace(/[\r\n]/g, ' ').replace(/`/g, '').replace(/"/g, '\\"');
+    return cleaned.length > maxLength ? cleaned.slice(0, maxLength) + '...' : cleaned;
+}
 /**
  * Fetch previous review state for a PR.
  */
@@ -40076,12 +40302,12 @@ async function fetchRecapState(octokit, owner, repo, prNumber) {
             }
         }
         if (open.length > 0) {
-            parts.push(`\n### Still Open (${open.length} findings -- already flagged, do NOT duplicate):`);
+            parts.push(`\n### Still Open (${open.length} findings -- context only, may re-flag if still present):`);
             for (const f of open) {
                 parts.push(`- [${f.severity}] "${f.title}" at ${f.file}:${f.line}`);
             }
         }
-        parts.push('\nFocus ONLY on genuinely new issues in the code changes. Do not re-flag anything listed above.');
+        parts.push('\nFocus on genuinely new issues in the code changes. Do not re-flag resolved findings.');
         recapContext = parts.join('\n');
     }
     core.info(`Recap: ${resolved.length} resolved, ${open.length} open, ${previousFindings.length} total previous findings`);
@@ -40120,7 +40346,7 @@ async function fetchReviewThreads(octokit, owner, repo, prNumber) {
             const hasHumanReply = thread.comments.nodes.some((c, i) => i > 0 && c.author?.login !== 'github-actions[bot]');
             const severityMatch = firstComment?.body?.match(/manki:(required|suggestion|nit|ignore):/);
             const severity = (severityMatch?.[1] ?? 'unknown');
-            const titleMatch = firstComment?.body?.match(/\*\*(?:Required|Suggestion|Nit|Ignore)\*\*:\s*(.+?)(?:\n|$)/);
+            const titleMatch = firstComment?.body?.match(/\*\*(?:Required|Suggestion|Nit|Ignore)\*\*(?:\s*<sub>\[[^\]]*\]<\/sub>)?\s*:\s*(.+?)(?:\n|$)/);
             const findingTitle = titleMatch?.[1]?.trim() ?? '';
             return {
                 threadId: thread.id,
@@ -40150,8 +40376,9 @@ function deduplicateFindings(newFindings, previousFindings, suppressions) {
     }
     const unique = [];
     const duplicates = [];
+    const engaged = previousFindings.filter(f => f.status === 'resolved');
     for (const finding of newFindings) {
-        const matched = previousFindings.find(prev => matchesPrevious(finding, prev));
+        const matched = engaged.find(prev => matchesPrevious(finding, prev));
         if (matched) {
             duplicates.push({ finding, matchedTitle: matched.title });
         }
@@ -40202,97 +40429,12 @@ function matchesPrevious(finding, previous) {
         return false;
     return true;
 }
-function sanitizeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-/**
- * Build a review summary that includes deduplication stats.
- */
-function buildRecapSummary(newCount, duplicateCount, resolvedCount, openCount, duplicateMatches) {
-    const parts = [];
-    if (newCount > 0)
-        parts.push(`${newCount} new`);
-    if (openCount > 0)
-        parts.push(`${openCount} previously flagged`);
-    if (resolvedCount > 0)
-        parts.push(`${resolvedCount} resolved`);
-    if (duplicateCount > 0)
-        parts.push(`${duplicateCount} skipped (already flagged)`);
-    const summary = parts.length > 0 ? `Findings: ${parts.join(', ')}` : 'No findings';
-    if (!duplicateMatches || duplicateMatches.length === 0)
-        return summary;
-    const lines = duplicateMatches.map(d => `- "${sanitizeHtml(d.finding.title)}" → matches "${sanitizeHtml(d.matchedTitle)}"`);
-    const count = duplicateMatches.length;
-    return summary + `\n\n<details><summary>🔁 ${count} finding${count === 1 ? '' : 's'} skipped (previously flagged)</summary>\n\n${lines.join('\n')}\n\n</details>`;
-}
-/**
- * Auto-resolve review threads whose findings were addressed in the new diff.
- * Candidates are identified by hunk overlap, then validated by Claude to
- * confirm the code change actually addresses the finding.
- */
-async function resolveAddressedThreads(octokit, client, owner, repo, prNumber, previousFindings, diff) {
-    let resolvedCount = 0;
-    const openFindings = previousFindings.filter(f => f.status === 'open' && f.threadId);
-    const candidates = [];
-    for (const finding of openFindings) {
-        const diffFile = diff.files.find(f => f.path === finding.file);
-        if (!diffFile)
-            continue;
-        for (const hunk of diffFile.hunks) {
-            const hunkEnd = hunk.newStart + hunk.newLines - 1;
-            if (finding.line >= hunk.newStart - 3 && finding.line <= hunkEnd + 3) {
-                candidates.push({ finding, hunkContent: hunk.content });
-                break;
-            }
-        }
-    }
-    if (candidates.length === 0)
-        return 0;
-    if (!client) {
-        core.info(`${candidates.length} findings may have been addressed but cannot validate without Claude client`);
-        return 0;
-    }
-    const prompt = candidates.map((c, i) => `### Finding ${i + 1}: "${c.finding.title}" at ${c.finding.file}:${c.finding.line} [${c.finding.severity}]\n\nNew code at that location:\n\`\`\`\n${c.hunkContent}\n\`\`\``).join('\n\n');
-    try {
-        const response = await client.sendMessage('You are checking if code review findings were addressed by new code changes. For each finding, respond with a JSON array where each element is: { "index": <number>, "addressed": true/false, "reason": "<brief reason>" }. Only mark as addressed if the code change ACTUALLY fixes the issue — not just cosmetic changes near the same lines. Respond with ONLY the JSON array.', prompt);
-        let jsonText = response.content.trim();
-        if (jsonText.startsWith('```')) {
-            jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-        }
-        const results = JSON.parse(jsonText);
-        for (const result of results) {
-            if (result.addressed && result.index >= 0 && result.index < candidates.length) {
-                const candidate = candidates[result.index];
-                if (candidate.finding.threadId) {
-                    try {
-                        await octokit.graphql(`
-              mutation($threadId: ID!) {
-                resolveReviewThread(input: { threadId: $threadId }) {
-                  thread { isResolved }
-                }
-              }
-            `, { threadId: candidate.finding.threadId });
-                        resolvedCount++;
-                        core.info(`Auto-resolved: "${candidate.finding.title}" — ${result.reason}`);
-                    }
-                    catch (error) {
-                        core.debug(`Failed to resolve thread: ${error}`);
-                    }
-                }
-            }
-        }
-    }
-    catch (error) {
-        core.warning(`Failed to validate addressed findings: ${error}`);
-    }
-    return resolvedCount;
-}
 async function llmDeduplicateFindings(findings, previousFindings, client) {
     const dismissed = previousFindings.filter(f => f.status === 'resolved');
     if (findings.length === 0 || dismissed.length === 0) {
         return { unique: findings, duplicates: [] };
     }
-    const sanitize = (s) => s.replace(/[\r\n]/g, ' ').replace(/`{3,}/g, '').replace(/"/g, '\\"');
+    // Uses the module-level sanitize() function
     const dismissedList = dismissed.map((f, i) => `${i + 1}. "${sanitize(f.title)}" (${sanitize(f.file)}:${f.line})`).join('\n');
     const newList = findings.map((f, i) => `${i + 1}. "${sanitize(f.title)}" (${sanitize(f.file)}:${f.line})`).join('\n');
     try {
@@ -40373,12 +40515,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AGENT_POOL = exports.HIGH_CONF_SUGGESTION_THRESHOLD = void 0;
+exports.TRIVIAL_VERIFIER_AGENT = exports.AGENT_POOL = exports.PLANNER_TIMEOUT_MS = exports.HIGH_CONF_SUGGESTION_THRESHOLD = void 0;
 exports.selectTeam = selectTeam;
 exports.shuffleDiffFiles = shuffleDiffFiles;
 exports.rebuildRawDiff = rebuildRawDiff;
 exports.findingsMatch = findingsMatch;
 exports.intersectFindings = intersectFindings;
+exports.runPlanner = runPlanner;
 exports.runReview = runReview;
 exports.buildReviewerSystemPrompt = buildReviewerSystemPrompt;
 exports.buildReviewerUserMessage = buildReviewerUserMessage;
@@ -40392,6 +40535,10 @@ const judge_1 = __nccwpck_require__(6436);
 const memory_1 = __nccwpck_require__(8820);
 const json_1 = __nccwpck_require__(8301);
 exports.HIGH_CONF_SUGGESTION_THRESHOLD = 1;
+exports.PLANNER_TIMEOUT_MS = 30_000;
+// Standard reviewer pool used for teamSize >= 3. TRIVIAL_VERIFIER_AGENT is
+// intentionally excluded — it is only active for the teamSize=1 path and does
+// not participate in scoring, focusAreas validation, or planner prompts.
 exports.AGENT_POOL = Object.freeze([
     {
         name: 'Security & Safety',
@@ -40423,26 +40570,48 @@ exports.AGENT_POOL = Object.freeze([
     },
 ]);
 const CORE_AGENTS = Object.freeze([0, 1, 2]);
-function selectTeam(diff, config, customReviewers) {
+exports.TRIVIAL_VERIFIER_AGENT = Object.freeze({
+    name: 'Trivial Change Verifier',
+    focus: 'Review this trivial change on two fronts: (1) check the actual content for issues appropriate to the change type — typos, stale references, broken markdown/links, incomplete renames; (2) verify the change is actually trivial as classified and flag any hidden behavior change, security implication, broken invariant, or missing test that would contradict that assessment.',
+});
+function selectTeam(diff, config, customReviewers, teamSizeOverride) {
     const lineCount = diff.totalAdditions + diff.totalDeletions;
+    let teamSize;
     let level;
-    const configLevel = config.review_level;
-    if (configLevel === 'auto' || !['small', 'medium', 'large'].includes(configLevel)) {
-        if (configLevel !== 'auto') {
-            core.warning(`Unrecognized review_level "${configLevel}", using auto`);
+    if (teamSizeOverride === 1) {
+        if (customReviewers && customReviewers.length > 0) {
+            core.info(`teamSize=1: skipping custom reviewers [${customReviewers.map(r => r.name).join(', ')}]`);
         }
-        const thresholds = config.review_thresholds || { small: 200, medium: 1000 };
-        if (lineCount < thresholds.small)
+        return { level: 'small', agents: [exports.TRIVIAL_VERIFIER_AGENT], lineCount };
+    }
+    if (teamSizeOverride) {
+        teamSize = teamSizeOverride;
+        if (teamSize <= 3)
             level = 'small';
-        else if (lineCount < thresholds.medium)
+        else if (teamSize <= 5)
             level = 'medium';
         else
             level = 'large';
     }
     else {
-        level = configLevel;
+        const configLevel = config.review_level;
+        if (configLevel === 'auto' || !['small', 'medium', 'large'].includes(configLevel)) {
+            if (configLevel !== 'auto') {
+                core.warning(`Unrecognized review_level "${configLevel}", using auto`);
+            }
+            const thresholds = config.review_thresholds || { small: 200, medium: 1000 };
+            if (lineCount < thresholds.small)
+                level = 'small';
+            else if (lineCount < thresholds.medium)
+                level = 'medium';
+            else
+                level = 'large';
+        }
+        else {
+            level = configLevel;
+        }
+        teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
     }
-    const teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
     const pool = [...exports.AGENT_POOL];
     for (const custom of (customReviewers || [])) {
         if (!pool.some(p => p.name === custom.name)) {
@@ -40534,14 +40703,128 @@ function intersectFindings(passes, threshold) {
         return count >= threshold;
     });
 }
-async function runReview(clients, config, diff, rawDiff, repoContext, memory, fileContents, prContext, linkedIssues, onProgress) {
+function buildPlannerSummary(diff, prContext) {
+    let summary = '';
+    if (prContext) {
+        summary += `PR: ${prContext.title}`;
+        if (prContext.baseBranch)
+            summary += ` (${prContext.baseBranch})`;
+        summary += '\n';
+    }
+    summary += `\nFiles changed (${diff.totalAdditions}+ ${diff.totalDeletions}-):\n`;
+    for (let i = 0; i < diff.files.length; i++) {
+        const file = diff.files[i];
+        const additions = file.hunks.reduce((sum, h) => sum + h.content.split('\n').filter(l => l.startsWith('+')).length, 0);
+        const deletions = file.hunks.reduce((sum, h) => sum + h.content.split('\n').filter(l => l.startsWith('-')).length, 0);
+        summary += `- ${file.path} (${file.changeType}, +${additions} -${deletions})\n`;
+        if (summary.length > 1800) {
+            summary += `... and ${diff.files.length - i - 1} more files\n`;
+            break;
+        }
+    }
+    return summary.slice(0, 2000);
+}
+const PLANNER_SYSTEM_PROMPT = `You are a code review planning assistant. Analyze this PR and decide how to review it.
+
+Decide:
+1. teamSize: 1, 3, 5, or 7 reviewer agents (odd numbers for majority voting).
+   - 1: unambiguously trivial changes only, where a single sanity-check reviewer is sufficient. Use sparingly. Qualifies when the change cannot affect runtime behavior in any non-obvious way: README/docs edits, comment-only changes, .gitignore/CHANGELOG additions, pure identifier renames with no behavior change. Does NOT qualify if there is any logic change (even a few lines), any auth/crypto/security-adjacent edit, or anything where "subtle bug" is a realistic failure mode. When in doubt, pick 3.
+   - 3: simple changes — small bug fixes, config tweaks, straightforward refactors
+   - 5: typical features, moderate refactors, multi-file changes
+   - 7: security-sensitive, complex architectural changes, crypto, auth
+2. reviewerEffort: "low", "medium", or "high" — how much effort each reviewer agent should spend.
+   - low: trivial changes, obvious intent
+   - medium: standard features and refactors
+   - high: complex logic, security-sensitive, subtle edge cases
+3. judgeEffort: "low", "medium", or "high" — how much effort the judge should spend evaluating findings.
+   - low: few expected findings, straightforward changes
+   - medium: moderate findings expected
+   - high: many findings expected, nuanced severity decisions
+4. prType: one of "feature", "bugfix", "refactor", "docs", "test", "chore", "rename"
+
+Respond with ONLY a JSON object (no markdown fences):
+{
+  "teamSize": 5,
+  "reviewerEffort": "medium",
+  "judgeEffort": "medium",
+  "prType": "feature"
+}`;
+const VALID_TEAM_SIZES = new Set([1, 3, 5, 7]);
+const VALID_EFFORTS = new Set(['low', 'medium', 'high']);
+const VALID_PR_TYPES = new Set(['feature', 'bugfix', 'refactor', 'docs', 'test', 'chore', 'rename']);
+async function runPlanner(client, diff, prContext) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Planner timed out')), exports.PLANNER_TIMEOUT_MS);
+    });
+    try {
+        const userMessage = buildPlannerSummary(diff, prContext);
+        const response = await Promise.race([
+            client.sendMessage(PLANNER_SYSTEM_PROMPT, userMessage, { effort: 'low' }),
+            timeoutPromise,
+        ]);
+        clearTimeout(timeoutId);
+        const jsonText = (0, json_1.extractJSON)(response.content);
+        const parsed = JSON.parse(jsonText);
+        const teamSize = parsed.teamSize;
+        if (!VALID_TEAM_SIZES.has(teamSize)) {
+            core.warning(`Planner returned invalid teamSize ${teamSize} — falling back to heuristic`);
+            return null;
+        }
+        const reviewerEffort = parsed.reviewerEffort;
+        const judgeEffort = parsed.judgeEffort;
+        if (!VALID_EFFORTS.has(reviewerEffort) || !VALID_EFFORTS.has(judgeEffort)) {
+            core.warning('Planner returned invalid effort values — falling back to heuristic');
+            return null;
+        }
+        const prTypeRaw = typeof parsed.prType === 'string' ? parsed.prType : 'unknown';
+        const prType = VALID_PR_TYPES.has(prTypeRaw) ? prTypeRaw : 'unknown';
+        return { teamSize, reviewerEffort, judgeEffort, prType };
+    }
+    catch (error) {
+        clearTimeout(timeoutId);
+        core.warning(`Planner failed: ${error} — falling back to heuristic team selection`);
+        return null;
+    }
+}
+function heuristicFallback(diff, config) {
     const team = selectTeam(diff, config, config.reviewers);
     core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
+    return team;
+}
+async function runReview(clients, config, diff, rawDiff, repoContext, memory, fileContents, prContext, linkedIssues, onProgress, isFollowUp, openThreads) {
+    let team;
+    let plannerResult = null;
+    if (clients.planner && config.review_level === 'auto') {
+        if (onProgress) {
+            onProgress({ phase: 'planning', rawFindingCount: 0 });
+        }
+        plannerResult = await runPlanner(clients.planner, diff, prContext);
+        if (plannerResult) {
+            team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize);
+            core.info(`Planner: ${plannerResult.teamSize} agents, reviewer: ${plannerResult.reviewerEffort}, judge: ${plannerResult.judgeEffort} (${plannerResult.prType})`);
+            if (plannerResult.teamSize === 1) {
+                const totalLines = diff.totalAdditions + diff.totalDeletions;
+                core.info(`teamSize=1 decision: prType=${plannerResult.prType}, lines=${totalLines}, files=${diff.files.length}`);
+            }
+            if (onProgress) {
+                onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult });
+            }
+        }
+        else {
+            team = heuristicFallback(diff, config);
+        }
+    }
+    else {
+        team = heuristicFallback(diff, config);
+    }
     const memoryContext = memory ? (0, memory_1.buildMemoryContext)(memory) : '';
+    const reviewerEffort = plannerResult?.reviewerEffort;
+    const judgeEffort = plannerResult?.judgeEffort ?? 'high';
     const passes = config.review_passes ?? 1;
     const multiPass = passes > 1;
     const allFindings = [];
-    let allAgentsFailed = true;
+    const failedAgents = [];
     let completedCount = 0;
     let progressFindingCount = 0;
     if (multiPass) {
@@ -40551,7 +40834,7 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
             const passResults = await Promise.allSettled(Array.from({ length: passes }, () => {
                 const shuffledDiff = shuffleDiffFiles(diff);
                 const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
-                return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
+                return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort);
             }));
             const passFindings = [];
             for (const result of passResults) {
@@ -40564,7 +40847,6 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
             }
             completedCount++;
             if (passFindings.length > 0) {
-                allAgentsFailed = false;
                 const threshold = Math.ceil(passFindings.length / 2);
                 const consistent = intersectFindings(passFindings, threshold);
                 const totalRaw = passFindings.reduce((sum, p) => sum + p.length, 0);
@@ -40584,6 +40866,7 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
                 }
             }
             else {
+                failedAgents.push(agent.name);
                 core.warning(`${agent.name}: all passes failed`);
                 if (onProgress) {
                     onProgress({
@@ -40597,6 +40880,7 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
                         totalAgents: team.agents.length,
                     });
                 }
+                break;
             }
         }
     }
@@ -40604,7 +40888,7 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
         core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
         const agentPromises = team.agents.map(agent => {
             const startTime = Date.now();
-            return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues)
+            return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort)
                 .then(findings => {
                 completedCount++;
                 progressFindingCount += findings.length;
@@ -40643,22 +40927,26 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
         for (let i = 0; i < agentResults.length; i++) {
             const result = agentResults[i];
             if (result.status === 'fulfilled') {
-                allAgentsFailed = false;
                 allFindings.push(...result.value);
                 core.info(`${team.agents[i].name}: ${result.value.length} findings`);
             }
             else {
+                failedAgents.push(team.agents[i].name);
                 core.warning(`${team.agents[i].name} failed: ${result.reason}`);
             }
         }
     }
-    if (allFindings.length === 0 && allAgentsFailed) {
+    if (failedAgents.length > 0) {
+        const summary = failedAgents.length === team.agents.length
+            ? 'Review could not be completed — all reviewer agents failed.'
+            : `Review incomplete — ${failedAgents.join(', ')} failed. Retry with @manki review.`;
         return {
             verdict: 'COMMENT',
-            summary: 'Review could not be completed — all reviewer agents failed.',
+            summary,
             findings: [],
             highlights: [],
             reviewComplete: false,
+            failedAgents,
         };
     }
     if (onProgress) {
@@ -40684,32 +40972,38 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
     let finalFindings;
     let allJudgedFindings;
     let judgeSummary = 'Review complete.';
-    if (findingsForJudge.length === 0) {
-        finalFindings = [];
+    let judgeResolveThreads;
+    try {
+        core.info(`Running judge on ${findingsForJudge.length} findings...`);
+        const judgeInput = {
+            findings: findingsForJudge,
+            diff,
+            rawDiff,
+            memory: memory ?? undefined,
+            repoContext,
+            prContext,
+            linkedIssues,
+            agentCount: team.agents.length,
+            isFollowUp,
+            openThreads,
+            effort: judgeEffort,
+        };
+        const judgeResult = await (0, judge_1.runJudgeAgent)(clients.judge, config, judgeInput);
+        judgeSummary = judgeResult.summary;
+        allJudgedFindings = judgeResult.findings;
+        judgeResolveThreads = judgeResult.resolveThreads;
+        finalFindings = judgeResult.findings.filter(f => f.severity !== 'ignore');
+        core.info(`Judge complete: ${finalFindings.length} findings survived (${judgeResult.findings.length - finalFindings.length} ignored)`);
     }
-    else {
-        try {
-            core.info(`Running judge on ${findingsForJudge.length} findings...`);
-            const judgeInput = {
-                findings: findingsForJudge,
-                diff,
-                rawDiff,
-                memory: memory ?? undefined,
-                repoContext,
-                prContext,
-                linkedIssues,
-                agentCount: team.agents.length,
-            };
-            const judgeResult = await (0, judge_1.runJudgeAgent)(clients.judge, config, judgeInput);
-            judgeSummary = judgeResult.summary;
-            allJudgedFindings = judgeResult.findings;
-            finalFindings = judgeResult.findings.filter(f => f.severity !== 'ignore');
-            core.info(`Judge complete: ${finalFindings.length} findings survived (${judgeResult.findings.length - finalFindings.length} ignored)`);
-        }
-        catch (error) {
-            core.warning(`Judge failed: ${error}. Returning reviewer findings without judge evaluation.`);
-            finalFindings = allFindings;
-        }
+    catch (error) {
+        core.warning(`Judge failed: ${error}`);
+        return {
+            verdict: 'COMMENT',
+            summary: 'Review incomplete — judge failed. Retry with @manki review.',
+            findings: [],
+            highlights: [],
+            reviewComplete: false,
+        };
     }
     const verdict = determineVerdict(finalFindings);
     const summary = judgeSummary;
@@ -40733,18 +41027,22 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
         rawFindingCount: allFindings.length,
         agentNames: team.agents.map(a => a.name),
         allJudgedFindings,
+        resolveThreads: judgeResolveThreads,
+        plannerResult: plannerResult ?? undefined,
     };
 }
-async function runReviewerAgent(client, config, reviewer, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues) {
+async function runReviewerAgent(client, config, reviewer, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, effort) {
     const systemPrompt = buildReviewerSystemPrompt(reviewer, config);
     const userMessage = buildReviewerUserMessage(rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
-    const response = await client.sendMessage(systemPrompt, userMessage);
+    const options = effort ? { effort } : undefined;
+    const response = await client.sendMessage(systemPrompt, userMessage, options);
     return parseFindings(response.content, reviewer.name);
 }
 function buildReviewerSystemPrompt(reviewer, config) {
     let prompt = `You are a code reviewer specializing in: ${reviewer.focus}
 
-Your role: ${reviewer.name}
+Your role: ${reviewer.name}`;
+    prompt += `
 
 Review the provided pull request diff carefully from your specialist perspective. Return your findings as a JSON array.
 
@@ -40940,7 +41238,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BOT_MARKER = void 0;
-exports.areAllRequiredResolved = areAllRequiredResolved;
+exports.areAllFindingsResolved = areAllFindingsResolved;
 exports.checkAndAutoApprove = checkAndAutoApprove;
 exports.fetchBotReviewThreads = fetchBotReviewThreads;
 exports.resolveStaleThreads = resolveStaleThreads;
@@ -40998,24 +41296,28 @@ async function fetchBotReviewThreads(octokit, owner, repo, prNumber) {
     });
 }
 /**
- * Check if all required threads are resolved.
+ * Check if all bot review threads (required, suggestion, nit) are resolved.
+ * Auto-approve should only fire when every finding is resolved, because
+ * CHANGES_REQUESTED can be caused by high-confidence suggestions too.
  */
-function areAllRequiredResolved(threads) {
-    const requiredThreads = threads.filter(t => t.isRequired);
-    if (requiredThreads.length === 0)
-        return true;
-    return requiredThreads.every(t => t.isResolved);
+function areAllFindingsResolved(threads) {
+    return threads.every(t => t.isResolved);
 }
 /**
- * Post an approval review if all required issues are resolved.
+ * Post an approval review if all findings are resolved.
  */
 async function checkAndAutoApprove(octokit, owner, repo, prNumber) {
+    const remaining = await (0, github_1.isReviewInProgress)(octokit, owner, repo, prNumber);
+    if (remaining !== false) {
+        core.info(`Skipping auto-approve — review in progress (${remaining}m remaining)`);
+        return false;
+    }
     const threads = await fetchBotReviewThreads(octokit, owner, repo, prNumber);
-    const requiredCount = threads.filter(t => t.isRequired).length;
-    const resolvedRequiredCount = threads.filter(t => t.isRequired && t.isResolved).length;
-    core.info(`Required threads: ${resolvedRequiredCount}/${requiredCount} resolved`);
-    if (!areAllRequiredResolved(threads)) {
-        core.info('Not all required issues resolved — skipping auto-approve');
+    const totalCount = threads.length;
+    const resolvedCount = threads.filter(t => t.isResolved).length;
+    core.info(`Review threads: ${resolvedCount}/${totalCount} resolved`);
+    if (!areAllFindingsResolved(threads)) {
+        core.info('Not all findings resolved — skipping auto-approve');
         return false;
     }
     const { data: reviews } = await octokit.rest.pulls.listReviews({
@@ -41040,7 +41342,7 @@ async function checkAndAutoApprove(octokit, owner, repo, prNumber) {
     catch (error) {
         core.warning(`Failed to dismiss previous reviews during auto-approve: ${error}`);
     }
-    core.info('All required issues resolved — auto-approving');
+    core.info('All findings resolved — auto-approving');
     const body = BOT_MARKER;
     try {
         await octokit.rest.pulls.createReview({
