@@ -36636,7 +36636,14 @@ const CANCELLED_MARKER = '<!-- manki-review-cancelled -->';
 exports.CANCELLED_MARKER = CANCELLED_MARKER;
 const VERSION_MARKER_PREFIX = '<!-- manki-version:';
 exports.VERSION_MARKER_PREFIX = VERSION_MARKER_PREFIX;
-const MANKI_VERSION = (0, module_1.createRequire)(__filename)('../package.json').version;
+const MANKI_VERSION = (() => {
+    try {
+        return (0, module_1.createRequire)(__filename)('../package.json').version || 'unknown';
+    }
+    catch {
+        return 'unknown';
+    }
+})();
 exports.MANKI_VERSION = MANKI_VERSION;
 const VERSION_MARKER = `${VERSION_MARKER_PREFIX} ${MANKI_VERSION} -->`;
 const BOT_MARKERS = `${BOT_MARKER}\n${VERSION_MARKER}`;

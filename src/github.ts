@@ -16,7 +16,13 @@ const RUN_ID_MARKER_PREFIX = '<!-- manki-run-id:';
 const CANCELLED_MARKER = '<!-- manki-review-cancelled -->';
 const VERSION_MARKER_PREFIX = '<!-- manki-version:';
 
-const MANKI_VERSION: string = (createRequire(__filename)('../package.json') as { version: string }).version;
+const MANKI_VERSION: string = (() => {
+  try {
+    return (createRequire(__filename)('../package.json') as { version: string }).version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
 const VERSION_MARKER = `${VERSION_MARKER_PREFIX} ${MANKI_VERSION} -->`;
 const BOT_MARKERS = `${BOT_MARKER}\n${VERSION_MARKER}`;
 

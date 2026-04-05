@@ -186,6 +186,12 @@ describe('BOT_MARKER', () => {
     expect(extractVersionFromBody('no marker here')).toBeNull();
     expect(extractVersionFromBody(null)).toBeNull();
   });
+
+  it('MANKI_VERSION is a non-empty string resembling semver', () => {
+    expect(typeof MANKI_VERSION).toBe('string');
+    expect(MANKI_VERSION.length).toBeGreaterThan(0);
+    expect(MANKI_VERSION).toMatch(/^(\d+\.\d+\.\d+|unknown)/);
+  });
 });
 
 describe('buildNitIssueBody', () => {
