@@ -3,8 +3,8 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ba3b0"/>
     </marker>
-    <marker id="arrow-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="5" markerHeight="5" orient="auto">
-      <path d="M 0 0 L 10 0 L 5 10 z" fill="#6b7280"/>
+    <marker id="arrow-down" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/>
     </marker>
   </defs>
 
