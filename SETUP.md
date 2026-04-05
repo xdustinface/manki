@@ -164,6 +164,32 @@ jobs:
           # memory_repo_token: ${{ secrets.REVIEW_MEMORY_TOKEN }}  # Optional: for review memory
 ```
 
+### Action inputs
+
+| Input | Required | Default | Purpose |
+|-------|----------|---------|---------|
+| `claude_code_oauth_token` | One of | -- | Claude Max OAuth token |
+| `anthropic_api_key` | One of | -- | Anthropic API key (alternative to OAuth) |
+| `github_token` | No* | -- | GitHub token for posting reviews (not required when using GitHub App auth) |
+| `config_path` | No | `.manki.yml` | Path to the Manki config file |
+| `memory_repo_token` | No | -- | PAT with access to the review memory repository |
+| `github_app_id` | No | -- | GitHub App ID for custom bot identity |
+| `github_app_private_key` | No | -- | GitHub App private key (PEM) for generating installation tokens |
+| `manki_token_url` | No | `https://manki.dustinface.me/token` | Token service URL for GitHub App identity |
+
+\* Required unless GitHub App auth is configured.
+
+### Action outputs
+
+| Output | Description |
+|--------|-------------|
+| `review_id` | The GitHub review ID that was posted |
+| `verdict` | Review verdict: `APPROVE`, `COMMENT`, or `REQUEST_CHANGES` |
+| `findings_count` | Total number of findings |
+| `findings_json` | JSON array of all findings (for downstream processing) |
+| `severity_counts` | JSON object with severity counts: `{required, suggestion, nit, ignore}` |
+| `judge_model` | Model used for the judge agent |
+
 ### Event triggers explained
 
 | Event | Purpose |
@@ -184,21 +210,20 @@ The `concurrency` block ensures only one Manki run is active per PR at a time. I
 Create `.manki.yml` in your repository root:
 
 ```yaml
-# Claude model (default: claude-opus-4-6)
-model: claude-opus-4-6
-
 # Auto-review on PR open/update (default: true)
 auto_review: true
 
 # Auto-approve when all blocking issues are resolved (default: true)
 auto_approve: true
 
-# File filtering
+# File filtering (defaults: ["*.lock", "dist/**", "*.generated.*"])
 exclude_paths:
   - "*.lock"
+  - "dist/**"
+  - "*.generated.*"
 
-# Maximum diff size before skipping (default: 10000 lines)
-max_diff_lines: 10000
+# Maximum diff size before skipping (default: 50000 lines)
+max_diff_lines: 50000
 
 # Team sizing: auto (default), small (3 agents), medium (5), large (7)
 review_level: auto
@@ -206,13 +231,25 @@ review_thresholds:
   small: 200   # diffs under this many lines get a small team
   medium: 1000  # diffs under this many lines get a medium team
 
-# Per-stage model selection (optional -- falls back to `model` if not set)
+# Per-stage model selection
 models:
   reviewer: claude-sonnet-4-6    # fast, parallel reviewers
   judge: claude-opus-4-6         # precise, single judge
+  dedup: claude-haiku-4-5        # fast LLM dedup against prior findings
+  planner: claude-haiku-4-5      # fast pre-review planning pass
+
+# Planner stage (default: enabled). When review_level is "auto", a fast
+# pre-review pass chooses team size (1/3/5/7), reviewer/judge effort, and
+# PR type. teamSize=1 routes trivial changes to a Trivial Change Verifier.
+planner:
+  enabled: true
 
 # Where to post nit findings: 'issues' (separate GitHub issue) or 'comments' (inline PR comments)
 nit_handling: issues
+
+# Multi-pass verification (integer 1-5, default: 1). Runs each reviewer N
+# times with shuffled file ordering; only consistent findings are kept.
+# review_passes: 1
 
 # Additional context for reviewers
 instructions: |
@@ -233,11 +270,13 @@ See [`.manki.yml.example`](.manki.yml.example) for the full reference with defau
 
 ### Review pipeline
 
-Manki reviews run in three stages:
+Manki reviews run in these stages:
 
-1. **Reviewer agents** -- A team of specialist agents (security, architecture, correctness, etc.) review the diff in parallel. Each produces raw findings.
-2. **Judge agent** -- A single agent evaluates all reviewer findings for accuracy, actionability, and severity. It filters out noise, merges duplicates, and assigns a 4-tier severity to each surviving finding.
-3. **Recap** -- Deduplicated findings are posted as inline PR comments and a summary review.
+1. **Planner** (pre-review, `review_level: auto` only) -- A fast Haiku pass analyzes the diff and picks team size (1/3/5/7), reviewer/judge effort, and PR type. teamSize=1 routes trivial changes (docs, renames, comment-only edits) to a single **Trivial Change Verifier** agent. Falls back to the heuristic team selector if the planner fails or is disabled.
+2. **Reviewer agents** -- The chosen team of specialist agents (security, architecture, correctness, etc.) review the diff in parallel. Each produces raw findings.
+3. **Judge agent** -- A single agent evaluates all reviewer findings for accuracy, actionability, and severity. It filters out noise, merges duplicates, and assigns a 4-tier severity to each surviving finding.
+4. **Dedup** (post-judge, follow-up runs) -- A two-tier dedup pass filters findings already posted on the PR. A static matcher handles exact/near-exact matches, then an LLM dedup pass (Haiku) catches semantic duplicates.
+5. **Recap** -- Surviving findings are posted as inline PR comments with a summary review.
 
 ### Severity tiers
 
