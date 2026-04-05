@@ -139,6 +139,7 @@ permissions:
   pull-requests: write
   issues: write
   id-token: write
+  actions: read
 
 jobs:
   review:

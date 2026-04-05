@@ -2132,53 +2132,103 @@ describe('getSeverityEmoji', () => {
 describe('isReviewInProgress', () => {
   type Octokit = ReturnType<typeof import('@actions/github').getOctokit>;
 
-  function makeMockOctokit(comments: Array<{ body: string; updated_at: string; user: { type: string } }>) {
-    return {
+  function makeRunIdBody(runId: number, text = '**Manki** — Review in progress'): string {
+    return `${BOT_MARKER}\n<!-- manki-run-id:${runId} -->\n${text}`;
+  }
+
+  interface MockOpts {
+    comments: Array<{ id?: number; body: string; user: { type: string } }>;
+    workflowRun?: { status: string | null; conclusion: string | null };
+    workflowRunError?: Error;
+  }
+
+  function makeMockOctokit(opts: MockOpts) {
+    const getWorkflowRun = opts.workflowRunError
+      ? jest.fn().mockRejectedValue(opts.workflowRunError)
+      : jest.fn().mockResolvedValue({ data: opts.workflowRun ?? { status: 'in_progress', conclusion: null } });
+    const updateComment = jest.fn().mockResolvedValue({});
+    const octokit = {
       rest: {
         issues: {
-          listComments: jest.fn().mockResolvedValue({ data: comments }),
+          listComments: jest.fn().mockResolvedValue({
+            data: opts.comments.map((c, i) => ({ id: c.id ?? i + 1, body: c.body, user: c.user })),
+          }),
+          updateComment,
+        },
+        actions: {
+          getWorkflowRun,
         },
       },
     } as unknown as Octokit;
+    return { octokit, getWorkflowRun, updateComment };
   }
 
-  it('returns remaining minutes when progress comment exists without complete marker', async () => {
-    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
-    const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Manki** — Review in progress`, updated_at: recentDate, user: { type: 'Bot' } },
-    ]);
+  it('returns true when embedded run_id is still in_progress per Actions API', async () => {
+    const { octokit, getWorkflowRun } = makeMockOctokit({
+      comments: [{ body: makeRunIdBody(12345), user: { type: 'Bot' } }],
+      workflowRun: { status: 'in_progress', conclusion: null },
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
-    expect(result).toBe(8);
+    expect(result).toBe(true);
+    expect(getWorkflowRun).toHaveBeenCalledWith({ owner: 'owner', repo: 'repo', run_id: 12345 });
+  });
+
+  it('returns false and marks comment as cancelled when run is completed (cancelled)', async () => {
+    const { octokit, updateComment } = makeMockOctokit({
+      comments: [{ id: 77, body: makeRunIdBody(99), user: { type: 'Bot' } }],
+      workflowRun: { status: 'completed', conclusion: 'cancelled' },
+    });
+
+    const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({
+      comment_id: 77,
+      body: expect.stringContaining('Review cancelled (superseded by newer run)'),
+    }));
+  });
+
+  it('returns false and marks comment as cancelled when run failed', async () => {
+    const { octokit, updateComment } = makeMockOctokit({
+      comments: [{ id: 88, body: makeRunIdBody(100), user: { type: 'Bot' } }],
+      workflowRun: { status: 'completed', conclusion: 'failure' },
+    });
+
+    const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(updateComment).toHaveBeenCalled();
   });
 
   it('returns false when progress comment contains complete marker', async () => {
-    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
-    const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Manki** — Review complete\n${REVIEW_COMPLETE_MARKER}`, updated_at: recentDate, user: { type: 'Bot' } },
-    ]);
+    const { octokit, getWorkflowRun } = makeMockOctokit({
+      comments: [{ body: `${BOT_MARKER}\n**Manki** — Review complete\n${REVIEW_COMPLETE_MARKER}`, user: { type: 'Bot' } }],
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
     expect(result).toBe(false);
+    expect(getWorkflowRun).not.toHaveBeenCalled();
   });
 
-  it('returns false when progress comment is stale (>10 min)', async () => {
-    const staleDate = new Date(Date.now() - 15 * 60000).toISOString();
-    const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Manki** — Review in progress`, updated_at: staleDate, user: { type: 'Bot' } },
-    ]);
+  it('returns false and marks legacy comment (no run_id marker) as cancelled', async () => {
+    const { octokit, updateComment, getWorkflowRun } = makeMockOctokit({
+      comments: [{ id: 55, body: `${BOT_MARKER}\n**Manki** — Review in progress`, user: { type: 'Bot' } }],
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
     expect(result).toBe(false);
+    expect(getWorkflowRun).not.toHaveBeenCalled();
+    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({ comment_id: 55 }));
   });
 
   it('returns false when no progress comment exists', async () => {
-    const octokit = makeMockOctokit([
-      { body: 'Some random comment', updated_at: new Date().toISOString(), user: { type: 'User' } },
-    ]);
+    const { octokit } = makeMockOctokit({
+      comments: [{ body: 'Some random comment', user: { type: 'User' } }],
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
@@ -2186,10 +2236,9 @@ describe('isReviewInProgress', () => {
   });
 
   it('returns false when progress comment is from a non-bot user', async () => {
-    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
-    const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Manki** — Review in progress`, updated_at: recentDate, user: { type: 'User' } },
-    ]);
+    const { octokit } = makeMockOctokit({
+      comments: [{ body: makeRunIdBody(1), user: { type: 'User' } }],
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
@@ -2197,17 +2246,16 @@ describe('isReviewInProgress', () => {
   });
 
   it('returns false when comment is a skip comment containing FORCE_REVIEW_MARKER', async () => {
-    const recentDate = new Date(Date.now() - 2 * 60000).toISOString();
-    const octokit = makeMockOctokit([
-      { body: `${BOT_MARKER}\n**Review skipped** — a review is currently in progress.\n\n- [ ] Force review\n\n${FORCE_REVIEW_MARKER}`, updated_at: recentDate, user: { type: 'Bot' } },
-    ]);
+    const { octokit } = makeMockOctokit({
+      comments: [{ body: `${BOT_MARKER}\n**Review skipped**\n\n${FORCE_REVIEW_MARKER}`, user: { type: 'Bot' } }],
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 
     expect(result).toBe(false);
   });
 
-  it('returns false when the API call fails', async () => {
+  it('returns false when the listComments API call fails', async () => {
     const octokit = {
       rest: {
         issues: {
@@ -2215,6 +2263,17 @@ describe('isReviewInProgress', () => {
         },
       },
     } as unknown as Octokit;
+
+    const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+  });
+
+  it('returns false when getWorkflowRun fails (API unreachable)', async () => {
+    const { octokit } = makeMockOctokit({
+      comments: [{ body: makeRunIdBody(123), user: { type: 'Bot' } }],
+      workflowRunError: new Error('403 forbidden'),
+    });
 
     const result = await isReviewInProgress(octokit, 'owner', 'repo', 1);
 

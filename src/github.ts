@@ -10,6 +10,22 @@ const BOT_LOGIN = 'manki-review[bot]';
 const BOT_MARKER = '<!-- manki-bot -->';
 const REVIEW_COMPLETE_MARKER = '<!-- manki-review-complete -->';
 const FORCE_REVIEW_MARKER = '<!-- manki-force-review -->';
+const RUN_ID_MARKER_PREFIX = '<!-- manki-run-id:';
+const CANCELLED_MARKER = '<!-- manki-review-cancelled -->';
+
+const RUN_ID_MARKER_REGEX = /<!-- manki-run-id:(\d+) -->/;
+
+function buildRunIdMarker(runId: number | string): string {
+  return `${RUN_ID_MARKER_PREFIX}${runId} -->`;
+}
+
+function extractRunIdFromBody(body: string | null | undefined): number | null {
+  if (!body) return null;
+  const match = body.match(RUN_ID_MARKER_REGEX);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isFinite(id) ? id : null;
+}
 
 // Covers all standard HTML elements including `base` (can inject a base URL that hijacks relative links)
 const HTML_TAGS = 'a|abbr|address|article|aside|audio|b|base|bdi|bdo|blockquote|body|br|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|div|dl|dt|em|embed|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|i|iframe|img|input|ins|kbd|label|legend|li|link|main|map|mark|math|meta|meter|nav|noscript|object|ol|optgroup|option|output|p|param|picture|pre|progress|q|rp|rt|ruby|s|samp|script|section|select|slot|small|source|span|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|time|title|tr|track|u|ul|var|video|wbr';
@@ -230,9 +246,10 @@ export async function postProgressComment(
   prNumber: number,
   dashboard?: DashboardData,
 ): Promise<number> {
+  const runIdMarker = buildRunIdMarker(github.context.runId);
   const body = dashboard
-    ? `${BOT_MARKER}\n${buildDashboard(dashboard)}`
-    : `${BOT_MARKER}\n**Manki** — Review started`;
+    ? `${BOT_MARKER}\n${runIdMarker}\n${buildDashboard(dashboard)}`
+    : `${BOT_MARKER}\n${runIdMarker}\n**Manki** — Review started`;
 
   const { data } = await octokit.rest.issues.createComment({
     owner,
@@ -985,31 +1002,129 @@ export async function fetchSubdirClaudeMd(
 }
 
 /**
- * Check whether a review is currently in progress for a PR.
- * Returns the number of minutes remaining until timeout, or `false` if no review is active.
+ * Edit a progress comment in place to mark its run as cancelled/superseded.
+ * Preserves audit trail — the original dashboard body is kept.
  */
-async function isReviewInProgress(octokit: Octokit, owner: string, repo: string, prNumber: number): Promise<false | number> {
+async function markProgressCommentCancelled(
+  octokit: Octokit, owner: string, repo: string, commentId: number, originalBody: string,
+): Promise<void> {
+  if (originalBody.includes(CANCELLED_MARKER)) return;
+  const body = [
+    CANCELLED_MARKER,
+    '**Manki** — Review cancelled (superseded by newer run)',
+    '',
+    '<details><summary>Original progress</summary>',
+    '',
+    originalBody,
+    '',
+    '</details>',
+  ].join('\n');
+  try {
+    await octokit.rest.issues.updateComment({ owner, repo, comment_id: commentId, body });
+  } catch (error) {
+    core.warning(`Failed to mark progress comment as cancelled: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+interface ProgressComment {
+  id: number;
+  body: string;
+  runId: number | null;
+}
+
+/**
+ * Find the most recent non-complete, non-cancelled progress comment posted by the bot.
+ */
+async function findProgressComment(
+  octokit: Octokit, owner: string, repo: string, prNumber: number,
+): Promise<ProgressComment | null> {
+  const { data: comments } = await octokit.rest.issues.listComments({
+    owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
+  });
+  const match = comments.find(c =>
+    c.user?.type === 'Bot' &&
+    c.body?.includes(BOT_MARKER) &&
+    !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
+    !c.body?.includes(FORCE_REVIEW_MARKER) &&
+    !c.body?.includes(CANCELLED_MARKER)
+  );
+  if (!match || !match.body) return null;
+  return { id: match.id, body: match.body, runId: extractRunIdFromBody(match.body) };
+}
+
+/**
+ * Check whether a review is currently in progress for a PR by verifying the
+ * embedded Actions run_id via the GitHub Actions API. Zombie comments from
+ * cancelled/failed runs are marked as cancelled in-place (not deleted) so the
+ * audit trail is preserved.
+ */
+async function isReviewInProgress(octokit: Octokit, owner: string, repo: string, prNumber: number): Promise<boolean> {
+  let progress: ProgressComment | null;
+  try {
+    progress = await findProgressComment(octokit, owner, repo, prNumber);
+  } catch {
+    return false;
+  }
+  if (!progress) return false;
+
+  // Legacy comments without a run_id marker predate this check — treat as stale.
+  if (progress.runId === null) {
+    core.info('Progress comment has no run_id marker — treating as stale');
+    await markProgressCommentCancelled(octokit, owner, repo, progress.id, progress.body);
+    return false;
+  }
+
+  // Same run: we're re-entering our own execution, nothing to skip.
+  if (progress.runId === github.context.runId) {
+    return false;
+  }
+
+  let status: string | null | undefined;
+  let conclusion: string | null | undefined;
+  try {
+    const { data: workflowRun } = await octokit.rest.actions.getWorkflowRun({
+      owner, repo, run_id: progress.runId,
+    });
+    status = workflowRun.status;
+    conclusion = workflowRun.conclusion;
+  } catch (error) {
+    core.warning(`Failed to query Actions run ${progress.runId}: ${error instanceof Error ? error.message : error}`);
+    return false;
+  }
+
+  if (status === 'in_progress' || status === 'queued' || status === 'waiting' || status === 'pending' || status === 'requested') {
+    core.info(`Skipping — review already in progress (run ${progress.runId}, status=${status})`);
+    return true;
+  }
+
+  core.info(`Progress comment belongs to completed run ${progress.runId} (status=${status}, conclusion=${conclusion}) — marking as cancelled`);
+  await markProgressCommentCancelled(octokit, owner, repo, progress.id, progress.body);
+  return false;
+}
+
+/**
+ * Post-step cleanup: find our run's progress comment and mark it as cancelled.
+ * Invoked when GitHub Actions cancels the main step.
+ */
+async function markOwnProgressCommentCancelled(
+  octokit: Octokit, owner: string, repo: string, prNumber: number, runId: number,
+): Promise<boolean> {
   try {
     const { data: comments } = await octokit.rest.issues.listComments({
       owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
     });
-    const progressComment = comments.find(c =>
+    const target = comments.find(c =>
       c.user?.type === 'Bot' &&
       c.body?.includes(BOT_MARKER) &&
       !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
-      !c.body?.includes(FORCE_REVIEW_MARKER)
+      !c.body?.includes(CANCELLED_MARKER) &&
+      extractRunIdFromBody(c.body) === runId
     );
-    if (!progressComment) return false;
-
-    const updatedAt = new Date(progressComment.updated_at).getTime();
-    const ageMinutes = (Date.now() - updatedAt) / 60000;
-    if (ageMinutes < 10) {
-      const remaining = Math.ceil(10 - ageMinutes);
-      core.info(`Skipping — review already in progress (progress comment updated ${ageMinutes.toFixed(1)}m ago)`);
-      return remaining;
-    }
-    return false;
-  } catch {
+    if (!target || !target.body) return false;
+    await markProgressCommentCancelled(octokit, owner, repo, target.id, target.body);
+    return true;
+  } catch (error) {
+    core.warning(`Post-cleanup failed: ${error instanceof Error ? error.message : error}`);
     return false;
   }
 }
@@ -1038,4 +1153,4 @@ async function isApprovedOnCommit(octokit: Octokit, owner: string, repo: string,
   }
 }
 
-export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, isReviewInProgress, isApprovedOnCommit };
+export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, RUN_ID_MARKER_PREFIX, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, extractRunIdFromBody };
