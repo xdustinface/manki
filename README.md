@@ -38,25 +38,9 @@ Full setup guide with memory, triage, and troubleshooting: **[SETUP.md](SETUP.md
 
 Manki wakes up when a PR is opened. A fast planner (Haiku) picks the team size and effort, reviewers work in parallel, dedup drops findings that match repeats from prior reviews, and the judge evaluates and classifies what remains. Results land as inline comments plus a summary and verdict. When all blocking threads resolve, manki approves.
 
-```mermaid
-flowchart LR
-    A[Planner] --> B[Reviewers]
-    B --> C[Dedup]
-    C --> D[Judge]
-    D --> E[Review Posted]
-
-    A -.-> A1[reads diff, picks team<br/>size + effort level]
-    B -.-> B1[specialists review<br/>in parallel]
-    C -.-> C1[drops repeats from<br/>prior reviews]
-    D -.-> D1[filters noise,<br/>assigns severity]
-    E -.-> E1[inline comments +<br/>summary + verdict]
-
-    style A fill:#29362B,stroke:#3a4d3d,color:#fff
-    style B fill:#29362B,stroke:#3a4d3d,color:#fff
-    style C fill:#29362B,stroke:#3a4d3d,color:#fff
-    style D fill:#29362B,stroke:#3a4d3d,color:#fff
-    style E fill:#1a3d1f,stroke:#3a4d3d,color:#fff
-```
+<p align="center">
+  <img src="assets/pipeline.svg" alt="Manki review pipeline: Planner → Reviewers → Dedup → Judge → Review Posted" />
+</p>
 
 See [SETUP.md](SETUP.md#review-pipeline) for the full walkthrough.
 
