@@ -54,18 +54,18 @@
 
   <!-- Reviewers desc -->
   <rect x="200" y="112" width="160" height="80" rx="6" fill="#1a1d23" stroke="#3a4d3d" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="280" y="151" text-anchor="middle" fill="#9ba3b0" font-size="13">specialists review</text>
-  <text x="280" y="169" text-anchor="middle" fill="#9ba3b0" font-size="13">in parallel</text>
+  <text x="280" y="142" text-anchor="middle" fill="#9ba3b0" font-size="13">specialists review</text>
+  <text x="280" y="160" text-anchor="middle" fill="#9ba3b0" font-size="13">in parallel</text>
 
   <!-- Dedup desc -->
   <rect x="390" y="112" width="160" height="80" rx="6" fill="#1a1d23" stroke="#3a4d3d" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="470" y="151" text-anchor="middle" fill="#9ba3b0" font-size="13">drops repeats from</text>
-  <text x="470" y="169" text-anchor="middle" fill="#9ba3b0" font-size="13">prior reviews</text>
+  <text x="470" y="142" text-anchor="middle" fill="#9ba3b0" font-size="13">drops repeats from</text>
+  <text x="470" y="160" text-anchor="middle" fill="#9ba3b0" font-size="13">prior reviews</text>
 
   <!-- Judge desc -->
   <rect x="580" y="112" width="160" height="80" rx="6" fill="#1a1d23" stroke="#3a4d3d" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="660" y="151" text-anchor="middle" fill="#9ba3b0" font-size="13">filters noise,</text>
-  <text x="660" y="169" text-anchor="middle" fill="#9ba3b0" font-size="13">assigns severity</text>
+  <text x="660" y="142" text-anchor="middle" fill="#9ba3b0" font-size="13">filters noise,</text>
+  <text x="660" y="160" text-anchor="middle" fill="#9ba3b0" font-size="13">assigns severity</text>
 
   <!-- Posted desc -->
   <rect x="770" y="112" width="200" height="80" rx="6" fill="#1a1d23" stroke="#3a4d3d" stroke-width="1" stroke-dasharray="4 3"/>
