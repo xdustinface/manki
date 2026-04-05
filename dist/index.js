@@ -37947,6 +37947,7 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
         const plannerClient = config.planner?.enabled !== false
             ? new claude_1.ClaudeClient({ ...authOptions, model: plannerModel })
             : undefined;
+        const dedupClient = new claude_1.ClaudeClient({ ...authOptions, model: dedupModel });
         const rawDiff = await (0, github_1.fetchPRDiff)(octokit, owner, repo, prNumber);
         const diff = (0, diff_1.parsePRDiff)(rawDiff);
         const parseEndTime = Date.now();
@@ -38077,7 +38078,7 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                     .catch(err => core.warning(`Failed to update dashboard: ${err}`));
             }, 500);
         }
-        const result = await (0, review_1.runReview)({ reviewer: reviewerClient, judge: judgeClient, planner: plannerClient }, config, diff, rawDiff, fullContext, memory, fileContents, prContext, linkedIssues, (progress) => {
+        const result = await (0, review_1.runReview)({ reviewer: reviewerClient, judge: judgeClient, planner: plannerClient, dedup: dedupClient }, config, diff, rawDiff, fullContext, memory, fileContents, prContext, linkedIssues, (progress) => {
             if (progress.phase === 'planning') {
                 core.info('Planner analyzing PR content...');
                 if (progress.plannerResult) {
@@ -38129,7 +38130,7 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
                 (0, github_1.updateProgressDashboard)(octokit, owner, repo, progressCommentId, dashboard)
                     .catch(err => core.warning(`Failed to update dashboard: ${err}`));
             }
-        }, isFollowUp, openThreads);
+        }, isFollowUp, openThreads, recap.previousFindings);
         const judgeEndTime = Date.now();
         if (!result.reviewComplete) {
             if (dashboardFlushTimer) {
@@ -38142,21 +38143,6 @@ async function runFullReview(owner, repo, prNumber, commitSha, baseRef, prContex
             dashboard.phase = 'complete';
             await (0, github_1.updateProgressComment)(octokit, owner, repo, progressCommentId, dashboard);
             return;
-        }
-        const { unique, duplicates: staticDuplicates } = (0, recap_1.deduplicateFindings)(result.findings, recap.previousFindings, memory?.suppressions);
-        if (staticDuplicates.length > 0 || unique.length !== result.findings.length) {
-            core.info(`Deduplicated ${staticDuplicates.length} findings, ${result.findings.length - unique.length} total removed`);
-            result.findings = unique;
-            result.verdict = (0, review_1.determineVerdict)(result.findings);
-        }
-        // LLM-based dedup for findings that passed static matching
-        if (result.findings.length > 0 && recap.previousFindings.length > 0) {
-            const dedupClient = new claude_1.ClaudeClient({ ...authOptions, model: dedupModel });
-            const llmResult = await (0, recap_1.llmDeduplicateFindings)(result.findings, recap.previousFindings, dedupClient);
-            if (llmResult.duplicates.length > 0) {
-                result.findings = llmResult.unique;
-                result.verdict = (0, review_1.determineVerdict)(result.findings);
-            }
         }
         if (memory && memory.patterns.length > 0) {
             result.findings = (0, memory_1.applyEscalations)(result.findings, memory.patterns);
@@ -40722,6 +40708,7 @@ exports.titlesMatch = titlesMatch;
 const core = __importStar(__nccwpck_require__(7930));
 const judge_1 = __nccwpck_require__(6332);
 const memory_1 = __nccwpck_require__(6924);
+const recap_1 = __nccwpck_require__(5836);
 const json_1 = __nccwpck_require__(8245);
 exports.HIGH_CONF_SUGGESTION_THRESHOLD = 1;
 exports.PLANNER_TIMEOUT_MS = 30_000;
@@ -40981,7 +40968,7 @@ function heuristicFallback(diff, config) {
     core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
     return team;
 }
-async function runReview(clients, config, diff, rawDiff, repoContext, memory, fileContents, prContext, linkedIssues, onProgress, isFollowUp, openThreads) {
+async function runReview(clients, config, diff, rawDiff, repoContext, memory, fileContents, prContext, linkedIssues, onProgress, isFollowUp, openThreads, previousFindings) {
     let team;
     let plannerResult = null;
     if (clients.planner && config.review_level === 'auto') {
@@ -41149,6 +41136,24 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
         }
         findingsForJudge = kept;
     }
+    let staticDedupCount = 0;
+    let llmDedupCount = 0;
+    if (previousFindings && previousFindings.length > 0 && findingsForJudge.length > 0) {
+        const { unique, duplicates } = (0, recap_1.deduplicateFindings)(findingsForJudge, previousFindings, memory?.suppressions);
+        if (duplicates.length > 0) {
+            core.info(`Static dedup removed ${duplicates.length} findings matching dismissed ones before judge`);
+        }
+        findingsForJudge = unique;
+        staticDedupCount = duplicates.length;
+        if (clients.dedup && findingsForJudge.length > 0) {
+            const llmResult = await (0, recap_1.llmDeduplicateFindings)(findingsForJudge, previousFindings, clients.dedup);
+            if (llmResult.duplicates.length > 0) {
+                core.info(`LLM dedup removed ${llmResult.duplicates.length} findings matching dismissed ones before judge`);
+            }
+            findingsForJudge = llmResult.unique;
+            llmDedupCount = llmResult.duplicates.length;
+        }
+    }
     if (onProgress) {
         onProgress({
             phase: 'judging',
@@ -41218,6 +41223,8 @@ async function runReview(clients, config, diff, rawDiff, repoContext, memory, fi
         allJudgedFindings,
         resolveThreads: judgeResolveThreads,
         plannerResult: plannerResult ?? undefined,
+        staticDedupCount,
+        llmDedupCount,
     };
 }
 async function runReviewerAgent(client, config, reviewer, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, effort) {

@@ -27,6 +27,8 @@ export interface ReviewResult {
   resolveThreads?: Array<{ threadId: string; reason: string }>;
   plannerResult?: PlannerResult;
   failedAgents?: string[];
+  staticDedupCount?: number;
+  llmDedupCount?: number;
 }
 
 export interface ReviewerAgent {

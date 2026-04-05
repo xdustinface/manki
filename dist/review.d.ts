@@ -1,6 +1,7 @@
 import { ClaudeClient } from './claude';
 import { RepoMemory } from './memory';
 import { LinkedIssue } from './github';
+import { PreviousFinding } from './recap';
 import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, TeamRoster, PrContext, PlannerResult } from './types';
 export declare const HIGH_CONF_SUGGESTION_THRESHOLD = 1;
 export declare const PLANNER_TIMEOUT_MS = 30000;
@@ -15,6 +16,7 @@ export interface ReviewClients {
     reviewer: ClaudeClient;
     judge: ClaudeClient;
     planner?: ClaudeClient;
+    dedup?: ClaudeClient;
 }
 export interface ReviewProgress {
     phase: 'planning' | 'agent-complete' | 'reviewed' | 'judging';
@@ -35,7 +37,7 @@ export declare function runReview(clients: ReviewClients, config: ReviewConfig, 
     file: string;
     line: number;
     severity: string;
-}>): Promise<ReviewResult>;
+}>, previousFindings?: PreviousFinding[]): Promise<ReviewResult>;
 export declare function buildReviewerSystemPrompt(reviewer: ReviewerAgent, config: ReviewConfig): string;
 export declare function buildReviewerUserMessage(rawDiff: string, repoContext: string, fileContents?: Map<string, string>, prContext?: PrContext, memoryContext?: string, linkedIssues?: LinkedIssue[]): string;
 export declare function parseFindings(responseText: string, reviewerName: string): Finding[];

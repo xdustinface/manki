@@ -1216,6 +1216,31 @@ describe('runReview', () => {
     expect(result.findings).toEqual([]);
   });
 
+  it('drops findings matching dismissed previous ones before judge sees them', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.' },
+    ]);
+    const clients = makeClients(findingJson);
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const previousFindings = [
+      { title: 'Null dereference bug', file: 'src/a.ts', line: 10, severity: 'required' as const, status: 'resolved' as const },
+    ];
+
+    // Judge should not be called (findings all deduped away before judge).
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      previousFindings,
+    );
+
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.findings).toEqual([]);
+    expect(result.staticDedupCount).toBe(3);
+    expect(result.findings).toEqual([]);
+  });
+
   it('returns reviewComplete false when judge fails', async () => {
     const findingJson = JSON.stringify([
       { severity: 'suggestion', title: 'Some code improvement', file: 'src/a.ts', line: 10, description: 'Improve this.' },

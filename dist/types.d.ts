@@ -27,6 +27,8 @@ export interface ReviewResult {
     }>;
     plannerResult?: PlannerResult;
     failedAgents?: string[];
+    staticDedupCount?: number;
+    llmDedupCount?: number;
 }
 export interface ReviewerAgent {
     name: string;
