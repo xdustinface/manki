@@ -612,7 +612,7 @@ describe('handlePullRequest', () => {
   });
 
   it('skips when review is already in progress and posts skip comment', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
 
     setContext({
       eventName: 'pull_request',
@@ -642,7 +642,7 @@ describe('handlePullRequest', () => {
   });
 
   it('updates existing skip comment instead of creating a duplicate', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
     mockListComments.mockResolvedValueOnce({
       data: [
         {
@@ -727,7 +727,7 @@ describe('handleCommentTrigger', () => {
   });
 
   it('reacts with eyes, posts skip comment, and skips when review is already in progress', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
 
     setContext({
       eventName: 'issue_comment',
@@ -2286,7 +2286,7 @@ describe('force review checkbox', () => {
 
   it('routes force review checkbox edit to handleCommentTrigger with forceReview', async () => {
     // Simulate an active review so the test proves force review bypasses the gate
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
     const forceBody = `<!-- manki-bot -->\n**Review skipped** — a review is currently in progress. Retry in ~5 minutes, or force now:\n\n- [x] Force review\n\n${FORCE_REVIEW_MARKER}`;
     setContext({
       eventName: 'issue_comment',

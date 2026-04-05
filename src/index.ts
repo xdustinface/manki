@@ -167,12 +167,12 @@ async function run(): Promise<void> {
 }
 
 async function postReviewSkippedComment(
-  octokit: Octokit, owner: string, repo: string, prNumber: number, remaining: number,
+  octokit: Octokit, owner: string, repo: string, prNumber: number,
 ): Promise<void> {
   try {
     const body = [
       PROGRESS_MARKER,
-      `**Review skipped** — a review is currently in progress. Retry in ~${remaining} minutes, or force now:`,
+      `**Review skipped** — a review is currently in progress. Retry when it completes, or force now:`,
       '',
       '- [ ] Force review',
       '',
@@ -214,9 +214,8 @@ async function handlePullRequest(): Promise<void> {
   }
 
   const octokit = await getOctokit();
-  const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
-  if (remaining !== false) {
-    await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+  if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
+    await postReviewSkippedComment(octokit, owner, repo, prNumber);
     return;
   }
 
@@ -255,12 +254,11 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   });
 
   if (!forceReview) {
-    const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
-    if (remaining !== false) {
+    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
       if (payload.comment?.id) {
         await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
       }
-      await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+      await postReviewSkippedComment(octokit, owner, repo, prNumber);
       core.info('Review already in progress — skipping');
       return;
     }
