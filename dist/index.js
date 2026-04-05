@@ -36886,11 +36886,12 @@ async function updateProgressComment(octokit, owner, repo, commentId, dashboard,
  * Update the progress comment with just a dashboard (no final result yet).
  */
 async function updateProgressDashboard(octokit, owner, repo, commentId, dashboard) {
+    const runIdMarker = buildRunIdMarker(github.context.runId);
     await octokit.rest.issues.updateComment({
         owner,
         repo,
         comment_id: commentId,
-        body: `${BOT_MARKER}\n${buildDashboard(dashboard)}`,
+        body: `${BOT_MARKER}\n${runIdMarker}\n${buildDashboard(dashboard)}`,
     });
 }
 /**
@@ -37464,7 +37465,8 @@ async function findProgressComment(octokit, owner, repo, prNumber) {
     const { data: comments } = await octokit.rest.issues.listComments({
         owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
     });
-    const match = comments.find(c => c.user?.type === 'Bot' &&
+    const match = comments.find(c => c.user?.login === BOT_LOGIN &&
+        c.user?.type === 'Bot' &&
         c.body?.includes(BOT_MARKER) &&
         !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
         !c.body?.includes(FORCE_REVIEW_MARKER) &&
@@ -37512,7 +37514,7 @@ async function isReviewInProgress(octokit, owner, repo, prNumber) {
         core.warning(`Failed to query Actions run ${progress.runId}: ${error instanceof Error ? error.message : error}`);
         return false;
     }
-    if (status === 'in_progress' || status === 'queued' || status === 'waiting' || status === 'pending' || status === 'requested') {
+    if (status === 'in_progress' || status === 'queued' || status === 'waiting' || status === 'pending' || status === 'requested' || status === 'action_required') {
         core.info(`Skipping — review already in progress (run ${progress.runId}, status=${status})`);
         return true;
     }
@@ -37529,7 +37531,8 @@ async function markOwnProgressCommentCancelled(octokit, owner, repo, prNumber, r
         const { data: comments } = await octokit.rest.issues.listComments({
             owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
         });
-        const target = comments.find(c => c.user?.type === 'Bot' &&
+        const target = comments.find(c => c.user?.login === BOT_LOGIN &&
+            c.user?.type === 'Bot' &&
             c.body?.includes(BOT_MARKER) &&
             !c.body?.includes(REVIEW_COMPLETE_MARKER) &&
             !c.body?.includes(CANCELLED_MARKER) &&
@@ -37773,7 +37776,8 @@ async function postReviewSkippedComment(octokit, owner, repo, prNumber) {
         const { data: comments } = await octokit.rest.issues.listComments({
             owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
         });
-        const existing = comments.find(c => c.user?.type === 'Bot' &&
+        const existing = comments.find(c => c.user?.login === github_1.BOT_LOGIN &&
+            c.user?.type === 'Bot' &&
             c.body?.includes(github_1.BOT_MARKER) && c.body?.includes('Review skipped'));
         if (existing) {
             await octokit.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
@@ -38506,11 +38510,9 @@ async function postCleanup() {
 async function main() {
     process.on('SIGTERM', () => {
         core.info('Received SIGTERM — exiting gracefully');
-        process.exit(0);
     });
     process.on('SIGINT', () => {
         core.info('Received SIGINT — exiting gracefully');
-        process.exit(0);
     });
     // Dispatch: the same bundle is used for `main` and `post` in action.yml.
     // `core.saveState` sets a STATE_<key> env var that only reaches the post step,
@@ -38528,8 +38530,9 @@ async function main() {
     catch (error) {
         core.warning(`Manki encountered an error: ${error}`);
     }
-    // Always exit 0 — the merge gate is the review approval, not the check status
-    process.exit(0);
+    // Let Node exit naturally. `core.setFailed` sets `process.exitCode = 1` which
+    // propagates to GitHub Actions so the `post-if: failure()` condition fires.
+    // Calling `process.exit()` here would force-terminate and override that signal.
 }
 // Only auto-run when executed directly (not imported for testing)
 if (process.env.NODE_ENV !== 'test') {

@@ -1010,12 +1010,10 @@ async function postCleanup(): Promise<void> {
 async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     core.info('Received SIGTERM — exiting gracefully');
-    process.exit(0);
   });
 
   process.on('SIGINT', () => {
     core.info('Received SIGINT — exiting gracefully');
-    process.exit(0);
   });
 
   // Dispatch: the same bundle is used for `main` and `post` in action.yml.
@@ -1033,8 +1031,9 @@ async function main(): Promise<void> {
   } catch (error) {
     core.warning(`Manki encountered an error: ${error}`);
   }
-  // Always exit 0 — the merge gate is the review approval, not the check status
-  process.exit(0);
+  // Let Node exit naturally. `core.setFailed` sets `process.exitCode = 1` which
+  // propagates to GitHub Actions so the `post-if: failure()` condition fires.
+  // Calling `process.exit()` here would force-terminate and override that signal.
 }
 
 // Only auto-run when executed directly (not imported for testing)

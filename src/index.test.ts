@@ -976,21 +976,14 @@ describe('main', () => {
     const error = new Error('Something broke');
     jest.mocked(ghUtils.postProgressComment).mockRejectedValueOnce(error);
 
-    // Mock process.exit to prevent test from exiting
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (() => {}) as any,
-    );
-
     await main();
 
     expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
       'Manki encountered an error: Error: Something broke',
     );
-    exitSpy.mockRestore();
   });
 
-  it('always exits with code 0', async () => {
+  it('does not call process.exit so exit code propagates to post step', async () => {
     setContext({
       eventName: 'push',
       payload: { sender: { login: 'user' } },
@@ -1003,7 +996,7 @@ describe('main', () => {
 
     await main();
 
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(exitSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();
   });
 
@@ -1011,15 +1004,9 @@ describe('main', () => {
     setContext({ eventName: 'push', payload: { sender: { login: 'user' } } });
     jest.mocked(core.getState).mockReturnValueOnce('');
 
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (() => {}) as any,
-    );
-
     await main();
 
     expect(jest.mocked(core.saveState)).toHaveBeenCalledWith('manki_post_phase', 'true');
-    exitSpy.mockRestore();
   });
 });
 
@@ -1041,11 +1028,7 @@ describe('postCleanup (via main dispatch)', () => {
 
   function runPostPhase(): Promise<void> {
     jest.mocked(core.getState).mockReturnValueOnce('true');
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (() => {}) as any,
-    );
-    return main().finally(() => exitSpy.mockRestore());
+    return main();
   }
 
   it('marks progress comment cancelled for the current run when PR is in payload', async () => {
