@@ -75,6 +75,8 @@ The app requires these permissions:
 
 ## Step 2: Authentication Secrets
 
+> **When do you need a GitHub token?** If you installed the GitHub App (Step 1), you do **not** need to pass `github_token` -- the App handles PR access. The `memory_repo_token` input is only required when your memory repo is a **separate** repository (the App can't reach it). Users who skip the GitHub App can fall back to `github_token: ${{ secrets.GITHUB_TOKEN }}`.
+
 ### Claude Code OAuth Token (Max Subscription)
 
 This allows the action to use your Claude Max subscription -- no extra API costs.
@@ -158,10 +160,10 @@ jobs:
       - name: Manki Review
         uses: xdustinface/manki@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}  # Alternative to OAuth
-          # memory_repo_token: ${{ secrets.REVIEW_MEMORY_TOKEN }}  # Optional: for review memory
+          # github_token: ${{ secrets.GITHUB_TOKEN }}  # Only if not using the GitHub App
+          # memory_repo_token: ${{ secrets.REVIEW_MEMORY_TOKEN }}  # Only if memory repo is separate
 ```
 
 ### Action inputs
@@ -179,6 +181,30 @@ The action exposes outputs you can chain into later workflow steps (e.g., fail a
 | `severity_counts` | JSON object with severity counts: `{required, suggestion, nit, ignore}` |
 
 See [`action.yml`](action.yml) for the complete list (including `review_id`, `findings_json`, `judge_model`).
+
+Two common downstream uses:
+
+```yaml
+# Fail CI when the judge requests changes
+- uses: xdustinface/manki@v4
+  id: manki
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+- name: Fail on blocking findings
+  if: steps.manki.outputs.verdict == 'REQUEST_CHANGES'
+  run: exit 1
+```
+
+```yaml
+# Label PRs that have any required-severity findings
+- name: Label blocking PRs
+  if: fromJSON(steps.manki.outputs.severity_counts).required > 0
+  run: gh pr edit ${{ github.event.number }} --add-label blocking-findings
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+You can also forward `severity_counts` or `findings_json` to a metrics sink (Slack, Datadog, a dashboard) in a follow-up step.
 
 ### Event triggers explained
 
