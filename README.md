@@ -14,7 +14,7 @@
 Manki assembles a dynamic review team sized to your PR's content and complexity. A judge filters noise, dedups against prior reviews, and manki learns your team's conventions over time.
 
 <p align="center">
-  <img src="assets/review_example.png" alt="Example manki review comment" width="800" />
+  <img src="assets/review-example.png" alt="Example manki review comment" width="800" />
 </p>
 
 ## Why Manki
