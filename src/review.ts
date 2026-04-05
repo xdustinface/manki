@@ -4,6 +4,7 @@ import { ClaudeClient } from './claude';
 import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue } from './github';
+import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
 import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult } from './types';
 import { extractJSON } from './json';
 
@@ -202,6 +203,7 @@ export interface ReviewClients {
   reviewer: ClaudeClient;
   judge: ClaudeClient;
   planner?: ClaudeClient;
+  dedup?: ClaudeClient;
 }
 
 export interface ReviewProgress {
@@ -337,6 +339,7 @@ export async function runReview(
   onProgress?: (progress: ReviewProgress) => void,
   isFollowUp?: boolean,
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>,
+  previousFindings?: PreviousFinding[],
 ): Promise<ReviewResult> {
   let team: TeamRoster;
   let plannerResult: PlannerResult | null = null;
@@ -510,12 +513,34 @@ export async function runReview(
   }
 
   let findingsForJudge = allFindings;
+  let suppressionCount = 0;
   if (memory?.suppressions && memory.suppressions.length > 0) {
     const { kept, suppressed } = applySuppressions(allFindings, memory.suppressions);
     if (suppressed.length > 0) {
       core.info(`Suppressed ${suppressed.length} findings before judge evaluation`);
     }
     findingsForJudge = kept;
+    suppressionCount = suppressed.length;
+  }
+
+  let staticDedupCount = 0;
+  let llmDedupCount = 0;
+  if (previousFindings && previousFindings.length > 0 && findingsForJudge.length > 0) {
+    const { unique, duplicates } = deduplicateFindings(findingsForJudge, previousFindings, memory?.suppressions);
+    if (duplicates.length > 0) {
+      core.info(`Static dedup removed ${duplicates.length} findings matching dismissed ones before judge`);
+    }
+    findingsForJudge = unique;
+    staticDedupCount = duplicates.length;
+
+    if (clients.dedup && findingsForJudge.length > 0) {
+      const llmResult = await llmDeduplicateFindings(findingsForJudge, previousFindings, clients.dedup);
+      if (llmResult.duplicates.length > 0) {
+        core.info(`LLM dedup removed ${llmResult.duplicates.length} findings matching dismissed ones before judge`);
+      }
+      findingsForJudge = llmResult.unique;
+      llmDedupCount = llmResult.duplicates.length;
+    }
   }
 
   if (onProgress) {
@@ -589,8 +614,12 @@ export async function runReview(
     rawFindingCount: allFindings.length,
     agentNames: team.agents.map(a => a.name),
     allJudgedFindings,
+    rawFindings: allFindings,
     resolveThreads: judgeResolveThreads,
     plannerResult: plannerResult ?? undefined,
+    staticDedupCount,
+    llmDedupCount,
+    suppressionCount,
   };
 }
 

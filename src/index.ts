@@ -7,7 +7,7 @@ import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
-import { fetchRecapState, deduplicateFindings, llmDeduplicateFindings } from './recap';
+import { fetchRecapState } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
 import { DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
 import {
@@ -353,6 +353,7 @@ async function runFullReview(
     const plannerClient = config.planner?.enabled !== false
       ? new ClaudeClient({ ...authOptions, model: plannerModel })
       : undefined;
+    const dedupClient = new ClaudeClient({ ...authOptions, model: dedupModel });
 
     const rawDiff = await fetchPRDiff(octokit, owner, repo, prNumber);
     const diff = parsePRDiff(rawDiff);
@@ -494,7 +495,7 @@ async function runFullReview(
     }
 
     const result = await runReview(
-      { reviewer: reviewerClient, judge: judgeClient, planner: plannerClient }, config, diff, rawDiff, fullContext,
+      { reviewer: reviewerClient, judge: judgeClient, planner: plannerClient, dedup: dedupClient }, config, diff, rawDiff, fullContext,
       memory, fileContents, prContext, linkedIssues,
       (progress) => {
         if (progress.phase === 'planning') {
@@ -548,6 +549,7 @@ async function runFullReview(
       },
       isFollowUp,
       openThreads,
+      recap.previousFindings,
     );
     const judgeEndTime = Date.now();
 
@@ -562,23 +564,6 @@ async function runFullReview(
       dashboard.phase = 'complete';
       await updateProgressComment(octokit, owner, repo, progressCommentId, dashboard);
       return;
-    }
-
-    const { unique, duplicates: staticDuplicates } = deduplicateFindings(result.findings, recap.previousFindings, memory?.suppressions);
-    if (staticDuplicates.length > 0 || unique.length !== result.findings.length) {
-      core.info(`Deduplicated ${staticDuplicates.length} findings, ${result.findings.length - unique.length} total removed`);
-      result.findings = unique;
-      result.verdict = determineVerdict(result.findings);
-    }
-
-    // LLM-based dedup for findings that passed static matching
-    if (result.findings.length > 0 && recap.previousFindings.length > 0) {
-      const dedupClient = new ClaudeClient({ ...authOptions, model: dedupModel });
-      const llmResult = await llmDeduplicateFindings(result.findings, recap.previousFindings, dedupClient);
-      if (llmResult.duplicates.length > 0) {
-        result.findings = llmResult.unique;
-        result.verdict = determineVerdict(result.findings);
-      }
     }
 
     if (memory && memory.patterns.length > 0) {
@@ -623,10 +608,11 @@ async function runFullReview(
     // Per-agent metrics: count raw and kept findings per agent
     const agentNames = result.agentNames ?? [];
     const allJudged = result.allJudgedFindings ?? [];
+    const rawFindings = result.rawFindings ?? allJudged;
     const agentMetrics = agentNames.length > 0
       ? agentNames.map(name => ({
         name,
-        findingsRaw: allJudged.filter(f => f.reviewers.includes(name)).length,
+        findingsRaw: rawFindings.filter(f => f.reviewers.includes(name)).length,
         findingsKept: result.findings.filter(f => f.reviewers.includes(name)).length,
       }))
       : undefined;
@@ -639,7 +625,11 @@ async function runFullReview(
         if (f.judgeConfidence) confidenceDistribution[f.judgeConfidence]++;
       }
       const severityChanges = allJudged.filter(f => f.judgeNotes).length;
-      const mergedDuplicates = (result.rawFindingCount ?? 0) - allJudged.length;
+      const mergedDuplicates = (result.rawFindingCount ?? 0)
+        - (result.suppressionCount ?? 0)
+        - (result.staticDedupCount ?? 0)
+        - (result.llmDedupCount ?? 0)
+        - allJudged.length;
       judgeMetrics = { confidenceDistribution, severityChanges, mergedDuplicates };
     }
 

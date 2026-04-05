@@ -1387,6 +1387,105 @@ describe('runFullReview orchestration', () => {
     expect(statsArg!.model).toBeDefined();
   });
 
+  it('adjusts mergedDuplicates and findingsRaw for pre-judge dedup counts', async () => {
+    const testFiles = [
+      { path: 'src/app.ts', changeType: 'modified' as const, hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }] },
+    ];
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: testFiles, totalAdditions: 20, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue(testFiles);
+
+    const findings = [
+      { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['security'], judgeConfidence: 'high' as const },
+    ];
+    const allJudged = [...findings];
+    // rawFindings: 5 findings from agents (pre-suppression, pre-dedup)
+    const rawFindings = [
+      { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['security'] },
+      { severity: 'required' as const, title: 'Dup1', file: 'src/app.ts', line: 6, description: 'desc', reviewers: ['security'] },
+      { severity: 'required' as const, title: 'Dup2', file: 'src/app.ts', line: 7, description: 'desc', reviewers: ['general'] },
+      { severity: 'suggestion' as const, title: 'Judge-merged', file: 'src/app.ts', line: 8, description: 'desc', reviewers: ['general'] },
+      { severity: 'suggestion' as const, title: 'Judge-merged-2', file: 'src/app.ts', line: 9, description: 'desc', reviewers: ['general'] },
+    ];
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'REQUEST_CHANGES', summary: 'Issues found',
+      findings,
+      highlights: [],
+      reviewComplete: true,
+      rawFindingCount: 5,
+      agentNames: ['security', 'general'],
+      allJudgedFindings: allJudged,
+      rawFindings,
+      staticDedupCount: 1,
+      llmDedupCount: 1,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('REQUEST_CHANGES');
+
+    await callRunFullReview();
+
+    const statsArg = jest.mocked(ghUtils.postReview).mock.calls[0][7];
+    expect(statsArg).toBeDefined();
+
+    // mergedDuplicates excludes pre-judge dedup: 5 - 1 (static) - 1 (llm) - 1 (judged) = 2
+    expect(statsArg!.judgeMetrics?.mergedDuplicates).toBe(2);
+
+    // findingsRaw comes from rawFindings (pre-dedup per-agent counts)
+    expect(statsArg!.agentMetrics).toEqual([
+      { name: 'security', findingsRaw: 2, findingsKept: 1 },
+      { name: 'general', findingsRaw: 3, findingsKept: 0 },
+    ]);
+  });
+
+  it('excludes memory suppressions from mergedDuplicates metric', async () => {
+    const testFiles = [
+      { path: 'src/app.ts', changeType: 'modified' as const, hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }] },
+    ];
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: testFiles, totalAdditions: 20, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue(testFiles);
+
+    const findings = [
+      { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['security'], judgeConfidence: 'high' as const },
+    ];
+    const allJudged = [...findings];
+    const rawFindings = [
+      { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['security'] },
+      { severity: 'nit' as const, title: 'Suppressed1', file: 'src/app.ts', line: 6, description: 'desc', reviewers: ['security'] },
+      { severity: 'nit' as const, title: 'Suppressed2', file: 'src/app.ts', line: 7, description: 'desc', reviewers: ['general'] },
+      { severity: 'suggestion' as const, title: 'Judge-merged', file: 'src/app.ts', line: 8, description: 'desc', reviewers: ['general'] },
+    ];
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'REQUEST_CHANGES', summary: 'Issues found',
+      findings,
+      highlights: [],
+      reviewComplete: true,
+      rawFindingCount: 4,
+      agentNames: ['security', 'general'],
+      allJudgedFindings: allJudged,
+      rawFindings,
+      staticDedupCount: 0,
+      llmDedupCount: 0,
+      suppressionCount: 2,
+    });
+    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
+    jest.mocked(reviewModule.determineVerdict).mockReturnValue('REQUEST_CHANGES');
+
+    await callRunFullReview();
+
+    const statsArg = jest.mocked(ghUtils.postReview).mock.calls[0][7];
+    expect(statsArg).toBeDefined();
+
+    // mergedDuplicates excludes memory suppressions: 4 - 2 (suppressed) - 0 - 0 - 1 (judged) = 1
+    expect(statsArg!.judgeMetrics?.mergedDuplicates).toBe(1);
+  });
+
   it('creates nit issues when nit_handling is "issues"', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
@@ -1520,7 +1619,7 @@ describe('runFullReview orchestration', () => {
     );
   });
 
-  it('deduplicates findings from recap and recalculates verdict', async () => {
+  it('passes recap previousFindings to runReview so dedup runs before judge', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -1531,23 +1630,26 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
 
-    const finding1 = { severity: 'required' as const, title: 'Bug', file: 'src/app.ts', line: 5, description: 'desc', reviewers: ['general'] };
-    const finding2 = { severity: 'nit' as const, title: 'Style', file: 'src/app.ts', line: 8, description: 'desc', reviewers: ['general'] };
+    const previousFindings = [
+      { title: 'Bug', file: 'src/app.ts', line: 5, severity: 'required' as const, status: 'resolved' as const },
+    ];
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings,
+      recapContext: 'previous context',
+    });
 
+    const finding2 = { severity: 'nit' as const, title: 'Style', file: 'src/app.ts', line: 8, description: 'desc', reviewers: ['general'] };
     jest.mocked(reviewModule.runReview).mockResolvedValue({
-      verdict: 'REQUEST_CHANGES', summary: 'Issues',
-      findings: [finding1, finding2], highlights: [], reviewComplete: true,
+      verdict: 'COMMENT', summary: 'Issues',
+      findings: [finding2], highlights: [], reviewComplete: true,
     });
-    // Simulate dedup removing finding1 (it was already flagged)
-    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
-      unique: [finding2], duplicates: [{ finding: finding1, matchedTitle: 'Previous finding' }],
-    });
-    jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
 
     await callRunFullReview();
 
-    // Verdict should be recalculated after dedup
-    expect(jest.mocked(reviewModule.determineVerdict)).toHaveBeenCalledWith([finding2]);
+    // runReview should receive previousFindings as the last positional arg so
+    // dedup runs before the judge stage.
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    expect(runReviewCall[12]).toEqual(previousFindings);
   });
 
   it('applies memory escalations when patterns exist', async () => {
@@ -1888,10 +1990,6 @@ describe('runFullReview orchestration', () => {
         };
       },
     );
-    // Simulate suppressions removing finding2 during dedup
-    jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
-      unique: [finding1], duplicates: [{ finding: finding2, matchedTitle: 'Previous nit' }],
-    });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue('COMMENT');
 
     await callRunFullReview();
@@ -1903,11 +2001,6 @@ describe('runFullReview orchestration', () => {
     expect(judgingDashboard!.rawFindingCount).toBe(6);
     expect(judgingDashboard!.judgeInputCount).toBe(4);
     expect(judgingDashboard!.judgeInputCount).toBeLessThan(judgingDashboard!.rawFindingCount!);
-
-    // Verify suppressions were passed to deduplicateFindings
-    expect(jest.mocked(recapModule.deduplicateFindings)).toHaveBeenCalledWith(
-      expect.any(Array), expect.any(Array), memory.suppressions,
-    );
   });
 
   it('passes isFollowUp and openThreads to runReview when previous findings exist', async () => {

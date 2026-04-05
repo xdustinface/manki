@@ -1214,6 +1214,155 @@ describe('runReview', () => {
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context', memory);
     expect(mockedApplySuppressions).toHaveBeenCalled();
     expect(result.findings).toEqual([]);
+    expect(result.suppressionCount).toBe(1);
+  });
+
+  it('drops findings matching dismissed previous ones before judge sees them', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.' },
+    ]);
+    const clients = makeClients(findingJson);
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const previousFindings = [
+      { title: 'Null dereference bug', file: 'src/a.ts', line: 10, severity: 'required' as const, status: 'resolved' as const },
+    ];
+
+    // Judge should not be called (findings all deduped away before judge).
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      previousFindings,
+    );
+
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.findings).toEqual([]);
+    expect(result.staticDedupCount).toBe(3);
+    expect(result.llmDedupCount).toBe(0);
+    expect(result.findings).toEqual([]);
+  });
+
+  it('emits judgeInputCount in judging progress event reflecting post-suppression post-dedup count', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.' },
+    ]);
+    const clients = makeClients(findingJson);
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const memory = {
+      suppressions: [{ id: '1', pattern: 'xyz-nomatch', reason: 'noisy', created_by: 'user', created_at: '2025-01-01', pr_ref: '#1' }],
+      learnings: [],
+      patterns: [],
+    };
+    // Suppress 1 of the 3 identical raw findings, keep 2 for dedup to handle.
+    mockedApplySuppressions.mockReturnValue({
+      kept: [
+        { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.', reviewers: ['Security & Safety'] },
+        { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.', reviewers: ['Security & Safety'] },
+      ],
+      suppressed: [
+        { severity: 'required', title: 'Null dereference bug', file: 'src/a.ts', line: 10, description: 'Bug found.', reviewers: ['Security & Safety'] },
+      ],
+    });
+    const previousFindings = [
+      { title: 'Null dereference bug', file: 'src/a.ts', line: 10, severity: 'required' as const, status: 'resolved' as const },
+    ];
+
+    const onProgress = jest.fn();
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      memory, undefined, undefined, undefined, onProgress, undefined, undefined,
+      previousFindings,
+    );
+
+    // raw = 3, suppression drops 1, static dedup drops remaining 2, judgeInput = 0
+    expect(result.suppressionCount).toBe(1);
+    expect(result.staticDedupCount).toBe(2);
+    const judgingCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].phase === 'judging',
+    );
+    expect(judgingCalls).toHaveLength(1);
+    expect(judgingCalls[0][0].rawFindingCount).toBe(3);
+    expect(judgingCalls[0][0].judgeInputCount).toBe(0);
+  });
+
+  it('runs LLM dedup after static dedup when a dedup client is provided', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Totally different wording of same bug', file: 'src/a.ts', line: 10, description: 'Bug.' },
+    ]);
+    const clients: ReviewClients = {
+      ...makeClients(findingJson),
+      dedup: {
+        sendMessage: jest.fn().mockResolvedValue({
+          content: JSON.stringify([
+            { index: 1, matchedDismissed: 1 },
+            { index: 2, matchedDismissed: 1 },
+            { index: 3, matchedDismissed: 1 },
+          ]),
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const previousFindings = [
+      { title: 'Unrelated title that static wont match', file: 'src/a.ts', line: 10, severity: 'required' as const, status: 'resolved' as const },
+    ];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      previousFindings,
+    );
+
+    expect(clients.dedup!.sendMessage).toHaveBeenCalledTimes(1);
+    expect(result.staticDedupCount).toBe(0);
+    expect(result.llmDedupCount).toBe(3);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.findings).toEqual([]);
+  });
+
+  it('skips LLM dedup when no dedup client is provided', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'Something brand new', file: 'src/a.ts', line: 10, description: 'Bug.' },
+    ]);
+    const clients = makeClients(findingJson);
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const previousFindings = [
+      { title: 'Unrelated dismissed thing', file: 'src/other.ts', line: 99, severity: 'required' as const, status: 'resolved' as const },
+    ];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      previousFindings,
+    );
+
+    expect(result.staticDedupCount).toBe(0);
+    expect(result.llmDedupCount).toBe(0);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.findings.length).toBe(3);
+  });
+
+  it('leaves dedup counts at zero when no previous findings are supplied', async () => {
+    const findingJson = JSON.stringify([
+      { severity: 'required', title: 'A bug', file: 'src/a.ts', line: 10, description: 'Bug.' },
+    ]);
+    const clients: ReviewClients = {
+      ...makeClients(findingJson),
+      dedup: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+
+    expect(clients.dedup!.sendMessage).not.toHaveBeenCalled();
+    expect(result.staticDedupCount).toBe(0);
+    expect(result.llmDedupCount).toBe(0);
   });
 
   it('returns reviewComplete false when judge fails', async () => {
