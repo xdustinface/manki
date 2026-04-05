@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Follow-up review recap uses delta since last review (#410, #382)
 - Static dedup only matches resolved findings, not open or replied (#379)
 - Recap simplified to judge-only natural summary, finding-counting machinery removed (#415)
+- Reorder `models` config keys by pipeline order — planner, reviewer, judge, dedup (#450)
 
 ### Fixed
 
@@ -39,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Overhaul SETUP.md with quick start and GitHub App installation (#400)
 - Replace README quick start with link to SETUP.md (#404)
+- Align README, SETUP, and example config with v4.3.0 state (#446)
+- Introduce `AGENTS.md` with repo conventions (#452)
 
 ### Chores
 
