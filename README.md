@@ -19,9 +19,11 @@ Manki assembles a dynamic review team sized to your PR's content and complexity.
 
 ## Why Manki
 
-- **Multi-stage pipeline** — a planner picks the team, agents review in parallel, dedup catches repeats from prior reviews, a judge filters noise and classifies findings
+- **Multi-stage pipeline** — a planner picks the team, agents review in parallel, dedup catches repeats from prior reviews, a judge filters noise and classifies findings by severity
 - **Adaptive team sizing** — 1, 3, 5, or 7 reviewers chosen per PR based on content and complexity
-- **Self-learning memory** — teach manki via `/manki remember`; it remembers dismissed findings and your team's conventions across PRs
+- **Smart verdicts** — blocks PRs on real issues, approves over style nitpicks; auto-approves when all blocking threads resolve
+- **Self-learning memory** — `/manki remember` teaches conventions, `/manki dismiss` suppresses false positives, patterns stick across PRs
+- **Conversational** — reply to any review comment to discuss, or use `@manki explain`/`triage`/`forget` inline
 - **Self-hosted GitHub Action** — your API key, your compute, no SaaS intermediary
 
 ## Quick start
@@ -38,10 +40,10 @@ Manki wakes up when a PR is opened. A fast planner (Haiku) picks the team size a
 
 ```mermaid
 flowchart LR
-    A[📋 Planner] --> B[👥 Reviewers]
-    B --> C[🔍 Dedup]
-    C --> D[⚖️ Judge]
-    D --> E[✅ Review Posted]
+    A["fa:fa-clipboard-list Planner"] --> B["fa:fa-users Reviewers"]
+    B --> C["fa:fa-filter Dedup"]
+    C --> D["fa:fa-scale-balanced Judge"]
+    D --> E["fa:fa-circle-check Review Posted"]
 
     A -.-> A1[team size<br/>& effort]
     B -.-> B1[findings<br/>in parallel]
