@@ -330,7 +330,7 @@ describe('checkAndAutoApprove', () => {
   });
 
   it('skips when review is in progress', async () => {
-    mockIsReviewInProgress.mockResolvedValueOnce(5);
+    mockIsReviewInProgress.mockResolvedValueOnce(true);
     const octokit = {} as unknown as Octokit;
 
     const result = await checkAndAutoApprove(octokit, 'owner', 'repo', 1);

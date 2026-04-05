@@ -8,6 +8,8 @@ jest.mock('@actions/core', () => ({
   getInput: jest.fn().mockReturnValue(''),
   setOutput: jest.fn(),
   setFailed: jest.fn(),
+  getState: jest.fn().mockReturnValue(''),
+  saveState: jest.fn(),
 }));
 
 jest.mock('@actions/github', () => ({
@@ -121,6 +123,7 @@ jest.mock('./github', () => ({
   fetchLinkedIssues: jest.fn().mockResolvedValue([]),
   isReviewInProgress: jest.fn().mockResolvedValue(false),
   isApprovedOnCommit: jest.fn().mockResolvedValue(false),
+  markOwnProgressCommentCancelled: jest.fn().mockResolvedValue(false),
   BOT_LOGIN: 'manki-review[bot]',
   BOT_MARKER: '<!-- manki-bot -->',
   REVIEW_COMPLETE_MARKER: '<!-- manki-review-complete -->',
@@ -612,7 +615,7 @@ describe('handlePullRequest', () => {
   });
 
   it('skips when review is already in progress and posts skip comment', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
 
     setContext({
       eventName: 'pull_request',
@@ -642,13 +645,13 @@ describe('handlePullRequest', () => {
   });
 
   it('updates existing skip comment instead of creating a duplicate', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
     mockListComments.mockResolvedValueOnce({
       data: [
         {
           id: 77,
           body: '<!-- manki-bot -->\n**Review skipped** — a review is currently in progress.',
-          user: { type: 'Bot' },
+          user: { login: 'manki-review[bot]', type: 'Bot' },
         },
       ],
     });
@@ -727,7 +730,7 @@ describe('handleCommentTrigger', () => {
   });
 
   it('reacts with eyes, posts skip comment, and skips when review is already in progress', async () => {
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
 
     setContext({
       eventName: 'issue_comment',
@@ -973,21 +976,14 @@ describe('main', () => {
     const error = new Error('Something broke');
     jest.mocked(ghUtils.postProgressComment).mockRejectedValueOnce(error);
 
-    // Mock process.exit to prevent test from exiting
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (() => {}) as any,
-    );
-
     await main();
 
     expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
       'Manki encountered an error: Error: Something broke',
     );
-    exitSpy.mockRestore();
   });
 
-  it('always exits with code 0', async () => {
+  it('does not call process.exit so exit code propagates to post step', async () => {
     setContext({
       eventName: 'push',
       payload: { sender: { login: 'user' } },
@@ -1000,8 +996,132 @@ describe('main', () => {
 
     await main();
 
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(exitSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();
+  });
+
+  it('saves state to signal post phase on first (main) invocation', async () => {
+    setContext({ eventName: 'push', payload: { sender: { login: 'user' } } });
+    jest.mocked(core.getState).mockReturnValueOnce('');
+
+    await main();
+
+    expect(jest.mocked(core.saveState)).toHaveBeenCalledWith('manki_post_phase', 'true');
+  });
+});
+
+describe('postCleanup (via main dispatch)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    _resetOctokitCache();
+    jest.mocked(core.getInput).mockImplementation((name: string) =>
+      name === 'anthropic_api_key' ? 'test-api-key' : '',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (github.context as any).runId = 12345;
+  });
+
+  afterEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (github.context as any).runId = undefined;
+  });
+
+  function runPostPhase(): Promise<void> {
+    jest.mocked(core.getState).mockReturnValueOnce('true');
+    return main();
+  }
+
+  it('marks progress comment cancelled for the current run when PR is in payload', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 42 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(true);
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 12345,
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('marked progress comment for run 12345 as cancelled'),
+    );
+  });
+
+  it('logs that no comment was found when markOwnProgressCommentCancelled returns false', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 7 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(false);
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no progress comment found for run 12345'),
+    );
+  });
+
+  it('falls back to issue.pull_request when PR is not directly in payload', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: { issue: { number: 55, pull_request: { url: 'https://api.github.com/pr/55' } } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(true);
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 55, 12345,
+    );
+  });
+
+  it('skips when no PR number can be derived from event payload', async () => {
+    setContext({ eventName: 'push', payload: { sender: { login: 'user' } } });
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).not.toHaveBeenCalled();
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no PR number in event payload'),
+    );
+  });
+
+  it('skips when event payload has issue without pull_request (plain issue comment)', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: { issue: { number: 99 } },
+    });
+
+    await runPostPhase();
+
+    expect(jest.mocked(ghUtils.markOwnProgressCommentCancelled)).not.toHaveBeenCalled();
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      expect.stringContaining('no PR number in event payload'),
+    );
+  });
+
+  it('warns when the cleanup helper throws', async () => {
+    setContext({
+      eventName: 'pull_request',
+      payload: { pull_request: { number: 42 } },
+    });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockRejectedValueOnce(new Error('boom'));
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining('Post-cleanup failed: boom'),
+    );
+  });
+
+  it('does not save state again when running in post phase', async () => {
+    setContext({ eventName: 'pull_request', payload: { pull_request: { number: 1 } } });
+    jest.mocked(ghUtils.markOwnProgressCommentCancelled).mockResolvedValueOnce(false);
+
+    await runPostPhase();
+
+    expect(jest.mocked(core.saveState)).not.toHaveBeenCalled();
   });
 });
 
@@ -2286,7 +2406,7 @@ describe('force review checkbox', () => {
 
   it('routes force review checkbox edit to handleCommentTrigger with forceReview', async () => {
     // Simulate an active review so the test proves force review bypasses the gate
-    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(5);
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
     const forceBody = `<!-- manki-bot -->\n**Review skipped** — a review is currently in progress. Retry in ~5 minutes, or force now:\n\n- [x] Force review\n\n${FORCE_REVIEW_MARKER}`;
     setContext({
       eventName: 'issue_comment',

@@ -108,9 +108,8 @@ async function checkAndAutoApprove(
   repo: string,
   prNumber: number,
 ): Promise<boolean> {
-  const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
-  if (remaining !== false) {
-    core.info(`Skipping auto-approve — review in progress (${remaining}m remaining)`);
+  if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
+    core.info('Skipping auto-approve — review in progress');
     return false;
   }
 

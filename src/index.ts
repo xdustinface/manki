@@ -29,6 +29,7 @@ import {
   FORCE_REVIEW_MARKER,
   isReviewInProgress,
   isApprovedOnCommit,
+  markOwnProgressCommentCancelled,
 } from './github';
 import { checkAndAutoApprove, resolveStaleThreads } from './state';
 
@@ -167,12 +168,12 @@ async function run(): Promise<void> {
 }
 
 async function postReviewSkippedComment(
-  octokit: Octokit, owner: string, repo: string, prNumber: number, remaining: number,
+  octokit: Octokit, owner: string, repo: string, prNumber: number,
 ): Promise<void> {
   try {
     const body = [
       PROGRESS_MARKER,
-      `**Review skipped** — a review is currently in progress. Retry in ~${remaining} minutes, or force now:`,
+      `**Review skipped** — a review is currently in progress. Retry when it completes, or force now:`,
       '',
       '- [ ] Force review',
       '',
@@ -183,6 +184,7 @@ async function postReviewSkippedComment(
       owner, repo, issue_number: prNumber, per_page: 100, direction: 'desc',
     });
     const existing = comments.find(c =>
+      c.user?.login === BOT_LOGIN &&
       c.user?.type === 'Bot' &&
       c.body?.includes(PROGRESS_MARKER) && c.body?.includes('Review skipped'),
     );
@@ -214,9 +216,8 @@ async function handlePullRequest(): Promise<void> {
   }
 
   const octokit = await getOctokit();
-  const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
-  if (remaining !== false) {
-    await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+  if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
+    await postReviewSkippedComment(octokit, owner, repo, prNumber);
     return;
   }
 
@@ -255,12 +256,11 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   });
 
   if (!forceReview) {
-    const remaining = await isReviewInProgress(octokit, owner, repo, prNumber);
-    if (remaining !== false) {
+    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
       if (payload.comment?.id) {
         await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
       }
-      await postReviewSkippedComment(octokit, owner, repo, prNumber, remaining);
+      await postReviewSkippedComment(octokit, owner, repo, prNumber);
       core.info('Review already in progress — skipping');
       return;
     }
@@ -977,24 +977,63 @@ async function handleReviewCommentInteraction(): Promise<void> {
   }
 }
 
+const POST_PHASE_STATE_KEY = 'manki_post_phase';
+
+/**
+ * Post-step cleanup invoked when the main step is cancelled or fails.
+ * Marks the current run's progress comment as cancelled so the next trigger
+ * doesn't see a zombie.
+ */
+async function postCleanup(): Promise<void> {
+  const pr = github.context.payload.pull_request
+    ?? (github.context.payload.issue?.pull_request ? github.context.payload.issue : undefined);
+  const prNumber = pr?.number;
+  if (!prNumber) {
+    core.info('Post-cleanup: no PR number in event payload — skipping');
+    return;
+  }
+  const { owner, repo } = github.context.repo;
+  const runId = github.context.runId;
+  try {
+    const octokit = await getOctokit();
+    const marked = await markOwnProgressCommentCancelled(octokit, owner, repo, prNumber, runId);
+    if (marked) {
+      core.info(`Post-cleanup: marked progress comment for run ${runId} as cancelled`);
+    } else {
+      core.info(`Post-cleanup: no progress comment found for run ${runId}`);
+    }
+  } catch (error) {
+    core.warning(`Post-cleanup failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
 async function main(): Promise<void> {
   process.on('SIGTERM', () => {
     core.info('Received SIGTERM — exiting gracefully');
-    process.exit(0);
   });
 
   process.on('SIGINT', () => {
     core.info('Received SIGINT — exiting gracefully');
-    process.exit(0);
   });
 
+  // Dispatch: the same bundle is used for `main` and `post` in action.yml.
+  // `core.saveState` sets a STATE_<key> env var that only reaches the post step,
+  // so its presence indicates we're in the post phase.
+  const isPostPhase = core.getState(POST_PHASE_STATE_KEY) === 'true';
+
   try {
-    await run();
+    if (isPostPhase) {
+      await postCleanup();
+    } else {
+      core.saveState(POST_PHASE_STATE_KEY, 'true');
+      await run();
+    }
   } catch (error) {
     core.warning(`Manki encountered an error: ${error}`);
   }
-  // Always exit 0 — the merge gate is the review approval, not the check status
-  process.exit(0);
+  // Let Node exit naturally. `core.setFailed` sets `process.exitCode = 1` which
+  // propagates to GitHub Actions so the `post-if: failure()` condition fires.
+  // Calling `process.exit()` here would force-terminate and override that signal.
 }
 
 // Only auto-run when executed directly (not imported for testing)
