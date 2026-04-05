@@ -18,6 +18,7 @@ import {
   TRIVIAL_VERIFIER_AGENT,
   PLANNER_TIMEOUT_MS,
 } from './review';
+import * as core from '@actions/core';
 import { LinkedIssue } from './github';
 import { Finding, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile } from './types';
 import { runJudgeAgent } from './judge';
@@ -1389,6 +1390,8 @@ describe('runReview', () => {
 
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+
     const progress: import('./review').ReviewProgress[] = [];
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
@@ -1398,6 +1401,8 @@ describe('runReview', () => {
     expect(result.reviewComplete).toBe(true);
     expect(result.agentNames).toEqual(['Trivial Change Verifier']);
     expect(result.plannerResult!.teamSize).toBe(1);
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('teamSize=1 decision'));
+    infoSpy.mockRestore();
     expect((clients.reviewer.sendMessage as jest.Mock)).toHaveBeenCalledTimes(1);
     expect(clients.reviewer.sendMessage as jest.Mock).toHaveBeenCalledWith(
       expect.any(String),

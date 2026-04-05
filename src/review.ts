@@ -56,7 +56,7 @@ export function selectTeam(
   diff: ParsedDiff,
   config: ReviewConfig,
   customReviewers?: ReviewerAgent[],
-  teamSizeOverride?: number,
+  teamSizeOverride?: 1 | 3 | 5 | 7,
 ): TeamRoster {
   const lineCount = diff.totalAdditions + diff.totalDeletions;
 
