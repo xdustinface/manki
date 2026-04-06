@@ -536,6 +536,9 @@ export async function postReview(
   }
 
   let body = `${BOT_MARKERS}\n${sanitizeMarkdown(result.summary)}`;
+  if (result.partialNote) {
+    body += `\n\n> **Note:** ${sanitizeMarkdown(result.partialNote)}`;
+  }
   if (stats) {
     body += `\n\n${formatStatsOneLiner(stats)}`;
     body += `\n\n${formatStatsJson(stats)}`;

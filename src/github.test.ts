@@ -641,6 +641,52 @@ describe('postReview with stats', () => {
   });
 });
 
+describe('postReview partialNote', () => {
+  const mockCreateReview = jest.fn().mockResolvedValue({ data: { id: 1 } });
+  const mockOctokit = {
+    rest: {
+      pulls: {
+        createReview: mockCreateReview,
+      },
+    },
+  } as unknown as Parameters<typeof postReview>[0];
+
+  beforeEach(() => {
+    mockCreateReview.mockClear();
+  });
+
+  it('includes partialNote in review body when agents failed after retries', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'Looks good overall.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+      partialNote: '4 of 5 agents completed (Correctness & Logic failed after retries)',
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).toContain('4 of 5 agents completed');
+    expect(body).toContain('Correctness & Logic failed after retries');
+    expect(body).toContain('**Note:**');
+  });
+
+  it('omits partialNote section when not provided', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'All clear.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).not.toContain('**Note:**');
+  });
+});
+
 describe('getSeverityLabel', () => {
   it('returns Required for required severity', () => {
     expect(getSeverityLabel('required')).toBe('Required');
