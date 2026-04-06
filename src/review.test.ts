@@ -2796,6 +2796,12 @@ describe('buildReviewerSystemPrompt with language and context', () => {
     expect(prompt).not.toContain('project.');
   });
 
+  it('includes context without language and omits unknown language', () => {
+    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig(), undefined, 'blockchain consensus library');
+    expect(prompt).toContain('This PR is in a blockchain consensus library project.');
+    expect(prompt).not.toContain('unknown language');
+  });
+
   it('omits language section when not provided', () => {
     const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
     expect(prompt).not.toContain('This PR is primarily');
@@ -2857,11 +2863,18 @@ describe('per-agent effort in runReview', () => {
     expect(result.reviewComplete).toBe(true);
 
     const reviewerCalls = (clients.reviewer.sendMessage as jest.Mock).mock.calls;
-    // Each agent should get its own effort level
-    const efforts = reviewerCalls.map((call: unknown[]) => (call[2] as { effort: string })?.effort);
-    expect(efforts).toContain('high');
-    expect(efforts).toContain('low');
-    expect(efforts).toContain('medium');
+    // Verify specific agent-to-effort mappings, not just that all values appear
+    const effortByAgent = new Map<string, string>();
+    for (const call of reviewerCalls) {
+      const systemPrompt = call[0] as string;
+      const effort = (call[2] as { effort: string })?.effort;
+      if (systemPrompt.includes('Security & Safety')) effortByAgent.set('Security & Safety', effort);
+      if (systemPrompt.includes('Architecture & Design')) effortByAgent.set('Architecture & Design', effort);
+      if (systemPrompt.includes('Correctness & Logic')) effortByAgent.set('Correctness & Logic', effort);
+    }
+    expect(effortByAgent.get('Security & Safety')).toBe('high');
+    expect(effortByAgent.get('Architecture & Design')).toBe('low');
+    expect(effortByAgent.get('Correctness & Logic')).toBe('medium');
   });
 
   it('falls back to uniform reviewerEffort when agents array is missing', async () => {
@@ -3201,6 +3214,26 @@ describe('runPlanner teamSize correction', () => {
     expect(result!.agents).toHaveLength(4);
     // 4 is equidistant from 3 and 5; reduce picks closest valid = 5 or 3
     expect([3, 5]).toContain(result!.teamSize);
+  });
+
+  it('corrects 2-agent picks to teamSize=3, never teamSize=1', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      judgeEffort: 'medium',
+      prType: 'bugfix',
+      agents: [
+        { name: 'Security & Safety', effort: 'high' },
+        { name: 'Correctness & Logic', effort: 'medium' },
+      ],
+    });
+
+    const client = makeClient(response);
+    const diff = makeDiff({ totalAdditions: 30, totalDeletions: 5 });
+    const result = await runPlanner(client, diff);
+
+    expect(result).not.toBeNull();
+    expect(result!.agents).toHaveLength(2);
+    expect(result!.teamSize).toBe(3);
   });
 
   it('sanitizes language field from planner', async () => {

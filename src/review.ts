@@ -55,6 +55,14 @@ export const TRIVIAL_VERIFIER_AGENT: ReviewerAgent = Object.freeze({
   focus: 'Review this trivial change on two fronts: (1) check the actual content for issues appropriate to the change type — typos, stale references, broken markdown/links, incomplete renames; (2) verify the change is actually trivial as classified and flag any hidden behavior change, security implication, broken invariant, or missing test that would contradict that assessment.',
 });
 
+export function buildAgentPool(customReviewers?: ReviewerAgent[]): ReviewerAgent[] {
+  const pool = [...AGENT_POOL];
+  for (const custom of (customReviewers ?? [])) {
+    if (!pool.some(p => p.name === custom.name)) pool.push(custom);
+  }
+  return pool;
+}
+
 export function selectTeam(
   diff: ParsedDiff,
   config: ReviewConfig,
@@ -76,12 +84,7 @@ export function selectTeam(
 
   // Planner-driven agent selection: resolve each picked name from the pool
   if (agentPicks && agentPicks.length > 0 && teamSizeOverride) {
-    const pool = [...AGENT_POOL];
-    for (const custom of (customReviewers || [])) {
-      if (!pool.some(p => p.name === custom.name)) {
-        pool.push(custom);
-      }
-    }
+    const pool = buildAgentPool(customReviewers);
     const poolMap = new Map(pool.map(a => [a.name, a]));
     const resolved: ReviewerAgent[] = [];
     for (const pick of agentPicks) {
@@ -122,12 +125,7 @@ export function selectTeam(
     teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
   }
 
-  const pool = [...AGENT_POOL];
-  for (const custom of (customReviewers || [])) {
-    if (!pool.some(p => p.name === custom.name)) {
-      pool.push(custom);
-    }
-  }
+  const pool = buildAgentPool(customReviewers);
 
   // Core agents always included
   const selected: ReviewerAgent[] = CORE_AGENTS.map(i => pool[i]);
@@ -376,12 +374,7 @@ export async function runPlanner(
   });
 
   try {
-    const pool = [...AGENT_POOL];
-    for (const custom of (customReviewers || [])) {
-      if (!pool.some(p => p.name === custom.name)) {
-        pool.push(custom);
-      }
-    }
+    const pool = buildAgentPool(customReviewers);
     const availableNames = new Set(pool.map(a => a.name));
     const agentNames = pool.map(a => a.name);
     const systemPrompt = buildPlannerSystemPrompt(agentNames);
@@ -420,8 +413,10 @@ export async function runPlanner(
     // Parse agent picks
     const agents = parseAgentPicks(parsed.agents, availableNames);
     if (agents) {
-      // Trust agents array length over teamSize when they differ
-      const validSizes = [1, 3, 5, 7];
+      // Trust agents array length over teamSize when they differ.
+      // Exclude 1 from correction candidates — teamSize=1 is only valid when the
+      // planner explicitly requests it, not as a side-effect of rounding down.
+      const validSizes = [3, 5, 7];
       const closestValid = validSizes.reduce((prev, curr) =>
         Math.abs(curr - agents.length) < Math.abs(prev - agents.length) ? curr : prev,
       );
@@ -992,8 +987,12 @@ export function buildReviewerSystemPrompt(
 Your role: ${reviewer.name}`;
 
   if (language || context) {
-    prompt += `\n\nThis PR is primarily ${language ?? 'unknown language'} code`;
-    if (context) prompt += ` in a ${context} project`;
+    if (language) {
+      prompt += `\n\nThis PR is primarily ${language} code`;
+      if (context) prompt += ` in a ${context} project`;
+    } else {
+      prompt += `\n\nThis PR is in a ${context} project`;
+    }
     prompt += '.';
   }
 
