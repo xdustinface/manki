@@ -1553,6 +1553,68 @@ describe('buildDashboard', () => {
     expect(md).not.toContain(`${INDENT}kept:`);
     expect(md).not.toContain(`${INDENT}dropped:`);
   });
+
+  it('renders planner duration when plannerInfo and plannerDurationMs are provided', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 200, agentCount: 5,
+      plannerInfo: { teamSize: 5, reviewerEffort: 'medium', judgeEffort: 'high', prType: 'feature' },
+      plannerDurationMs: 1200,
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Planner** (1s)');
+  });
+
+  it('renders planner duration without plannerInfo', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      plannerDurationMs: 850,
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Planner** (850ms)');
+  });
+
+  it('omits planner duration when plannerDurationMs is not set', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 200, agentCount: 5,
+      plannerInfo: { teamSize: 5, reviewerEffort: 'medium', judgeEffort: 'high', prType: 'feature' },
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Planner**');
+    expect(md).not.toContain('**Planner** (');
+  });
+
+  it('renders judge duration in complete phase', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 500, agentCount: 7,
+      rawFindingCount: 20, keptCount: 8, droppedCount: 12,
+      judgeDurationMs: 8000,
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Judge** — 8 kept · 12 dropped (8s)');
+  });
+
+  it('omits judge duration when judgeDurationMs is not set', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 500, agentCount: 7,
+      rawFindingCount: 20, keptCount: 8, droppedCount: 12,
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Judge** — 8 kept · 12 dropped');
+    expect(md).not.toContain('**Judge** — 8 kept · 12 dropped (');
+  });
+
+  it('renders both planner and judge durations in complete phase', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 400, agentCount: 5,
+      rawFindingCount: 10, keptCount: 6, droppedCount: 4,
+      plannerInfo: { teamSize: 5, reviewerEffort: 'low', judgeEffort: 'medium', prType: 'bugfix' },
+      plannerDurationMs: 2500,
+      judgeDurationMs: 65000,
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('**Planner** (3s)');
+    expect(md).toContain('**Judge** — 6 kept · 4 dropped (65s)');
+  });
 });
 
 describe('updateProgressComment', () => {

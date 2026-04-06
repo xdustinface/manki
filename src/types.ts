@@ -172,6 +172,8 @@ export interface DashboardData {
   plannerInfo?: Pick<PlannerResult, 'teamSize' | 'reviewerEffort' | 'judgeEffort' | 'prType'>;
   keptSeverities?: Record<string, number>;
   droppedSeverities?: Record<string, number>;
+  plannerDurationMs?: number;
+  judgeDurationMs?: number;
 }
 
 export interface JudgeDecision {

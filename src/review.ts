@@ -217,6 +217,7 @@ export interface ReviewProgress {
   completedAgents?: number;
   totalAgents?: number;
   plannerResult?: PlannerResult;
+  plannerDurationMs?: number;
 }
 
 function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
@@ -348,7 +349,9 @@ export async function runReview(
     if (onProgress) {
       onProgress({ phase: 'planning', rawFindingCount: 0 });
     }
+    const plannerStart = Date.now();
     plannerResult = await runPlanner(clients.planner, diff, prContext);
+    const plannerDurationMs = Date.now() - plannerStart;
     if (plannerResult) {
       team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize);
       core.info(`Planner: ${plannerResult.teamSize} agents, reviewer: ${plannerResult.reviewerEffort}, judge: ${plannerResult.judgeEffort} (${plannerResult.prType})`);
@@ -357,7 +360,7 @@ export async function runReview(
         core.info(`teamSize=1 decision: prType=${plannerResult.prType}, lines=${totalLines}, files=${diff.files.length}`);
       }
       if (onProgress) {
-        onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult });
+        onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult, plannerDurationMs });
       }
     } else {
       team = heuristicFallback(diff, config);
