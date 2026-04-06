@@ -21,7 +21,7 @@ body {
 }
 
 a {
-  color: #4a6d4d;
+  color: #5a8a5e;
   text-decoration: none;
   transition: color 0.2s;
 }
@@ -38,18 +38,22 @@ a:hover {
 }
 
 section {
-  padding: 80px 0;
+  padding: 52px 0;
+}
+
+section + section {
+  border-top: 1px solid #1e2228;
 }
 
 /* === Hero === */
 .hero {
   text-align: center;
-  padding: 120px 0 80px;
+  padding: 80px 0 56px;
 }
 
 .hero-logo {
   display: block;
-  margin: 0 auto 24px;
+  margin: 0 auto 12px;
   width: 140px;
   height: auto;
 }
@@ -58,7 +62,7 @@ section {
   font-size: 2.5rem;
   font-weight: 700;
   color: #e8ecef;
-  margin: 0 0 16px;
+  margin: 0 0 8px;
   text-align: center;
   letter-spacing: 0.02em;
 }
@@ -68,15 +72,15 @@ section {
   font-weight: 700;
   line-height: 1.25;
   max-width: 780px;
-  margin: 0 auto 20px;
+  margin: 0 auto 12px;
   color: #e8ecef;
 }
 
 .hero .subhead {
   font-size: 1.15rem;
-  color: #9ba3b0;
+  color: #b0b8c4;
   max-width: 600px;
-  margin: 0 auto 40px;
+  margin: 0 auto 24px;
   line-height: 1.5;
 }
 
@@ -89,8 +93,8 @@ section {
 
 .btn-primary {
   display: inline-block;
-  background: #29362B;
-  color: #e8ecef;
+  background: #2d5a34;
+  color: #ffffff;
   padding: 14px 28px;
   border-radius: 8px;
   font-size: 1rem;
@@ -99,26 +103,26 @@ section {
 }
 
 .btn-primary:hover {
-  background: #3a4d3d;
-  color: #e8ecef;
+  background: #3a6b42;
+  color: #ffffff;
 }
 
 .btn-secondary {
   display: inline-block;
   background: transparent;
-  color: #e8ecef;
+  color: #5a8a5e;
   padding: 14px 28px;
   border-radius: 8px;
   font-size: 1rem;
   font-weight: 600;
-  border: 1px solid #3a4d3d;
+  border: 1px solid #5a8a5e;
   transition: border-color 0.2s, background 0.2s;
 }
 
 .btn-secondary:hover {
-  border-color: #4a6d4d;
-  background: rgba(41, 54, 43, 0.2);
-  color: #e8ecef;
+  border-color: #5a8a5e;
+  background: rgba(90, 138, 94, 0.15);
+  color: #5a8a5e;
 }
 
 /* === Section headings === */
@@ -126,8 +130,8 @@ section {
   font-size: 1.8rem;
   font-weight: 700;
   text-align: center;
-  margin-bottom: 48px;
-  color: #3a4d3d;
+  margin-bottom: 40px;
+  color: #5a8a5e;
 }
 
 /* === Feature Pillars === */
@@ -138,21 +142,22 @@ section {
 }
 
 .pillar {
-  background: #1a1d23;
+  background: #1e2228;
   border: 1px solid #2a2d33;
-  border-top: 3px solid #3a4d3d;
+  border-top: 4px solid #3a6b42;
   border-radius: 12px;
-  padding: 32px 28px;
+  padding: 30px 28px;
 }
 
 .pillar h3 {
   font-size: 1.15rem;
   font-weight: 600;
   margin-bottom: 12px;
+  color: #5a8a5e;
 }
 
 .pillar p {
-  color: #9ba3b0;
+  color: #b0b8c4;
   font-size: 0.95rem;
   line-height: 1.6;
 }
@@ -169,8 +174,8 @@ section {
 .pipeline-stage {
   flex: 1;
   min-width: 160px;
-  background: rgba(41, 54, 43, 0.15);
-  border: 1px solid #3a4d3d;
+  background: rgba(45, 90, 52, 0.08);
+  border: 1px solid #2d5a34;
   border-radius: 12px;
   padding: 24px 20px;
   text-align: center;
@@ -181,10 +186,11 @@ section {
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: 8px;
+  color: #5a8a5e;
 }
 
 .pipeline-stage p {
-  color: #9ba3b0;
+  color: #b0b8c4;
   font-size: 0.85rem;
   line-height: 1.5;
 }
@@ -193,7 +199,7 @@ section {
   display: flex;
   align-items: center;
   padding: 0 4px;
-  color: #3a4d3d;
+  color: #5a8a5e;
   font-size: 1.5rem;
   flex-shrink: 0;
 }
@@ -210,7 +216,7 @@ section {
 .why-item {
   background: #1a1d23;
   border: 1px solid #2a2d33;
-  border-left: 3px solid #3a4d3d;
+  border-left: 4px solid #3a6b42;
   border-radius: 12px;
   padding: 24px 28px;
 }
@@ -218,12 +224,12 @@ section {
 .why-item h4 {
   font-size: 1rem;
   font-weight: 600;
-  color: #4a6d4d;
+  color: #5a8a5e;
   margin-bottom: 8px;
 }
 
 .why-item p {
-  color: #9ba3b0;
+  color: #b0b8c4;
   font-size: 0.9rem;
   line-height: 1.5;
 }
@@ -283,6 +289,7 @@ section {
 .install-block {
   background: #0a0c0f;
   border: 1px solid #3a4d3d;
+  border-left: 4px solid #2d5a34;
   border-radius: 12px;
   padding: 28px 28px 24px;
   position: relative;
@@ -301,8 +308,8 @@ section {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: #29362B;
-  color: #e8ecef;
+  background: #2d5a34;
+  color: #ffffff;
   border: none;
   padding: 6px 14px;
   border-radius: 6px;
@@ -313,7 +320,7 @@ section {
 }
 
 .copy-btn:hover {
-  background: #3a4d3d;
+  background: #3a6b42;
 }
 
 .setup-link {
@@ -343,6 +350,11 @@ section {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  transition: border-color 0.2s;
+}
+
+.pr-card:hover {
+  border-color: #3a6b42;
 }
 
 .pr-card .pr-title {
@@ -354,7 +366,7 @@ section {
 }
 
 .pr-card .pr-link {
-  color: #4a6d4d;
+  color: #5a8a5e;
   font-size: 0.85rem;
   font-weight: 500;
   transition: color 0.2s;
@@ -383,6 +395,7 @@ section {
   cursor: pointer;
   font-weight: 600;
   font-size: 0.95rem;
+  color: #e8ecef;
   list-style: none;
 }
 
@@ -395,7 +408,7 @@ section {
   display: inline-block;
   width: 20px;
   font-weight: 400;
-  color: #4a6d4d;
+  color: #5a8a5e;
 }
 
 .faq-list details[open] summary::before {
@@ -404,7 +417,7 @@ section {
 
 .faq-list .faq-answer {
   padding: 0 24px 18px 44px;
-  color: #9ba3b0;
+  color: #b0b8c4;
   font-size: 0.9rem;
   line-height: 1.6;
 }
@@ -412,9 +425,9 @@ section {
 /* === Footer === */
 footer {
   border-top: 1px solid #2a2d33;
-  padding: 40px 0;
+  padding: 28px 0;
   text-align: center;
-  color: #9ba3b0;
+  color: #6b7280;
   font-size: 0.85rem;
 }
 
@@ -427,12 +440,12 @@ footer {
 }
 
 .footer-links a {
-  color: #9ba3b0;
+  color: #5a8a5e;
   transition: color 0.2s;
 }
 
 .footer-links a:hover {
-  color: #4a6d4d;
+  color: #6a9d6d;
 }
 
 /* === Responsive === */
@@ -446,12 +459,12 @@ footer {
   }
 
   section {
-    padding: 56px 0;
+    padding: 40px 0;
   }
 
   .section-title {
     font-size: 1.4rem;
-    margin-bottom: 32px;
+    margin-bottom: 28px;
   }
 
   .pillars {
@@ -484,7 +497,7 @@ footer {
 
 @media (max-width: 480px) {
   .hero {
-    padding: 80px 0 56px;
+    padding: 60px 0 40px;
   }
 
   .hero h1 {
