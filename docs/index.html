@@ -103,12 +103,56 @@
   <!-- Install -->
   <section id="install">
     <div class="container">
-      <h2 class="section-title">Get started in one step</h2>
-      <div class="install-block">
-        <button class="copy-btn" data-copy="#install-code">Copy</button>
-        <pre><code id="install-code">- uses: xdustinface/manki@v4
-  with:
-    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}</code></pre>
+      <h2 class="section-title">Get started in 3 steps</h2>
+      <div class="quickstart-steps">
+        <div class="quickstart-step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Install the GitHub App</h3>
+            <p>Grant manki access to post review comments on your repositories.</p>
+            <a href="https://github.com/apps/manki-review">Install manki-review &rarr;</a>
+          </div>
+        </div>
+        <div class="quickstart-step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>Add your API key</h3>
+            <p>Set your Anthropic API key as a repository secret. Claude Max also works as an alternative.</p>
+            <div class="install-block">
+              <pre><code>gh secret set ANTHROPIC_API_KEY --repo &lt;owner&gt;/&lt;repo&gt;</code></pre>
+            </div>
+          </div>
+        </div>
+        <div class="quickstart-step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Add the workflow</h3>
+            <p>Create <code>.github/workflows/manki.yml</code> in your repository:</p>
+            <div class="install-block">
+              <button class="copy-btn" data-copy="#install-code">Copy</button>
+              <pre><code id="install-code">name: Code Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xdustinface/manki@v4
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="setup-link">
+        <a href="https://github.com/xdustinface/manki/blob/main/SETUP.md">See the full setup guide &rarr;</a>
       </div>
     </div>
   </section>

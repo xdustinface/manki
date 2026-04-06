@@ -21,8 +21,13 @@ body {
 }
 
 a {
-  color: #e8ecef;
+  color: #4a6d4d;
   text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: #6a9d6d;
 }
 
 /* === Layout === */
@@ -55,6 +60,7 @@ section {
   line-height: 1.25;
   max-width: 780px;
   margin: 0 auto 20px;
+  color: #e8ecef;
 }
 
 .hero .subhead {
@@ -85,6 +91,7 @@ section {
 
 .btn-primary:hover {
   background: #3a4d3d;
+  color: #e8ecef;
 }
 
 .btn-secondary {
@@ -95,12 +102,14 @@ section {
   border-radius: 8px;
   font-size: 1rem;
   font-weight: 600;
-  border: 1px solid #2a2d33;
-  transition: border-color 0.2s;
+  border: 1px solid #3a4d3d;
+  transition: border-color 0.2s, background 0.2s;
 }
 
 .btn-secondary:hover {
-  border-color: #9ba3b0;
+  border-color: #4a6d4d;
+  background: rgba(41, 54, 43, 0.2);
+  color: #e8ecef;
 }
 
 /* === Section headings === */
@@ -109,6 +118,7 @@ section {
   font-weight: 700;
   text-align: center;
   margin-bottom: 48px;
+  color: #3a4d3d;
 }
 
 /* === Feature Pillars === */
@@ -121,6 +131,7 @@ section {
 .pillar {
   background: #1a1d23;
   border: 1px solid #2a2d33;
+  border-top: 3px solid #3a4d3d;
   border-radius: 12px;
   padding: 32px 28px;
 }
@@ -149,8 +160,8 @@ section {
 .pipeline-stage {
   flex: 1;
   min-width: 160px;
-  background: #1a1d23;
-  border: 1px solid #2a2d33;
+  background: rgba(41, 54, 43, 0.15);
+  border: 1px solid #3a4d3d;
   border-radius: 12px;
   padding: 24px 20px;
   text-align: center;
@@ -173,7 +184,7 @@ section {
   display: flex;
   align-items: center;
   padding: 0 4px;
-  color: #2a2d33;
+  color: #3a4d3d;
   font-size: 1.5rem;
   flex-shrink: 0;
 }
@@ -190,6 +201,7 @@ section {
 .why-item {
   background: #1a1d23;
   border: 1px solid #2a2d33;
+  border-left: 3px solid #3a4d3d;
   border-radius: 12px;
   padding: 24px 28px;
 }
@@ -197,6 +209,7 @@ section {
 .why-item h4 {
   font-size: 1rem;
   font-weight: 600;
+  color: #4a6d4d;
   margin-bottom: 8px;
 }
 
@@ -207,14 +220,63 @@ section {
 }
 
 /* === Install === */
+.quickstart-steps {
+  max-width: 700px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.quickstart-step {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.step-number {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  background: #29362B;
+  color: #e8ecef;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-top: 2px;
+}
+
+.step-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-content h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.step-content p {
+  color: #9ba3b0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.step-content a {
+  font-weight: 500;
+}
+
 .install-block {
   background: #0a0c0f;
-  border: 1px solid #2a2d33;
+  border: 1px solid #3a4d3d;
   border-radius: 12px;
   padding: 28px 28px 24px;
   position: relative;
-  max-width: 700px;
-  margin: 0 auto;
 }
 
 .install-block pre {
@@ -245,6 +307,16 @@ section {
   background: #3a4d3d;
 }
 
+.setup-link {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.setup-link a {
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
 /* === See it in action === */
 .pr-cards {
   display: grid;
@@ -269,17 +341,18 @@ section {
   font-weight: 500;
   margin-bottom: 16px;
   line-height: 1.4;
+  color: #e8ecef;
 }
 
 .pr-card .pr-link {
-  color: #9ba3b0;
+  color: #4a6d4d;
   font-size: 0.85rem;
   font-weight: 500;
   transition: color 0.2s;
 }
 
 .pr-card .pr-link:hover {
-  color: #e8ecef;
+  color: #6a9d6d;
 }
 
 /* === FAQ === */
@@ -313,7 +386,7 @@ section {
   display: inline-block;
   width: 20px;
   font-weight: 400;
-  color: #9ba3b0;
+  color: #4a6d4d;
 }
 
 .faq-list details[open] summary::before {
@@ -350,7 +423,7 @@ footer {
 }
 
 .footer-links a:hover {
-  color: #e8ecef;
+  color: #4a6d4d;
 }
 
 /* === Responsive === */
