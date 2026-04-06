@@ -17,6 +17,7 @@ import {
   AGENT_POOL,
   TRIVIAL_VERIFIER_AGENT,
   PLANNER_TIMEOUT_MS,
+  MAX_AGENT_RETRIES,
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue } from './github';
@@ -1102,7 +1103,7 @@ describe('runReview', () => {
     expect(judgingIdx).toBeGreaterThan(reviewedIdx);
   });
 
-  it('fires onProgress with failure status when agent fails', async () => {
+  it('fires onProgress with failure then retrying then success when agent fails and retry succeeds', async () => {
     let callCount = 0;
     const clients: ReviewClients = {
       reviewer: {
@@ -1125,13 +1126,20 @@ describe('runReview', () => {
     const agentCompleteCalls = onProgress.mock.calls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
     );
-    expect(agentCompleteCalls.length).toBe(3);
+
+    // 3 initial agent-complete + 1 retrying + 1 retry success = 5
+    expect(agentCompleteCalls.length).toBe(5);
 
     const failedCalls = agentCompleteCalls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'failure',
     );
     expect(failedCalls.length).toBe(1);
-    expect(failedCalls[0][0].agentFindingCount).toBe(0);
+
+    const retryingCalls = agentCompleteCalls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'retrying',
+    );
+    expect(retryingCalls.length).toBe(1);
+    expect(retryingCalls[0][0].retryCount).toBe(1);
   });
 
   it('fires onProgress per agent in multi-pass mode', async () => {
@@ -1158,7 +1166,7 @@ describe('runReview', () => {
     }
   });
 
-  it('fires onProgress with failure status when all agents fail', async () => {
+  it('fires onProgress with failure status when all agents fail including retries', async () => {
     const clients: ReviewClients = {
       reviewer: {
         sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
@@ -1179,9 +1187,16 @@ describe('runReview', () => {
     const agentCalls = onProgress.mock.calls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
     );
-    expect(agentCalls.length).toBe(3);
-    for (const [progress] of agentCalls) {
-      expect(progress.agentStatus).toBe('failure');
+
+    // 3 initial failures + 2 retry rounds * (3 retrying + 3 failure) = 3 + 12 = 15
+    expect(agentCalls.length).toBe(15);
+
+    const failureCalls = agentCalls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'failure',
+    );
+    // 3 initial + 3 per retry round * 2 = 9
+    expect(failureCalls.length).toBe(9);
+    for (const [progress] of failureCalls) {
       expect(progress.agentFindingCount).toBe(0);
     }
 
@@ -1191,7 +1206,7 @@ describe('runReview', () => {
     expect(reviewedCalls.length).toBe(0);
   });
 
-  it('fires onProgress with failure status when all passes fail in multi-pass mode', async () => {
+  it('fires onProgress with failure status when all passes fail in multi-pass mode including retries', async () => {
     const clients: ReviewClients = {
       reviewer: {
         sendMessage: jest.fn().mockRejectedValue(new Error('API error')),
@@ -1212,24 +1227,31 @@ describe('runReview', () => {
     const agentCalls = onProgress.mock.calls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
     );
-    // Loop breaks after first agent failure
-    expect(agentCalls.length).toBe(1);
-    expect(agentCalls[0][0].agentStatus).toBe('failure');
-    expect(agentCalls[0][0].agentFindingCount).toBe(0);
+
+    // All 3 agents run (no break) + 2 retry rounds * (3 retrying + 3 failure) = 3 + 12 = 15
+    expect(agentCalls.length).toBe(15);
+
+    const failureCalls = agentCalls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'failure',
+    );
+    // 3 initial + 3*2 retries = 9
+    expect(failureCalls.length).toBe(9);
+    for (const [progress] of failureCalls) {
+      expect(progress.agentFindingCount).toBe(0);
+    }
   });
 
-  it('returns reviewComplete false with failedAgents when one agent fails in multi-pass mode', async () => {
-    let callCount = 0;
+  it('proceeds with quorum when one agent fails all retries in multi-pass mode', async () => {
     const findingJson = JSON.stringify([
       { severity: 'required', title: 'Found a bug', file: 'src/a.ts', line: 10, description: 'Bug.' },
     ]);
     const clients: ReviewClients = {
       reviewer: {
-        sendMessage: jest.fn().mockImplementation(() => {
-          callCount++;
-          // First agent (Security & Safety) has 2 passes that both fail;
-          // remaining agents succeed on all passes
-          if (callCount <= 2) return Promise.reject(new Error('API error'));
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          // Security & Safety agent always fails (identified by prompt content)
+          if (_sys.includes('Security & Safety')) {
+            return Promise.reject(new Error('API error'));
+          }
           return Promise.resolve({ content: findingJson });
         }),
       } as unknown as import('./claude').ClaudeClient,
@@ -1241,26 +1263,19 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     const onProgress = jest.fn();
 
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
 
-    expect(result.reviewComplete).toBe(false);
-    expect(result.failedAgents).toBeDefined();
-    expect(result.failedAgents!.length).toBe(1);
+    // Quorum met (2 of 3), so review proceeds
+    expect(result.reviewComplete).toBe(true);
+    expect(result.partialReview).toBe(true);
+    expect(result.partialNote).toContain('2 of 3');
+    expect(result.partialNote).toContain('Security & Safety');
     expect(result.failedAgents).toContain('Security & Safety');
-    expect(result.summary).toContain('Security & Safety');
-    expect(result.summary).toContain('Retry with @manki review');
 
-    const agentCalls = onProgress.mock.calls.filter(
-      (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
-    );
-    // Loop breaks after first agent failure, so only one agent-complete event fires
-    expect(agentCalls.length).toBe(1);
-
-    expect(agentCalls[0][0].agentStatus).toBe('failure');
-    expect(agentCalls[0][0].agentFindingCount).toBe(0);
-
-    // Judge should not run when agents fail
-    expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
+    // Judge should still run since quorum was met
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
   });
 
   it('applies suppressions from memory before judge', async () => {
@@ -1504,13 +1519,14 @@ describe('runReview', () => {
     expect(result.agentNames).toContain('Security & Safety');
   });
 
-  it('returns reviewComplete false with failedAgents when an agent fails in single-pass mode', async () => {
-    let callCount = 0;
+  it('proceeds with quorum when one agent fails all retries in single-pass mode', async () => {
     const clients: ReviewClients = {
       reviewer: {
-        sendMessage: jest.fn().mockImplementation(() => {
-          callCount++;
-          if (callCount === 1) return Promise.reject(new Error('Agent 1 failed'));
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          // Security & Safety always fails
+          if (_sys.includes('Security & Safety')) {
+            return Promise.reject(new Error('Agent permanently failed'));
+          }
           return Promise.resolve({ content: '[]' });
         }),
       } as unknown as import('./claude').ClaudeClient,
@@ -1522,13 +1538,13 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
     const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
-    expect(result.reviewComplete).toBe(false);
-    expect(result.verdict).toBe('COMMENT');
+    // Quorum met (2/3), review proceeds
+    expect(result.reviewComplete).toBe(true);
+    expect(result.partialReview).toBe(true);
     expect(result.failedAgents).toBeDefined();
     expect(result.failedAgents!.length).toBe(1);
-    expect(result.summary).toContain('failed');
-    expect(result.summary).toContain('Retry with @manki review');
-    expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
+    expect(result.partialNote).toContain('Security & Safety');
+    expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
   });
 
   it('uses planner result to set team size and effort when planner client is provided', async () => {
@@ -1876,6 +1892,165 @@ describe('runReview', () => {
     for (const [, length] of result.agentResponseLengths!) {
       expect(length).toBe(response.length);
     }
+  });
+
+  it('retries a failed agent and succeeds on second attempt', async () => {
+    const callsByAgent: Record<string, number> = {};
+    const findingJson = JSON.stringify([
+      { severity: 'suggestion', title: 'Found something', file: 'src/a.ts', line: 5, description: 'Desc.' },
+    ]);
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          // Track per-agent calls via system prompt content
+          const agentName = _sys.includes('Security & Safety') ? 'Security'
+            : _sys.includes('Architecture') ? 'Architecture'
+            : 'Correctness';
+          callsByAgent[agentName] = (callsByAgent[agentName] ?? 0) + 1;
+          // Security fails on first call, succeeds on retry
+          if (agentName === 'Security' && callsByAgent[agentName] === 1) {
+            return Promise.reject(new Error('Timeout'));
+          }
+          return Promise.resolve({ content: findingJson });
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    expect(result.partialReview).toBeUndefined();
+    expect(result.failedAgents).toBeUndefined();
+    // Security agent was called twice (initial fail + retry success)
+    expect(callsByAgent['Security']).toBe(2);
+  });
+
+  it('aborts when quorum not met after retries', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          // Only Correctness & Logic succeeds (1 of 3 — below quorum of 2)
+          if (_sys.includes('Correctness & Logic')) {
+            return Promise.resolve({ content: '[]' });
+          }
+          return Promise.reject(new Error('Permanent failure'));
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(false);
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.summary).toContain('failed after retries');
+    expect(result.failedAgents!.length).toBe(2);
+    expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
+  });
+
+  it('aborts when teamSize=1 agent fails all retries', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
+      prType: 'docs',
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockRejectedValue(new Error('Timeout')),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 2, totalDeletions: 0 });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    // teamSize=1, quorum=1, single agent failed = abort
+    expect(result.reviewComplete).toBe(false);
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.failedAgents!.length).toBe(1);
+    expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
+    // Reviewer called 3 times total (initial + 2 retries)
+    expect((clients.reviewer.sendMessage as jest.Mock).mock.calls.length).toBe(3);
+  });
+
+  it('fires retrying progress callbacks during retry cycle', async () => {
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          if (_sys.includes('Security & Safety')) {
+            return Promise.reject(new Error('Timeout'));
+          }
+          return Promise.resolve({ content: '[]' });
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const onProgress = jest.fn();
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, undefined, undefined, undefined, onProgress);
+
+    const retryingCalls = onProgress.mock.calls.filter(
+      (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'retrying',
+    );
+    // Security & Safety retried twice (MAX_AGENT_RETRIES = 2)
+    expect(retryingCalls.length).toBe(MAX_AGENT_RETRIES);
+    for (const [progress] of retryingCalls) {
+      expect(progress.agentName).toBe('Security & Safety');
+      expect(progress.retryCount).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('does not retry agents in multi-pass mode when agent failure is followed by recovery on retry', async () => {
+    const callsByAgent: Record<string, number> = {};
+    const findingJson = JSON.stringify([
+      { severity: 'suggestion', title: 'Bug', file: 'src/a.ts', line: 1, description: 'Desc.' },
+    ]);
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation((_sys: string) => {
+          const agentName = _sys.includes('Security & Safety') ? 'Security' : 'Other';
+          callsByAgent[agentName] = (callsByAgent[agentName] ?? 0) + 1;
+          // Security fails all initial passes but succeeds on first retry pass
+          if (agentName === 'Security' && callsByAgent[agentName] <= 2) {
+            return Promise.reject(new Error('Timeout'));
+          }
+          return Promise.resolve({ content: findingJson });
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_passes: 2 });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.reviewComplete).toBe(true);
+    // Security failed initial passes (2 calls) but succeeded on retry
+    expect(callsByAgent['Security']).toBeGreaterThanOrEqual(3);
   });
 });
 

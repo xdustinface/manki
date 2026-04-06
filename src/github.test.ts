@@ -1615,6 +1615,49 @@ describe('buildDashboard', () => {
     expect(md).toContain('**Planner** (3s)');
     expect(md).toContain('**Judge** — 6 kept · 4 dropped (65s)');
   });
+
+  it('renders retrying agent status with retry count', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'retrying', retryCount: 1 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 2, durationMs: 3000 },
+        { name: 'Correctness & Logic', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}⟳ Security & Safety — retrying (2/3)...`);
+    expect(md).toContain(`${INDENT}✓ Architecture & Design — 2 (3s)`);
+    expect(md).toContain(`${INDENT}⏳ Correctness & Logic`);
+  });
+
+  it('renders failed agent with retry count showing total attempts', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 100, agentCount: 3,
+      rawFindingCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 2000, retryCount: 2 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 4000 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 2, durationMs: 3000 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}✗ Security & Safety — failed after 3 attempts (2s)`);
+  });
+
+  it('renders failed agent without retry count as before', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 100, agentCount: 3,
+      rawFindingCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 2000 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 4000 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}✗ Security & Safety — failed (2s)`);
+    expect(md).not.toContain('attempts');
+  });
 });
 
 describe('updateProgressComment', () => {

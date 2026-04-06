@@ -199,7 +199,13 @@ function renderAgentLines(agents: AgentProgressEntry[]): string {
       return `${INDENT}✓ ${a.name} — ${a.findingCount ?? 0} (${formatDuration(a.durationMs ?? 0)})`;
     }
     if (a.status === 'failed') {
+      if (a.retryCount && a.retryCount > 0) {
+        return `${INDENT}✗ ${a.name} — failed after ${a.retryCount + 1} attempts (${formatDuration(a.durationMs ?? 0)})`;
+      }
       return `${INDENT}✗ ${a.name} — failed (${formatDuration(a.durationMs ?? 0)})`;
+    }
+    if (a.status === 'retrying') {
+      return `${INDENT}⟳ ${a.name} — retrying (${(a.retryCount ?? 0) + 1}/3)...`;
     }
     if (a.status === 'reviewing') {
       return `${INDENT}⏳ ${a.name}`;
