@@ -2174,7 +2174,7 @@ describe('runReview', () => {
     expect(retrySuccessCalls[0][0].completedAgents).toBeGreaterThan(failureCalls[0][0].completedAgents);
   });
 
-  it('does not retry agents in multi-pass mode when agent failure is followed by recovery on retry', async () => {
+  it('retries failed agents in multi-pass mode and recovers on subsequent pass', async () => {
     const callsByAgent: Record<string, number> = {};
     const findingJson = JSON.stringify([
       { severity: 'suggestion', title: 'Bug', file: 'src/a.ts', line: 1, description: 'Desc.' },
