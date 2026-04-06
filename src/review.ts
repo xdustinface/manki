@@ -323,7 +323,29 @@ const VALID_TEAM_SIZES = new Set([1, 3, 5, 7]);
 const VALID_EFFORTS = new Set(['low', 'medium', 'high']);
 const VALID_PR_TYPES = new Set(['feature', 'bugfix', 'refactor', 'docs', 'test', 'chore', 'rename']);
 
-function parseAgentPicks(
+/**
+ * Sanitize a free-text field from the planner LLM to prevent prompt injection.
+ * Strips markdown fences, instruction-like patterns, and limits to safe characters.
+ */
+export function sanitizePlannerField(raw: string, maxLength: number): string {
+  let s = raw.trim();
+  // Strip markdown code fences
+  s = s.replace(/```[\s\S]*?```/g, '');
+  // Strip inline code
+  s = s.replace(/`[^`]*`/g, '');
+  // Strip markdown headings
+  s = s.replace(/^#{1,6}\s+/gm, '');
+  // Strip instruction-like patterns (e.g., "You are...", "Ignore previous...", "System:")
+  s = s.replace(/\b(you are|ignore|forget|disregard|override)\b.*$/gim, '');
+  s = s.replace(/\b(system|assistant|user)\s*:.*$/gim, '');
+  // Only keep alphanumeric, spaces, and basic punctuation
+  s = s.replace(/[^a-zA-Z0-9 .,;:!?'"/+#&()-]/g, '');
+  // Collapse whitespace
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.slice(0, maxLength);
+}
+
+export function parseAgentPicks(
   raw: unknown,
   availableNames: Set<string>,
 ): AgentPick[] | null {
@@ -410,13 +432,11 @@ export async function runPlanner(
       }
     }
 
-    // Parse language and context
-    const language = typeof parsed.language === 'string' && parsed.language.trim()
-      ? parsed.language.trim().toLowerCase()
-      : undefined;
-    const context = typeof parsed.context === 'string' && parsed.context.trim()
-      ? parsed.context.trim()
-      : undefined;
+    // Parse and sanitize language and context to prevent prompt injection
+    const rawLang = typeof parsed.language === 'string' ? sanitizePlannerField(parsed.language, 100) : '';
+    const language = rawLang ? rawLang.toLowerCase() : undefined;
+    const rawCtx = typeof parsed.context === 'string' ? sanitizePlannerField(parsed.context, 200) : '';
+    const context = rawCtx || undefined;
 
     return { teamSize, reviewerEffort, judgeEffort, prType, agents: agents ?? undefined, language, context };
   } catch (error) {
