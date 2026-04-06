@@ -503,6 +503,7 @@ export async function runReview(
           const consistent = intersectFindings(retryPassFindings, threshold);
           core.info(`Multi-pass retry: ${agent.name} — ${retryPassFindings.length} passes, ${consistent.length} consistent findings`);
           allFindings.push(...consistent);
+          completedCount++;
 
           if (onProgress) {
             onProgress({
@@ -631,12 +632,13 @@ export async function runReview(
 
       const stillFailed: string[] = [];
       for (const settled of retryResults) {
-        // retryPromises never reject (caught internally), so all are fulfilled
-        const { agent, findings, durationMs } = (settled as PromiseFulfilledResult<{ agent: ReviewerAgent; findings: Finding[] | null; durationMs: number }>).value;
+        if (settled.status !== 'fulfilled') continue;
+        const { agent, findings, durationMs } = settled.value;
         if (findings !== null) {
           // Remove from failed list, add findings
           allFindings.push(...findings);
           progressFindingCount += findings.length;
+          completedCount++;
           core.info(`${agent.name}: retry ${retryCount[agent.name]} succeeded — ${findings.length} findings`);
           if (onProgress) {
             onProgress({
