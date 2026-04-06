@@ -170,6 +170,8 @@ export interface DashboardData {
   droppedCount?: number;
   agentProgress?: AgentProgressEntry[];
   plannerInfo?: Pick<PlannerResult, 'teamSize' | 'reviewerEffort' | 'judgeEffort' | 'prType'>;
+  keptSeverities?: Record<string, number>;
+  droppedSeverities?: Record<string, number>;
 }
 
 export interface JudgeDecision {

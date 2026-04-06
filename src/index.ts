@@ -730,11 +730,29 @@ async function runFullReview(
     }
 
     const droppedCount = rawFindingCount - result.findings.length;
+
+    const judgeDecisions = (result.allJudgedFindings || result.findings).map(f => ({
+      title: f.title,
+      severity: f.severity,
+      reasoning: f.judgeNotes || '',
+      confidence: f.judgeConfidence || 'medium',
+      kept: f.severity !== 'ignore',
+    }));
+
+    const keptSeverities: Record<string, number> = {};
+    const droppedSeverities: Record<string, number> = {};
+    for (const d of judgeDecisions) {
+      const bucket = d.kept ? keptSeverities : droppedSeverities;
+      bucket[d.severity] = (bucket[d.severity] ?? 0) + 1;
+    }
+
     const completeDashboard: DashboardData = {
       ...dashboard,
       phase: 'complete',
       keptCount: result.findings.length,
       droppedCount: droppedCount >= 0 ? droppedCount : 0,
+      keptSeverities,
+      droppedSeverities,
     };
 
     const timing = {
@@ -755,13 +773,7 @@ async function runFullReview(
         memoryRepo: config.memory?.repo ?? '',
         nitHandling,
       },
-      judgeDecisions: (result.allJudgedFindings || result.findings).map(f => ({
-        title: f.title,
-        severity: f.severity,
-        reasoning: f.judgeNotes || '',
-        confidence: f.judgeConfidence || 'medium',
-        kept: f.severity !== 'ignore',
-      })),
+      judgeDecisions,
       timing,
     };
 
