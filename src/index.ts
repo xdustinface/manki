@@ -612,6 +612,7 @@ async function runFullReview(
         name,
         findingsRaw: rawFindings.filter(f => f.reviewers.includes(name)).length,
         findingsKept: result.findings.filter(f => f.reviewers.includes(name)).length,
+        responseLength: result.agentResponseLengths?.get(name),
       }))
       : undefined;
 
