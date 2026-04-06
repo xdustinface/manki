@@ -982,44 +982,6 @@ async function runReviewerAgent(
   return { findings, responseLength: response.content.length };
 }
 
-const LANGUAGE_HINTS: Record<string, Record<string, string>> = {
-  'security & safety': {
-    rust: 'Focus on unsafe blocks, ownership violations, memory safety, and FFI boundaries.',
-    typescript: 'Focus on XSS, prototype pollution, injection, and unvalidated external input.',
-    javascript: 'Focus on XSS, prototype pollution, injection, and unvalidated external input.',
-    python: 'Focus on injection, pickle deserialization, eval/exec usage, and path traversal.',
-    go: 'Focus on goroutine leaks, unsafe pointer usage, and unchecked error returns.',
-  },
-  'correctness & logic': {
-    rust: 'Watch for integer overflow, unwrap on None/Err, and lifetime-related logic errors.',
-    typescript: 'Watch for null/undefined coercion, async/await pitfalls, and type assertion abuse.',
-    javascript: 'Watch for implicit type coercion, null/undefined confusion, and async pitfalls.',
-    python: 'Watch for mutable default arguments, off-by-one in range/slice, and exception swallowing.',
-    go: 'Watch for nil pointer dereference, ignored error returns, and goroutine race conditions.',
-  },
-  'testing & coverage': {
-    rust: 'Check for missing #[test] functions, untested error paths, and missing assertion macros.',
-    typescript: 'Check for missing test cases for new code paths and proper async test handling.',
-    javascript: 'Check for missing test cases for new code paths and proper async test handling.',
-    python: 'Check for missing pytest/unittest coverage and untested exception handlers.',
-    go: 'Check for missing test functions, table-driven test coverage, and error path testing.',
-  },
-  'performance & efficiency': {
-    rust: 'Watch for unnecessary clones, allocation in hot paths, and missing iterator combinators.',
-    typescript: 'Watch for unnecessary re-renders, synchronous blocking, and O(n^2) patterns.',
-    javascript: 'Watch for synchronous blocking, O(n^2) patterns, and memory leaks from closures.',
-    python: 'Watch for N+1 queries, unnecessary list copies, and blocking I/O in async code.',
-    go: 'Watch for unnecessary allocations, string concatenation in loops, and sync.Mutex contention.',
-  },
-};
-
-function getLanguageHint(reviewerName: string, language: string): string | undefined {
-  const key = reviewerName.toLowerCase();
-  const hints = LANGUAGE_HINTS[key];
-  if (!hints) return undefined;
-  return hints[language.toLowerCase()];
-}
-
 export function buildReviewerSystemPrompt(
   reviewer: ReviewerAgent,
   config: ReviewConfig,
@@ -1034,13 +996,6 @@ Your role: ${reviewer.name}`;
     prompt += `\n\nThis PR is primarily ${language ?? 'unknown language'} code`;
     if (context) prompt += ` in a ${context} project`;
     prompt += '.';
-
-    if (language) {
-      const hint = getLanguageHint(reviewer.name, language);
-      if (hint) {
-        prompt += ` ${hint}`;
-      }
-    }
   }
 
   prompt += `

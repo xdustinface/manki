@@ -2790,18 +2790,6 @@ describe('buildReviewerSystemPrompt with language and context', () => {
     expect(prompt).toContain('This PR is primarily rust code in a blockchain consensus library project.');
   });
 
-  it('includes language-specific hint for security + rust', () => {
-    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig(), 'rust');
-    expect(prompt).toContain('unsafe blocks');
-    expect(prompt).toContain('memory safety');
-  });
-
-  it('includes language-specific hint for security + typescript', () => {
-    const prompt = buildReviewerSystemPrompt(reviewer, makeConfig(), 'typescript');
-    expect(prompt).toContain('XSS');
-    expect(prompt).toContain('prototype pollution');
-  });
-
   it('includes language without context', () => {
     const prompt = buildReviewerSystemPrompt(reviewer, makeConfig(), 'python');
     expect(prompt).toContain('This PR is primarily python code.');
@@ -2811,24 +2799,6 @@ describe('buildReviewerSystemPrompt with language and context', () => {
   it('omits language section when not provided', () => {
     const prompt = buildReviewerSystemPrompt(reviewer, makeConfig());
     expect(prompt).not.toContain('This PR is primarily');
-  });
-
-  it('includes testing hints for testing agent + rust', () => {
-    const testReviewer: ReviewerAgent = { name: 'Testing & Coverage', focus: 'Missing tests' };
-    const prompt = buildReviewerSystemPrompt(testReviewer, makeConfig(), 'rust');
-    expect(prompt).toContain('#[test]');
-  });
-
-  it('includes correctness hints for correctness agent + typescript', () => {
-    const correctnessReviewer: ReviewerAgent = { name: 'Correctness & Logic', focus: 'Edge cases' };
-    const prompt = buildReviewerSystemPrompt(correctnessReviewer, makeConfig(), 'typescript');
-    expect(prompt).toContain('null/undefined coercion');
-  });
-
-  it('includes performance hints for performance agent + go', () => {
-    const perfReviewer: ReviewerAgent = { name: 'Performance & Efficiency', focus: 'Allocations' };
-    const prompt = buildReviewerSystemPrompt(perfReviewer, makeConfig(), 'go');
-    expect(prompt).toContain('sync.Mutex');
   });
 
   it('places language section before review instructions', () => {
@@ -3159,11 +3129,6 @@ describe('buildReviewerSystemPrompt sanitized context', () => {
     expect(prompt).not.toContain('project.');
   });
 
-  it('includes language-specific hints per agent specialty', () => {
-    const testAgent: ReviewerAgent = { name: 'Testing & Coverage', focus: 'Missing tests' };
-    const prompt = buildReviewerSystemPrompt(testAgent, makeConfig(), 'rust');
-    expect(prompt).toContain('#[test]');
-  });
 });
 
 describe('runPlanner teamSize correction', () => {
