@@ -488,9 +488,11 @@ export async function runReview(
         );
 
         const retryPassFindings: Finding[][] = [];
+        let retryTotalResponseLength = 0;
         for (const result of retryPassResults) {
           if (result.status === 'fulfilled') {
-            retryPassFindings.push(result.value);
+            retryPassFindings.push(result.value.findings);
+            retryTotalResponseLength += result.value.responseLength;
           } else {
             core.warning(`${agent.name} retry pass failed: ${result.reason}`);
           }
@@ -501,6 +503,7 @@ export async function runReview(
           const consistent = intersectFindings(retryPassFindings, threshold);
           core.info(`Multi-pass retry: ${agent.name} — ${retryPassFindings.length} passes, ${consistent.length} consistent findings`);
           allFindings.push(...consistent);
+          agentResponseLengths.set(agent.name, retryTotalResponseLength);
           completedCount++;
 
           if (onProgress) {
@@ -622,26 +625,27 @@ export async function runReview(
       const retryPromises = agentsToRetry.map(agent => {
         const startTime = Date.now();
         return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort)
-          .then(findings => ({ agent, findings, durationMs: Date.now() - startTime }))
-          .catch(() => ({ agent, findings: null as Finding[] | null, durationMs: Date.now() - startTime }));
+          .then(agentResult => ({ agent, agentResult, durationMs: Date.now() - startTime }))
+          .catch(() => ({ agent, agentResult: null as AgentResult | null, durationMs: Date.now() - startTime }));
       });
 
       const retryResults = await Promise.allSettled(retryPromises);
 
       const stillFailed: string[] = [];
       for (const settled of retryResults) {
-        const { agent, findings, durationMs } = (settled as PromiseFulfilledResult<{ agent: ReviewerAgent; findings: Finding[] | null; durationMs: number }>).value;
-        if (findings !== null) {
+        const { agent, agentResult, durationMs } = (settled as PromiseFulfilledResult<{ agent: ReviewerAgent; agentResult: AgentResult | null; durationMs: number }>).value;
+        if (agentResult !== null) {
           // Remove from failed list, add findings
-          allFindings.push(...findings);
-          progressFindingCount += findings.length;
+          allFindings.push(...agentResult.findings);
+          agentResponseLengths.set(agent.name, agentResult.responseLength);
+          progressFindingCount += agentResult.findings.length;
           completedCount++;
-          core.info(`${agent.name}: retry ${retryCount[agent.name]} succeeded — ${findings.length} findings`);
+          core.info(`${agent.name}: retry ${retryCount[agent.name]} succeeded — ${agentResult.findings.length} findings`);
           if (onProgress) {
             onProgress({
               phase: 'agent-complete',
               agentName: agent.name,
-              agentFindingCount: findings.length,
+              agentFindingCount: agentResult.findings.length,
               agentDurationMs: durationMs,
               agentStatus: 'success',
               rawFindingCount: progressFindingCount,
