@@ -5,6 +5,7 @@ import * as github from '@actions/github';
 
 import { AgentProgressEntry, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
+import { MAX_AGENT_RETRIES } from './review';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -205,7 +206,7 @@ function renderAgentLines(agents: AgentProgressEntry[]): string {
       return `${INDENT}✗ ${a.name} — failed (${formatDuration(a.durationMs ?? 0)})`;
     }
     if (a.status === 'retrying') {
-      return `${INDENT}⟳ ${a.name} — retrying (${(a.retryCount ?? 0) + 1}/3)...`;
+      return `${INDENT}⟳ ${a.name} — retrying (${(a.retryCount ?? 0) + 1}/${MAX_AGENT_RETRIES + 1})...`;
     }
     if (a.status === 'reviewing') {
       return `${INDENT}⏳ ${a.name}`;

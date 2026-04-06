@@ -632,8 +632,7 @@ export async function runReview(
 
       const stillFailed: string[] = [];
       for (const settled of retryResults) {
-        if (settled.status !== 'fulfilled') continue;
-        const { agent, findings, durationMs } = settled.value;
+        const { agent, findings, durationMs } = (settled as PromiseFulfilledResult<{ agent: ReviewerAgent; findings: Finding[] | null; durationMs: number }>).value;
         if (findings !== null) {
           // Remove from failed list, add findings
           allFindings.push(...findings);
