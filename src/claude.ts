@@ -33,13 +33,13 @@ function processJsonLine(line: string): { text: string; replace: boolean } {
 }
 
 /** Build diagnostic snippets for timeout/stale error messages. */
-function buildTimeoutDiagnostics(lastStdoutChunk: string, stderrText: string): { details: string; stdoutSnippet: string; stderrSnippet: string } {
+function buildTimeoutDiagnostics(lastStdoutChunk: string, stderrText: string): string {
   const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
   const stderrSnippet = sanitizeLogOutput(stderrText.slice(0, 500));
   const parts: string[] = [];
   if (stdoutSnippet) parts.push(`Last stdout: ${stdoutSnippet}`);
   if (stderrSnippet) parts.push(`stderr: ${stderrSnippet}`);
-  return { details: parts.join('. '), stdoutSnippet, stderrSnippet };
+  return parts.join('. ');
 }
 
 let cliInstallPromise: Promise<string> | null = null;
@@ -263,14 +263,14 @@ export class ClaudeClient {
         }
         stderr += stderrDecoder.end();
         if (stale) {
-          const { details } = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
+          const details = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
           const msg = `Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));
           return;
         }
         if (timedOut) {
-          const { details } = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
+          const details = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
           const msg = `Claude CLI timed out after 600s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));

@@ -459,6 +459,7 @@ describe('sendViaOAuth — error paths', () => {
 
       const err: Error = await promise.then(() => { throw new Error('expected rejection'); }, (e) => e);
       expect(err.message).toContain('Claude CLI timed out after 600s');
+      expect(err.message).toContain('Last stdout: keepalive');
       expect(err.message).toContain('stderr: some diagnostic output');
     } finally {
       jest.useRealTimers();
