@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manki — Multi-stage AI Code Review for GitHub</title>
+  <meta name="description" content="Self-hosted, multi-agent AI code review that runs as a GitHub Action. A planner picks the team, agents review in parallel, a judge filters the noise.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>Multi-stage, multi-agent AI code review for GitHub&nbsp;&mdash; self-hosted, provider-neutral.</h1>
+      <p class="subhead">A planner picks the team, agents review in parallel, a judge filters the noise.</p>
+      <div class="cta-group">
+        <a href="https://github.com/xdustinface/manki" class="btn-primary">Star on GitHub</a>
+        <a href="#install" class="btn-secondary">Get started</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature Pillars -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">How it works</h2>
+      <div class="pillars">
+        <div class="pillar">
+          <h3>Multi-stage pipeline</h3>
+          <p>Planner, Reviewer, Judge, Dedup. Each stage has a specific job; the judge filters noise before you see findings.</p>
+        </div>
+        <div class="pillar">
+          <h3>Bring your own model</h3>
+          <p>Configure Claude today; multi-provider support coming soon. Your API key, your compute.</p>
+        </div>
+        <div class="pillar">
+          <h3>Open source, self-hosted</h3>
+          <p>Runs as a GitHub Action in your repo. No SaaS dependency, no vendor lock-in, no subscription required.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pipeline Visual -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">The review pipeline</h2>
+      <div class="pipeline">
+        <div class="pipeline-stage">
+          <h4>Planner</h4>
+          <p>Picks team size and effort based on the PR</p>
+        </div>
+        <div class="pipeline-arrow" aria-hidden="true">&rarr;</div>
+        <div class="pipeline-stage">
+          <h4>Reviewer</h4>
+          <p>Parallel specialist agents produce findings</p>
+        </div>
+        <div class="pipeline-arrow" aria-hidden="true">&rarr;</div>
+        <div class="pipeline-stage">
+          <h4>Judge</h4>
+          <p>Evaluates, filters, classifies findings by severity</p>
+        </div>
+        <div class="pipeline-arrow" aria-hidden="true">&rarr;</div>
+        <div class="pipeline-stage">
+          <h4>Dedup</h4>
+          <p>Filters findings that match previously-dismissed ones</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Why Manki -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">Why manki?</h2>
+      <div class="why-list">
+        <div class="why-item">
+          <h4>Self-hosted</h4>
+          <p>Your code never leaves your CI runner. No data shared with third-party SaaS platforms.</p>
+        </div>
+        <div class="why-item">
+          <h4>Multi-stage</h4>
+          <p>Planner + parallel reviewers + judge. Not a single LLM call &mdash; a coordinated review team.</p>
+        </div>
+        <div class="why-item">
+          <h4>Provider-neutral</h4>
+          <p>Bring your own API key, swap models freely. No lock-in to a specific vendor.</p>
+        </div>
+        <div class="why-item">
+          <h4>Open source</h4>
+          <p>Inspect, fork, customize. No black box &mdash; you can read every prompt and every line of code.</p>
+        </div>
+        <div class="why-item">
+          <h4>No subscription</h4>
+          <p>Pay only for API usage. No per-seat fees, no monthly plans, no surprise invoices.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install">
+    <div class="container">
+      <h2 class="section-title">Get started in one step</h2>
+      <div class="install-block">
+        <button class="copy-btn" data-copy="#install-code">Copy</button>
+        <pre><code id="install-code">- uses: xdustinface/manki@v4
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- See it in action -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">See it in action</h2>
+      <p style="text-align:center;color:#9ba3b0;margin-bottom:32px;">Real reviews on real PRs &mdash; no staged demos.</p>
+      <div class="pr-cards">
+        <div class="pr-card">
+          <span class="pr-title">run dedup before judge to fix stale summary</span>
+          <a href="https://github.com/xdustinface/manki/pull/472" class="pr-link">View review &rarr;</a>
+        </div>
+        <div class="pr-card">
+          <span class="pr-title">embed version in `manki-bot` comment marker</span>
+          <a href="https://github.com/xdustinface/manki/pull/468" class="pr-link">View review &rarr;</a>
+        </div>
+        <div class="pr-card">
+          <span class="pr-title">progress dashboard — stage grouping, icons, no pre-planner flicker</span>
+          <a href="https://github.com/xdustinface/manki/pull/469" class="pr-link">View review &rarr;</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section>
+    <div class="container">
+      <h2 class="section-title">FAQ</h2>
+      <div class="faq-list">
+        <details>
+          <summary>Does manki work without Claude?</summary>
+          <div class="faq-answer">Not yet, but multi-provider support is planned. Today it requires an Anthropic API key or a Claude Max subscription.</div>
+        </details>
+        <details>
+          <summary>How much does it cost to run?</summary>
+          <div class="faq-answer">You pay only for API usage. A typical PR review costs $0.05&ndash;$0.50 depending on diff size and model.</div>
+        </details>
+        <details>
+          <summary>Is my code sent to third parties?</summary>
+          <div class="faq-answer">Your code is sent to your configured AI provider's API (e.g., Anthropic). Manki itself stores nothing.</div>
+        </details>
+        <details>
+          <summary>How do I switch from a hosted review tool?</summary>
+          <div class="faq-answer">Add manki to your workflow, disable the old tool. Manki uses standard GitHub PR comments, no migration needed.</div>
+        </details>
+        <details>
+          <summary>Can I customize the review team?</summary>
+          <div class="faq-answer">Yes. Configure specialist agents in <code>.manki.yml</code> &mdash; name, focus area, and how many run per review.</div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-links">
+        <a href="https://github.com/xdustinface/manki">GitHub</a>
+        <a href="https://github.com/xdustinface/manki/blob/main/SETUP.md">Setup guide</a>
+        <a href="https://github.com/xdustinface/manki/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/xdustinface/manki/blob/main/LICENSE">AGPL-3.0 License</a>
+      </div>
+      <p>Built with care by xdustinface</p>
+    </div>
+  </footer>
+
+  <script src="copy.js"></script>
+</body>
+</html>
