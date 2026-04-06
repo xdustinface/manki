@@ -275,8 +275,8 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
   return summary.slice(0, 2000);
 }
 
-export function buildPlannerSystemPrompt(agentNames: string[]): string {
-  const agentList = agentNames.map(n => `  - "${n}"`).join('\n');
+export function buildPlannerSystemPrompt(agents: Array<{ name: string; focus: string }>): string {
+  const agentList = agents.map(a => `  - "${a.name}" — ${a.focus}`).join('\n');
 
   return `You are a code review planning assistant. Analyze this PR and decide how to review it.
 
@@ -376,8 +376,7 @@ export async function runPlanner(
   try {
     const pool = buildAgentPool(customReviewers);
     const availableNames = new Set(pool.map(a => a.name));
-    const agentNames = pool.map(a => a.name);
-    const systemPrompt = buildPlannerSystemPrompt(agentNames);
+    const systemPrompt = buildPlannerSystemPrompt(pool);
 
     const userMessage = buildPlannerSummary(diff, prContext);
     const response = await Promise.race([

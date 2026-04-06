@@ -2599,23 +2599,27 @@ describe('selectTeam with teamSizeOverride', () => {
 });
 
 describe('buildPlannerSystemPrompt', () => {
-  it('lists all agent names in the prompt', () => {
-    const names = ['Security & Safety', 'Correctness & Logic', 'Custom Agent'];
-    const prompt = buildPlannerSystemPrompt(names);
-    expect(prompt).toContain('"Security & Safety"');
-    expect(prompt).toContain('"Correctness & Logic"');
-    expect(prompt).toContain('"Custom Agent"');
+  it('lists all agent names with focus descriptions in the prompt', () => {
+    const agents = [
+      { name: 'Security & Safety', focus: 'vulnerabilities, injection, auth' },
+      { name: 'Correctness & Logic', focus: 'edge cases, off-by-one' },
+      { name: 'Custom Agent', focus: 'custom domain checks' },
+    ];
+    const prompt = buildPlannerSystemPrompt(agents);
+    expect(prompt).toContain('"Security & Safety" — vulnerabilities, injection, auth');
+    expect(prompt).toContain('"Correctness & Logic" — edge cases, off-by-one');
+    expect(prompt).toContain('"Custom Agent" — custom domain checks');
   });
 
   it('includes agents array in the example output', () => {
-    const prompt = buildPlannerSystemPrompt(['A']);
+    const prompt = buildPlannerSystemPrompt([{ name: 'A', focus: 'test focus' }]);
     expect(prompt).toContain('"agents"');
     expect(prompt).toContain('"language"');
     expect(prompt).toContain('"context"');
   });
 
   it('does not include reviewerEffort in required output', () => {
-    const prompt = buildPlannerSystemPrompt(['A']);
+    const prompt = buildPlannerSystemPrompt([{ name: 'A', focus: 'test focus' }]);
     // The word "reviewerEffort" should not appear as a required field
     // (it may appear in the example output but not in the "Decide" section)
     expect(prompt).not.toContain('reviewerEffort:');
@@ -3036,7 +3040,7 @@ describe('parseAgentPicks', () => {
     expect(result).toHaveLength(5);
   });
 
-  it('returns null when duplicate agent names appear', () => {
+  it('allows duplicate agent names (dedup handled by selectTeam)', () => {
     // The second entry with the same valid name still has a valid name and effort,
     // so parseAgentPicks allows it — dedup happens in selectTeam
     const raw = [
@@ -3212,8 +3216,8 @@ describe('runPlanner teamSize correction', () => {
 
     expect(result).not.toBeNull();
     expect(result!.agents).toHaveLength(4);
-    // 4 is equidistant from 3 and 5; reduce picks closest valid = 5 or 3
-    expect([3, 5]).toContain(result!.teamSize);
+    // 4 is equidistant from 3 and 5; reduce keeps the first minimum (3)
+    expect(result!.teamSize).toBe(3);
   });
 
   it('corrects 2-agent picks to teamSize=3, never teamSize=1', async () => {
