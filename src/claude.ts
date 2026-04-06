@@ -186,6 +186,7 @@ export class ClaudeClient {
       timer.unref();
 
       const handleStale = (): void => {
+        if (outputExceeded || timedOut) return;
         stale = true;
         clearTimeout(timer);
         child.kill('SIGTERM');
@@ -200,6 +201,7 @@ export class ClaudeClient {
         if (outputExceeded) return;
         outputExceeded = true;
         clearTimeout(timer);
+        clearTimeout(staleTimer);
         child.kill('SIGTERM');
         outputKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
         outputKillTimer.unref();

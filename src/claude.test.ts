@@ -844,7 +844,8 @@ describe('sendViaOAuth — stale process detection', () => {
       // Simulate process exit after SIGTERM
       closeCb!(null, 'SIGTERM');
 
-      await expect(promise).rejects.toThrow(`Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s`);
+      const err: Error = await promise.then(() => { throw new Error('expected rejection'); }, (e) => e);
+      expect(err.message).toContain(`Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s`);
     } finally {
       jest.useRealTimers();
     }
@@ -933,6 +934,7 @@ describe('sendViaOAuth — stale process detection', () => {
 
       await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
 
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
       closeCb!(null, 'SIGTERM');
 
       await expect(promise).rejects.toThrow('Last stdout: partial output here');
@@ -975,6 +977,7 @@ describe('sendViaOAuth — stale process detection', () => {
       stdoutCb!(Buffer.from('second-part'));
 
       await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
       closeCb!(null, 'SIGTERM');
 
       await expect(promise).rejects.toThrow('Last stdout: first-part|second-part');
@@ -1017,6 +1020,7 @@ describe('sendViaOAuth — stale process detection', () => {
       stdoutCb!(Buffer.from('B'.repeat(20)));
 
       await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
       closeCb!(null, 'SIGTERM');
 
       const err = await promise.catch((e: unknown) => e) as Error;
@@ -1124,6 +1128,49 @@ describe('sendViaOAuth — stale process detection', () => {
       expect(err.message).toContain('[redacted-workflow-cmd]');
       expect(err.message).not.toContain('::warning');
       expect(err.message).not.toContain('::set-env');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('escalates to SIGKILL when process does not exit within 5s of stale SIGTERM', async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = {
+        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
+        stdout: { on: jest.fn() },
+        stderr: { on: jest.fn() },
+        on: jest.fn(),
+        kill: jest.fn(),
+      };
+
+      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
+
+      proc.stdout.on.mockImplementation(() => {});
+      proc.stderr.on.mockImplementation(() => {});
+      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'close') closeCb = cb as typeof closeCb;
+      });
+
+      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
+
+      const promise = client.sendMessage('sys', 'user');
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      // Fire the stale timeout
+      await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+
+      // Process does not exit — advance past the 5s SIGKILL escalation timeout
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+
+      // Simulate process exit after SIGKILL
+      closeCb!(null, 'SIGKILL');
+
+      await expect(promise).rejects.toThrow(`Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s`);
     } finally {
       jest.useRealTimers();
     }
