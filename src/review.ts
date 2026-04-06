@@ -284,7 +284,7 @@ export function buildPlannerSystemPrompt(agentNames: string[]): string {
 
 Decide:
 1. teamSize: 1, 3, 5, or 7 reviewer agents (odd numbers for majority voting).
-   Default to 3. Only go to 5 when the PR genuinely needs more specialist perspectives than 3 agents can cover. 7 is rare — reserve it for changes where missing a specialist would be dangerous.
+   Default to 3. Scale to 5 when the PR touches core infrastructure, spans multiple subsystems, or has security implications. 7 is rare — reserve it for changes where missing a specialist would be dangerous. Diff size alone doesn't determine team size — a 50-line auth change needs more eyes than a 500-line rename.
    - 1: changes where a bug is unrealistic (docs, comments, renames)
    - 3: most PRs — bug fixes, features, refactors
    - 5: PRs that span multiple concerns or subsystems
