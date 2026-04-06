@@ -16,19 +16,30 @@ export function sanitizeLogOutput(text: string): string {
   return text.replace(/::[a-z].*$/gim, '[redacted-workflow-cmd]');
 }
 
-/** Parse a single JSON-stream line emitted by Claude CLI and accumulate into output. */
-function processJsonLine(line: string, state: { output: string }): void {
+/** Parse a single JSON-stream line emitted by Claude CLI and return a text delta or final result. */
+function processJsonLine(line: string): { text: string; replace: boolean } {
   try {
     const event = JSON.parse(line);
     if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
-      state.output += event.delta.text;
+      return { text: event.delta.text, replace: false };
     }
     if (event.type === 'result' && typeof event.result === 'string') {
-      state.output = event.result;
+      return { text: event.result, replace: true };
     }
   } catch {
     // Non-JSON line (e.g. verbose debug output) — skip silently
   }
+  return { text: '', replace: false };
+}
+
+/** Build diagnostic snippets for timeout/stale error messages. */
+function buildTimeoutDiagnostics(lastStdoutChunk: string, stderrText: string): { details: string; stdoutSnippet: string; stderrSnippet: string } {
+  const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
+  const stderrSnippet = sanitizeLogOutput(stderrText.slice(0, 500));
+  const parts: string[] = [];
+  if (stdoutSnippet) parts.push(`Last stdout: ${stdoutSnippet}`);
+  if (stderrSnippet) parts.push(`stderr: ${stderrSnippet}`);
+  return { details: parts.join('. '), stdoutSnippet, stderrSnippet };
 }
 
 let cliInstallPromise: Promise<string> | null = null;
@@ -211,12 +222,15 @@ export class ClaudeClient {
         const lines = jsonBuffer.split('\n');
         jsonBuffer = lines.pop() ?? '';
 
-        const outputState = { output };
         for (const line of lines) {
           if (!line.trim()) continue;
-          processJsonLine(line, outputState);
+          const delta = processJsonLine(line);
+          if (delta.replace) {
+            output = delta.text;
+          } else {
+            output += delta.text;
+          }
         }
-        output = outputState.output;
       });
       child.stderr.on('data', (data: Buffer) => {
         if (outputExceeded || settled) return;
@@ -233,31 +247,24 @@ export class ClaudeClient {
         if (remaining) {
           jsonBuffer += remaining;
           if (jsonBuffer.trim()) {
-            const flushState = { output };
-            processJsonLine(jsonBuffer, flushState);
-            output = flushState.output;
+            const delta = processJsonLine(jsonBuffer);
+            if (delta.replace) {
+              output = delta.text;
+            } else {
+              output += delta.text;
+            }
           }
         }
         stderr += stderrDecoder.end();
         if (stale) {
-          const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
-          const stderrSnippet = sanitizeLogOutput(stderr.slice(0, 500));
-          const details = [
-            stdoutSnippet ? `Last stdout: ${stdoutSnippet}` : '',
-            stderrSnippet ? `stderr: ${stderrSnippet}` : '',
-          ].filter(Boolean).join('. ');
+          const { details } = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
           const msg = `Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));
           return;
         }
         if (timedOut) {
-          const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
-          const stderrSnippet = sanitizeLogOutput(stderr.slice(0, 500));
-          const details = [
-            stdoutSnippet ? `Last stdout: ${stdoutSnippet}` : '',
-            stderrSnippet ? `stderr: ${stderrSnippet}` : '',
-          ].filter(Boolean).join('. ');
+          const { details } = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
           const msg = `Claude CLI timed out after 600s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));
@@ -274,9 +281,7 @@ export class ClaudeClient {
           return;
         }
         const content = output.trim();
-        core.startGroup('Claude CLI response');
-        core.info(content);
-        core.endGroup();
+        core.debug(sanitizeLogOutput(content.slice(0, 200)));
         resolve({ content });
       });
 
@@ -345,9 +350,7 @@ export class ClaudeClient {
 
     const textBlocks = response.content.filter((b) => b.type === 'text');
     const content = textBlocks.map((b) => 'text' in b ? b.text : '').join('\n');
-    core.startGroup('Claude API response');
-    core.info(content);
-    core.endGroup();
+    core.debug(sanitizeLogOutput(content.slice(0, 200)));
 
     return { content };
   }
