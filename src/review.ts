@@ -378,6 +378,7 @@ export async function runReview(
 
   const allFindings: Finding[] = [];
   const failedAgents: string[] = [];
+  const agentResponseLengths = new Map<string, number>();
 
   let completedCount = 0;
   let progressFindingCount = 0;
@@ -395,14 +396,17 @@ export async function runReview(
       );
 
       const passFindings: Finding[][] = [];
+      let totalResponseLength = 0;
       for (const result of passResults) {
         if (result.status === 'fulfilled') {
-          passFindings.push(result.value);
+          passFindings.push(result.value.findings);
+          totalResponseLength += result.value.responseLength;
         } else {
           core.warning(`${agent.name} pass failed: ${result.reason}`);
         }
       }
 
+      agentResponseLengths.set(agent.name, totalResponseLength);
       completedCount++;
 
       if (passFindings.length > 0) {
@@ -412,12 +416,17 @@ export async function runReview(
         core.info(`Multi-pass: ${agent.name} — ${passFindings.length} passes, ${consistent.length} consistent findings (from ${totalRaw} raw)`);
         allFindings.push(...consistent);
 
+        const durationMs = Date.now() - startTime;
+        if (consistent.length === 0 && durationMs < 15_000) {
+          core.warning(`${agent.name}: 0 findings in ${(durationMs / 1000).toFixed(1)}s — suspiciously fast`);
+        }
+
         if (onProgress) {
           onProgress({
             phase: 'agent-complete',
             agentName: agent.name,
             agentFindingCount: consistent.length,
-            agentDurationMs: Date.now() - startTime,
+            agentDurationMs: durationMs,
             agentStatus: 'success',
             rawFindingCount: allFindings.length,
             completedAgents: completedCount,
@@ -448,22 +457,29 @@ export async function runReview(
     const agentPromises = team.agents.map(agent => {
       const startTime = Date.now();
       return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort)
-        .then(findings => {
+        .then(agentResult => {
           completedCount++;
-          progressFindingCount += findings.length;
+          agentResponseLengths.set(agent.name, agentResult.responseLength);
+          progressFindingCount += agentResult.findings.length;
+          const durationMs = Date.now() - startTime;
+
+          if (agentResult.findings.length === 0 && durationMs < 15_000) {
+            core.warning(`${agent.name}: 0 findings in ${(durationMs / 1000).toFixed(1)}s — suspiciously fast`);
+          }
+
           if (onProgress) {
             onProgress({
               phase: 'agent-complete',
               agentName: agent.name,
-              agentFindingCount: findings.length,
-              agentDurationMs: Date.now() - startTime,
+              agentFindingCount: agentResult.findings.length,
+              agentDurationMs: durationMs,
               agentStatus: 'success',
               rawFindingCount: progressFindingCount,
               completedAgents: completedCount,
               totalAgents: team.agents.length,
             });
           }
-          return findings;
+          return agentResult.findings;
         })
         .catch(error => {
           completedCount++;
@@ -623,7 +639,13 @@ export async function runReview(
     staticDedupCount,
     llmDedupCount,
     suppressionCount,
+    agentResponseLengths,
   };
+}
+
+interface AgentResult {
+  findings: Finding[];
+  responseLength: number;
 }
 
 async function runReviewerAgent(
@@ -637,13 +659,14 @@ async function runReviewerAgent(
   memoryContext?: string,
   linkedIssues?: LinkedIssue[],
   effort?: 'low' | 'medium' | 'high',
-): Promise<Finding[]> {
+): Promise<AgentResult> {
   const systemPrompt = buildReviewerSystemPrompt(reviewer, config);
   const userMessage = buildReviewerUserMessage(rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues);
 
   const options = effort ? { effort } : undefined;
   const response = await client.sendMessage(systemPrompt, userMessage, options);
-  return parseFindings(response.content, reviewer.name);
+  const findings = parseFindings(response.content, reviewer.name);
+  return { findings, responseLength: response.content.length };
 }
 
 export function buildReviewerSystemPrompt(reviewer: ReviewerAgent, config: ReviewConfig): string {
@@ -763,12 +786,18 @@ export function buildReviewerUserMessage(
 }
 
 export function parseFindings(responseText: string, reviewerName: string): Finding[] {
+  core.debug(`${reviewerName} response length: ${responseText.length}`);
+
+  if (responseText.trim().length === 0) {
+    return [];
+  }
+
   const jsonText = extractJSON(responseText);
 
   try {
     const parsed = JSON.parse(jsonText);
     if (!Array.isArray(parsed)) {
-      core.warning(`${reviewerName} did not return an array, got: ${typeof parsed}`);
+      core.warning(`${reviewerName}: expected array but got ${typeof parsed} (response length: ${responseText.length})`);
       return [];
     }
 
@@ -782,7 +811,8 @@ export function parseFindings(responseText: string, reviewerName: string): Findi
       reviewers: [reviewerName],
     }));
   } catch (e) {
-    core.warning(`Failed to parse findings from ${reviewerName}: ${e}`);
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    core.warning(`${reviewerName}: malformed response (length: ${responseText.length}, error: ${errorMsg.slice(0, 200)})`);
     return [];
   }
 }

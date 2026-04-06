@@ -32,6 +32,7 @@ export interface ReviewResult {
   staticDedupCount?: number;
   llmDedupCount?: number;
   suppressionCount?: number;
+  agentResponseLengths?: Map<string, number>;
 }
 
 export interface ReviewerAgent {
@@ -135,6 +136,7 @@ export interface ReviewStats {
     findingsRaw: number;
     findingsKept: number;
     failureReason?: string;
+    responseLength?: number;
   }>;
 
   // Judge calibration

@@ -95,18 +95,74 @@ describe('parseFindings', () => {
   });
 
   it('returns empty array for invalid JSON', () => {
-    const findings = parseFindings('this is not json', 'Reviewer');
-    expect(findings).toEqual([]);
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('this is not json', 'Reviewer');
+      expect(findings).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('returns empty array for non-array JSON', () => {
-    const findings = parseFindings('{"not": "an array"}', 'Reviewer');
-    expect(findings).toEqual([]);
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('{"not": "an array"}', 'Reviewer');
+      expect(findings).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('parses empty array', () => {
     const findings = parseFindings('[]', 'Reviewer');
     expect(findings).toEqual([]);
+  });
+
+  it('does not warn for empty array response', () => {
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('[]', 'TestAgent');
+      expect(findings).toEqual([]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn for empty response', () => {
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('', 'TestAgent');
+      expect(findings).toEqual([]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns on malformed non-empty response', () => {
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('this is garbage text', 'SecurityAgent');
+      expect(findings).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/SecurityAgent.*malformed.*length: 20/);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('warns when parsed result is not an array', () => {
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const findings = parseFindings('{"key": "value"}', 'ArchAgent');
+      expect(findings).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/ArchAgent.*expected array.*object/);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('handles missing fields gracefully', () => {
@@ -1724,6 +1780,84 @@ describe('runReview', () => {
     expect(result.reviewComplete).toBe(true);
     // Should gracefully fall back to heuristic
     expect(result.agentNames).toHaveLength(3);
+  });
+
+  it('warns when agent returns 0 findings with short duration', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      await runReview(clients, config, diff, 'raw diff', 'repo context');
+
+      const fastWarnings = warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('suspiciously fast'),
+      );
+      // All 3 agents return [] near-instantly, so all should trigger
+      expect(fastWarnings.length).toBe(3);
+    } finally {
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('does not warn for 0 findings with normal duration', async () => {
+    // Simulate a slow response by delaying the mock
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockImplementation(() => {
+          // Use fake timers to simulate passage of time
+          jest.advanceTimersByTime(20_000);
+          return Promise.resolve({ content: '[]' });
+        }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      await runReview(clients, config, diff, 'raw diff', 'repo context');
+
+      const fastWarnings = warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('suspiciously fast'),
+      );
+      expect(fastWarnings.length).toBe(0);
+    } finally {
+      jest.useRealTimers();
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('includes agentResponseLengths in result', async () => {
+    const response = JSON.stringify([
+      { severity: 'suggestion', title: 'Test', file: 'a.ts', line: 1, description: 'Desc' },
+    ]);
+    const clients = makeClients(response);
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [
+        { severity: 'suggestion', title: 'Test', file: 'a.ts', line: 1, description: 'Desc', reviewers: ['Security & Safety'] },
+      ],
+      summary: 'One finding.',
+    });
+
+    const result = await runReview(clients, config, diff, 'raw diff', 'repo context');
+    expect(result.agentResponseLengths).toBeDefined();
+    expect(result.agentResponseLengths!.size).toBe(3);
+    for (const [, length] of result.agentResponseLengths!) {
+      expect(length).toBe(response.length);
+    }
   });
 });
 
