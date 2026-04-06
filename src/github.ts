@@ -191,7 +191,7 @@ export async function fetchRepoContext(
 /**
  * Build text status lines showing review progress across phases.
  */
-const INDENT = '&nbsp;&nbsp;&nbsp;&nbsp;';
+export const INDENT = '&nbsp;&nbsp;&nbsp;&nbsp;';
 
 function renderAgentLines(agents: AgentProgressEntry[]): string {
   return agents.map(a => {
