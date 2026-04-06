@@ -99,6 +99,7 @@ export class ClaudeClient {
       // -p enables pipe mode — reads prompt from stdin when no argument follows
       const args = [
         '-p',
+        '--verbose',
         '--output-format', 'stream-json',
         '--include-partial-messages',
         '--model', this.model,
@@ -196,8 +197,7 @@ export class ClaudeClient {
               output = event.result;
             }
           } catch {
-            // Non-JSON line — append as raw text fallback
-            output += line;
+            // Non-JSON line (e.g. verbose debug output) — skip silently
           }
         }
       });
@@ -225,7 +225,7 @@ export class ClaudeClient {
                 output = event.result;
               }
             } catch {
-              output += jsonBuffer;
+              // Non-JSON line (e.g. verbose debug output) — skip silently
             }
           }
         }

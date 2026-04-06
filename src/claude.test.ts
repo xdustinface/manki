@@ -311,7 +311,7 @@ describe('sendViaOAuth — error paths', () => {
     expect(spawnOpts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
   });
 
-  it('passes --output-format stream-json and --include-partial-messages to CLI', async () => {
+  it('passes --verbose, --output-format stream-json, and --include-partial-messages to CLI', async () => {
     setupSpawnMock({ stdout: 'ok' });
     const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
 
@@ -321,6 +321,7 @@ describe('sendViaOAuth — error paths', () => {
     const fmtIdx = spawnArgs.indexOf('--output-format');
     expect(fmtIdx).toBeGreaterThan(-1);
     expect(spawnArgs[fmtIdx + 1]).toBe('stream-json');
+    expect(spawnArgs).toContain('--verbose');
     expect(spawnArgs).toContain('--include-partial-messages');
   });
 
@@ -352,12 +353,12 @@ describe('sendViaOAuth — error paths', () => {
     expect(result.content).toBe('final answer');
   });
 
-  it('falls back to raw text for non-JSON lines', async () => {
+  it('silently skips non-JSON lines (e.g. verbose debug output)', async () => {
     setupSpawnMock({ stdout: 'plain text fallback\n', rawStdout: true });
     const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
 
     const result = await client.sendMessage('sys', 'user');
-    expect(result.content).toBe('plain text fallback');
+    expect(result.content).toBe('');
   });
 
   it('includes exit signal in error message when present', async () => {
