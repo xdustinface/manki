@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import Anthropic from '@anthropic-ai/sdk';
 
-import { ClaudeClient, resetCLIInstallPromise, STALE_TIMEOUT_MS } from './claude';
+import { ClaudeClient, resetCLIInstallPromise, sanitizeLogOutput, STALE_TIMEOUT_MS } from './claude';
 
 jest.mock('child_process', () => ({
   execFile: jest.fn(),
@@ -457,7 +457,7 @@ describe('sendViaOAuth — error paths', () => {
       // Simulate process exit after SIGTERM
       closeCb!(null, 'SIGTERM');
 
-      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s. Last stdout: keepalive-6. stderr: some diagnostic output');
+      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s. Last stdout: keepalive-0keepalive-1keepalive-2keepalive-3keepalive-4keepalive-5keepalive-6. stderr: some diagnostic output');
     } finally {
       jest.useRealTimers();
     }
@@ -626,7 +626,9 @@ describe('ensureCLI — install path', () => {
 
 describe('sendViaOAuth — stale process detection', () => {
   beforeEach(() => {
-    mockSpawn.mockReset();
+    jest.resetAllMocks();
+    mockExecFileAsync.mockResolvedValue({ stdout: '/usr/bin/claude' });
+    _execMock.fn = mockExecFileAsync;
     resetCLIInstallPromise();
   });
 
@@ -760,5 +762,232 @@ describe('sendViaOAuth — stale process detection', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('accumulates rolling lastStdoutChunk across multiple data events', async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = {
+        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
+        stdout: { on: jest.fn() },
+        stderr: { on: jest.fn() },
+        on: jest.fn(),
+        kill: jest.fn(),
+      };
+
+      let stdoutCb: ((data: Buffer) => void) | undefined;
+      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
+
+      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stdoutCb = cb;
+      });
+      proc.stderr.on.mockImplementation(() => {});
+      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'close') closeCb = cb as typeof closeCb;
+      });
+
+      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
+
+      const promise = client.sendMessage('sys', 'user');
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      // Emit two small chunks — both should appear in the rolling buffer
+      stdoutCb!(Buffer.from('first-part|'));
+      stdoutCb!(Buffer.from('second-part'));
+
+      await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      closeCb!(null, 'SIGTERM');
+
+      await expect(promise).rejects.toThrow('Last stdout: first-part|second-part');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('caps rolling lastStdoutChunk at 500 chars', async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = {
+        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
+        stdout: { on: jest.fn() },
+        stderr: { on: jest.fn() },
+        on: jest.fn(),
+        kill: jest.fn(),
+      };
+
+      let stdoutCb: ((data: Buffer) => void) | undefined;
+      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
+
+      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stdoutCb = cb;
+      });
+      proc.stderr.on.mockImplementation(() => {});
+      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'close') closeCb = cb as typeof closeCb;
+      });
+
+      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
+
+      const promise = client.sendMessage('sys', 'user');
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      // Emit a chunk larger than 500 chars, then a small one
+      stdoutCb!(Buffer.from('A'.repeat(490)));
+      stdoutCb!(Buffer.from('B'.repeat(20)));
+
+      await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      closeCb!(null, 'SIGTERM');
+
+      const err = await promise.catch((e: unknown) => e) as Error;
+      // The rolling buffer should keep the last 500 chars: 480 A's + 20 B's
+      expect(err.message).toContain('A'.repeat(480) + 'B'.repeat(20));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('sanitizes workflow commands in stale warning output', async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = {
+        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
+        stdout: { on: jest.fn() },
+        stderr: { on: jest.fn() },
+        on: jest.fn(),
+        kill: jest.fn(),
+      };
+
+      let stdoutCb: ((data: Buffer) => void) | undefined;
+      let stderrCb: ((data: Buffer) => void) | undefined;
+      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
+
+      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stdoutCb = cb;
+      });
+      proc.stderr.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stderrCb = cb;
+      });
+      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'close') closeCb = cb as typeof closeCb;
+      });
+
+      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
+
+      const promise = client.sendMessage('sys', 'user');
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      stdoutCb!(Buffer.from('before ::set-output::val'));
+      stderrCb!(Buffer.from('err ::error::bad'));
+
+      await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
+      closeCb!(null, 'SIGTERM');
+
+      const err = await promise.catch((e: unknown) => e) as Error;
+      expect(err.message).toContain('before [redacted-workflow-cmd]');
+      expect(err.message).toContain('err [redacted-workflow-cmd]');
+      expect(err.message).not.toContain('::set-output');
+      expect(err.message).not.toContain('::error');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('sanitizes workflow commands in timeout warning output', async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = {
+        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
+        stdout: { on: jest.fn() },
+        stderr: { on: jest.fn() },
+        on: jest.fn(),
+        kill: jest.fn(),
+      };
+
+      let stdoutCb: ((data: Buffer) => void) | undefined;
+      let stderrCb: ((data: Buffer) => void) | undefined;
+      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
+
+      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stdoutCb = cb;
+      });
+      proc.stderr.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
+        if (event === 'data') stderrCb = cb;
+      });
+      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'close') closeCb = cb as typeof closeCb;
+      });
+
+      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
+      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
+
+      const promise = client.sendMessage('sys', 'user');
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      stderrCb!(Buffer.from('::warning::injected'));
+
+      // Keep stdout alive past stale threshold until hard timeout
+      for (let i = 0; i < 7; i++) {
+        await jest.advanceTimersByTimeAsync(80_000);
+        stdoutCb!(Buffer.from(`keepalive-${i}`));
+      }
+
+      await jest.advanceTimersByTimeAsync(40_000);
+      closeCb!(null, 'SIGTERM');
+
+      const err = await promise.catch((e: unknown) => e) as Error;
+      expect(err.message).toContain('[redacted-workflow-cmd]');
+      expect(err.message).not.toContain('::warning');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('sanitizeLogOutput', () => {
+  it('strips ::set-output workflow commands', () => {
+    expect(sanitizeLogOutput('before ::set-output name=val::data'))
+      .toBe('before [redacted-workflow-cmd]');
+  });
+
+  it('strips ::error commands', () => {
+    expect(sanitizeLogOutput('::error::something bad')).toBe('[redacted-workflow-cmd]');
+  });
+
+  it('strips ::warning commands', () => {
+    expect(sanitizeLogOutput('::warning::msg')).toBe('[redacted-workflow-cmd]');
+  });
+
+  it('strips ::set-env commands', () => {
+    expect(sanitizeLogOutput('::set-env name=FOO::bar')).toBe('[redacted-workflow-cmd]');
+  });
+
+  it('consumes the entire line after :: message marker', () => {
+    expect(sanitizeLogOutput('prefix ::error::msg trailing'))
+      .toBe('prefix [redacted-workflow-cmd]');
+  });
+
+  it('handles multiple commands on separate lines', () => {
+    const input = 'line1\n::error::bad\nline2\n::warning::also bad';
+    const result = sanitizeLogOutput(input);
+    expect(result).toBe('line1\n[redacted-workflow-cmd]\nline2\n[redacted-workflow-cmd]');
+  });
+
+  it('leaves normal text unchanged', () => {
+    expect(sanitizeLogOutput('just normal output')).toBe('just normal output');
+  });
+
+  it('handles empty string', () => {
+    expect(sanitizeLogOutput('')).toBe('');
+  });
+
+  it('is case-insensitive', () => {
+    expect(sanitizeLogOutput('::SET-OUTPUT::val')).toBe('[redacted-workflow-cmd]');
   });
 });

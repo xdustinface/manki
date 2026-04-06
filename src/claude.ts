@@ -9,6 +9,12 @@ const execFileAsync = promisify(execFile);
 
 export const STALE_TIMEOUT_MS = 90_000;
 
+/** Strip GitHub Actions workflow commands to prevent injection when logging CLI output. */
+export function sanitizeLogOutput(text: string): string {
+  // Matches ::command params::message (with or without params between the :: markers)
+  return text.replace(/::[a-z-]+[^:\n]*::[^\n]*/gi, '[redacted-workflow-cmd]');
+}
+
 let cliInstallPromise: Promise<string> | null = null;
 
 export function resetCLIInstallPromise(): void {
@@ -177,7 +183,7 @@ export class ClaudeClient {
         clearTimeout(staleTimer);
         staleTimer = setTimeout(handleStale, STALE_TIMEOUT_MS);
         staleTimer.unref();
-        lastStdoutChunk = data.toString().slice(-500);
+        lastStdoutChunk = (lastStdoutChunk + data.toString()).slice(-500);
 
         rawBytes += data.length;
         if (rawBytes + stderr.length > MAX_OUTPUT) { killOnOutputExceeded(); return; }
@@ -231,8 +237,8 @@ export class ClaudeClient {
         }
         stderr += stderrDecoder.end();
         if (stale) {
-          const stdoutSnippet = lastStdoutChunk.slice(-500);
-          const stderrSnippet = stderr.slice(0, 500);
+          const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
+          const stderrSnippet = sanitizeLogOutput(stderr.slice(0, 500));
           const details = [
             stdoutSnippet ? `Last stdout: ${stdoutSnippet}` : '',
             stderrSnippet ? `stderr: ${stderrSnippet}` : '',
@@ -243,8 +249,8 @@ export class ClaudeClient {
           return;
         }
         if (timedOut) {
-          const stdoutSnippet = lastStdoutChunk.slice(-500);
-          const stderrSnippet = stderr.slice(0, 500);
+          const stdoutSnippet = sanitizeLogOutput(lastStdoutChunk.slice(-500));
+          const stderrSnippet = sanitizeLogOutput(stderr.slice(0, 500));
           const details = [
             stdoutSnippet ? `Last stdout: ${stdoutSnippet}` : '',
             stderrSnippet ? `stderr: ${stderrSnippet}` : '',
