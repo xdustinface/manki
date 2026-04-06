@@ -248,11 +248,13 @@ export function buildDashboard(data: DashboardData): string {
     plannerLines.push(`${INDENT}analyzing...`);
   } else if (data.plannerInfo) {
     const prType = sanitizePrType(data.plannerInfo.prType);
-    plannerLines.push(`**Planner**`);
+    const plannerDur = data.plannerDurationMs != null ? ` (${formatDuration(data.plannerDurationMs)})` : '';
+    plannerLines.push(`**Planner**${plannerDur}`);
     plannerLines.push(`${INDENT}${prType} · ${data.lineCount} lines · ${data.plannerInfo.teamSize} agents`);
     plannerLines.push(`${INDENT}review effort: ${sanitizeEffort(data.plannerInfo.reviewerEffort)} · judge effort: ${sanitizeEffort(data.plannerInfo.judgeEffort)}`);
   } else {
-    plannerLines.push(`**Planner**`);
+    const plannerDur = data.plannerDurationMs != null ? ` (${formatDuration(data.plannerDurationMs)})` : '';
+    plannerLines.push(`**Planner**${plannerDur}`);
     plannerLines.push(`${INDENT}${data.lineCount} lines · ${data.agentCount} agents`);
   }
   sections.push(plannerLines.join('\n'));
@@ -286,7 +288,8 @@ export function buildDashboard(data: DashboardData): string {
     judgeLines.push(`**Judge**`);
     judgeLines.push(`${INDENT}evaluating ${data.judgeInputCount ?? data.rawFindingCount ?? 0} findings...`);
   } else {
-    judgeLines.push(`**Judge** — ${data.keptCount ?? 0} kept · ${data.droppedCount ?? 0} dropped`);
+    const judgeDur = data.judgeDurationMs != null ? ` (${formatDuration(data.judgeDurationMs)})` : '';
+    judgeLines.push(`**Judge** — ${data.keptCount ?? 0} kept · ${data.droppedCount ?? 0} dropped${judgeDur}`);
     if (data.keptSeverities) {
       const breakdown = renderSeverityBreakdown(data.keptSeverities);
       if (breakdown) judgeLines.push(`${INDENT}kept: ${breakdown}`);
