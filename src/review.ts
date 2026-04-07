@@ -5,7 +5,7 @@ import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue } from './github';
 import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
-import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, MAX_AGENT_RETRIES } from './types';
 import { extractJSON } from './json';
 
 export const HIGH_CONF_SUGGESTION_THRESHOLD = 1;
@@ -213,13 +213,14 @@ export interface ReviewProgress {
   agentName?: string;
   agentFindingCount?: number;
   agentDurationMs?: number;
-  agentStatus?: 'success' | 'failure';
+  agentStatus?: 'success' | 'failure' | 'retrying';
   rawFindingCount: number;
   judgeInputCount?: number;
   completedAgents?: number;
   totalAgents?: number;
   plannerResult?: PlannerResult;
   plannerDurationMs?: number;
+  retryCount?: number;
 }
 
 function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
@@ -451,8 +452,93 @@ export async function runReview(
             totalAgents: team.agents.length,
           });
         }
-        break;
       }
+    }
+
+    // Retry failed agents up to MAX_AGENT_RETRIES times (multi-pass)
+    const retryCountMap: Record<string, number> = {};
+    for (let retry = 1; retry <= MAX_AGENT_RETRIES && failedAgents.length > 0; retry++) {
+      const agentsToRetry = failedAgents.map(name => team.agents.find(a => a.name === name)!);
+      core.info(`Retry ${retry}/${MAX_AGENT_RETRIES} (multi-pass): retrying ${agentsToRetry.map(a => a.name).join(', ')}...`);
+
+      const stillFailed: string[] = [];
+      for (const agent of agentsToRetry) {
+        retryCountMap[agent.name] = (retryCountMap[agent.name] ?? 0) + 1;
+
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: agent.name,
+            agentFindingCount: 0,
+            agentStatus: 'retrying',
+            rawFindingCount: allFindings.length,
+            completedAgents: completedCount,
+            totalAgents: team.agents.length,
+            retryCount: retryCountMap[agent.name],
+          });
+        }
+
+        const retryStartTime = Date.now();
+        const retryPassResults = await Promise.allSettled(
+          Array.from({ length: passes }, () => {
+            const shuffledDiff = shuffleDiffFiles(diff);
+            const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
+            return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort);
+          })
+        );
+
+        const retryPassFindings: Finding[][] = [];
+        let retryTotalResponseLength = 0;
+        for (const result of retryPassResults) {
+          if (result.status === 'fulfilled') {
+            retryPassFindings.push(result.value.findings);
+            retryTotalResponseLength += result.value.responseLength;
+          } else {
+            core.warning(`${agent.name} retry pass failed: ${result.reason}`);
+          }
+        }
+
+        if (retryPassFindings.length > 0) {
+          const threshold = Math.ceil(passes / 2);
+          const consistent = intersectFindings(retryPassFindings, threshold);
+          core.info(`Multi-pass retry: ${agent.name} — ${retryPassFindings.length} passes, ${consistent.length} consistent findings`);
+          allFindings.push(...consistent);
+          agentResponseLengths.set(agent.name, retryTotalResponseLength);
+          completedCount++;
+
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: consistent.length,
+              agentDurationMs: Date.now() - retryStartTime,
+              agentStatus: 'success',
+              rawFindingCount: allFindings.length,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+            });
+          }
+        } else {
+          stillFailed.push(agent.name);
+          core.warning(`${agent.name}: retry ${retryCountMap[agent.name]} failed (all passes)`);
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: 0,
+              agentDurationMs: Date.now() - retryStartTime,
+              agentStatus: 'failure',
+              rawFindingCount: allFindings.length,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+              retryCount: retryCountMap[agent.name],
+            });
+          }
+        }
+      }
+
+      failedAgents.length = 0;
+      failedAgents.push(...stillFailed);
     }
   } else {
     core.info(`Running ${team.agents.length} reviewer agents in parallel...`);
@@ -513,20 +599,108 @@ export async function runReview(
         core.warning(`${team.agents[i].name} failed: ${result.reason}`);
       }
     }
+
+    // Retry failed agents up to MAX_AGENT_RETRIES times
+    const retryCount: Record<string, number> = {};
+    for (let retry = 1; retry <= MAX_AGENT_RETRIES && failedAgents.length > 0; retry++) {
+      const agentsToRetry = failedAgents.map(name => team.agents.find(a => a.name === name)!);
+      core.info(`Retry ${retry}/${MAX_AGENT_RETRIES}: retrying ${agentsToRetry.map(a => a.name).join(', ')}...`);
+
+      for (const agent of agentsToRetry) {
+        retryCount[agent.name] = (retryCount[agent.name] ?? 0) + 1;
+        if (onProgress) {
+          onProgress({
+            phase: 'agent-complete',
+            agentName: agent.name,
+            agentFindingCount: 0,
+            agentStatus: 'retrying',
+            rawFindingCount: progressFindingCount,
+            completedAgents: completedCount,
+            totalAgents: team.agents.length,
+            retryCount: retryCount[agent.name],
+          });
+        }
+      }
+
+      const retryPromises = agentsToRetry.map(agent => {
+        const startTime = Date.now();
+        return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, reviewerEffort)
+          .then(agentResult => ({ agent, agentResult, durationMs: Date.now() - startTime }))
+          .catch(() => ({ agent, agentResult: null as AgentResult | null, durationMs: Date.now() - startTime }));
+      });
+
+      const retryResults = await Promise.allSettled(retryPromises);
+
+      const stillFailed: string[] = [];
+      for (const settled of retryResults) {
+        const { agent, agentResult, durationMs } = (settled as PromiseFulfilledResult<{ agent: ReviewerAgent; agentResult: AgentResult | null; durationMs: number }>).value;
+        if (agentResult !== null) {
+          // Remove from failed list, add findings
+          allFindings.push(...agentResult.findings);
+          agentResponseLengths.set(agent.name, agentResult.responseLength);
+          progressFindingCount += agentResult.findings.length;
+          completedCount++;
+          core.info(`${agent.name}: retry ${retryCount[agent.name]} succeeded — ${agentResult.findings.length} findings`);
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: agentResult.findings.length,
+              agentDurationMs: durationMs,
+              agentStatus: 'success',
+              rawFindingCount: progressFindingCount,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+            });
+          }
+        } else {
+          stillFailed.push(agent.name);
+          core.warning(`${agent.name}: retry ${retryCount[agent.name]} failed`);
+          if (onProgress) {
+            onProgress({
+              phase: 'agent-complete',
+              agentName: agent.name,
+              agentFindingCount: 0,
+              agentDurationMs: durationMs,
+              agentStatus: 'failure',
+              rawFindingCount: progressFindingCount,
+              completedAgents: completedCount,
+              totalAgents: team.agents.length,
+              retryCount: retryCount[agent.name],
+            });
+          }
+        }
+      }
+
+      failedAgents.length = 0;
+      failedAgents.push(...stillFailed);
+    }
   }
 
+  let partialReview = false;
+  let partialNote: string | undefined;
+
   if (failedAgents.length > 0) {
-    const summary = failedAgents.length === team.agents.length
-      ? 'Review could not be completed — all reviewer agents failed.'
-      : `Review incomplete — ${failedAgents.join(', ')} failed. Retry with @manki review.`;
-    return {
-      verdict: 'COMMENT',
-      summary,
-      findings: [],
-      highlights: [],
-      reviewComplete: false,
-      failedAgents,
-    };
+    const quorum = Math.ceil(team.agents.length / 2);
+    const succeededCount = team.agents.length - failedAgents.length;
+
+    if (succeededCount < quorum) {
+      const summary = failedAgents.length === team.agents.length
+        ? 'Review could not be completed — all reviewer agents failed.'
+        : `Review incomplete — ${failedAgents.join(', ')} failed after retries. Retry with @manki review.`;
+      return {
+        verdict: 'COMMENT',
+        summary,
+        findings: [],
+        highlights: [],
+        reviewComplete: false,
+        failedAgents,
+      };
+    }
+
+    partialReview = true;
+    partialNote = `${succeededCount} of ${team.agents.length} agents completed (${failedAgents.join(', ')} failed after ${MAX_AGENT_RETRIES + 1} attempts)`;
+    core.info(`Quorum met: ${partialNote}`);
   }
 
   if (onProgress) {
@@ -638,6 +812,9 @@ export async function runReview(
     rawFindings: allFindings,
     resolveThreads: judgeResolveThreads,
     plannerResult: plannerResult ?? undefined,
+    failedAgents: failedAgents.length > 0 ? failedAgents : undefined,
+    partialReview: partialReview || undefined,
+    partialNote,
     staticDedupCount,
     llmDedupCount,
     suppressionCount,

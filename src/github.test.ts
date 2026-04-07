@@ -641,6 +641,52 @@ describe('postReview with stats', () => {
   });
 });
 
+describe('postReview partialNote', () => {
+  const mockCreateReview = jest.fn().mockResolvedValue({ data: { id: 1 } });
+  const mockOctokit = {
+    rest: {
+      pulls: {
+        createReview: mockCreateReview,
+      },
+    },
+  } as unknown as Parameters<typeof postReview>[0];
+
+  beforeEach(() => {
+    mockCreateReview.mockClear();
+  });
+
+  it('includes partialNote in review body when agents failed after retries', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'Looks good overall.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+      partialNote: '4 of 5 agents completed (Correctness & Logic failed after 2 attempts)',
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).toContain('4 of 5 agents completed');
+    expect(body).toContain('Correctness & Logic failed after 2 attempts');
+    expect(body).toContain('**Note:**');
+  });
+
+  it('omits partialNote section when not provided', async () => {
+    const result: ReviewResult = {
+      verdict: 'APPROVE',
+      summary: 'All clear.',
+      findings: [],
+      highlights: [],
+      reviewComplete: true,
+    };
+
+    await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
+    const body = mockCreateReview.mock.calls[0][0].body as string;
+    expect(body).not.toContain('**Note:**');
+  });
+});
+
 describe('getSeverityLabel', () => {
   it('returns Required for required severity', () => {
     expect(getSeverityLabel('required')).toBe('Required');
@@ -1614,6 +1660,68 @@ describe('buildDashboard', () => {
     const md = buildDashboard(data);
     expect(md).toContain('**Planner** (3s)');
     expect(md).toContain('**Judge** — 6 kept · 4 dropped (65s)');
+  });
+
+  it('renders retrying agent status with retry count', () => {
+    const data: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'retrying', retryCount: 1 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 2, durationMs: 3000 },
+        { name: 'Correctness & Logic', status: 'reviewing' },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain('2/3 agents complete');
+    expect(md).toContain(`${INDENT}⟳ Security & Safety — retrying (2/2)...`);
+    expect(md).toContain(`${INDENT}✓ Architecture & Design — 2 (3s)`);
+    expect(md).toContain(`${INDENT}⏳ Correctness & Logic`);
+  });
+
+  it('renders failed agent with retry count showing total attempts', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 100, agentCount: 3,
+      rawFindingCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 2000, retryCount: 1 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 4000 },
+        { name: 'Correctness & Logic', status: 'done', findingCount: 2, durationMs: 3000 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}✗ Security & Safety — failed after 2 attempts (2s)`);
+  });
+
+  it('done count does not decrease when a failed agent transitions to retrying', () => {
+    const agents: DashboardData['agentProgress'] = [
+      { name: 'Agent A', status: 'done', findingCount: 1, durationMs: 2000 },
+      { name: 'Agent B', status: 'failed', durationMs: 3000 },
+      { name: 'Agent C', status: 'reviewing' },
+    ];
+    const base: DashboardData = {
+      phase: 'started', lineCount: 100, agentCount: 3,
+      agentProgress: agents,
+    };
+    const beforeRetry = buildDashboard(base);
+    expect(beforeRetry).toContain('2/3 agents complete');
+
+    agents[1] = { name: 'Agent B', status: 'retrying', retryCount: 1 };
+    const afterRetry = buildDashboard(base);
+    expect(afterRetry).toContain('2/3 agents complete');
+  });
+
+  it('renders failed agent without retry count as before', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 100, agentCount: 3,
+      rawFindingCount: 5,
+      agentProgress: [
+        { name: 'Security & Safety', status: 'failed', durationMs: 2000 },
+        { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 4000 },
+      ],
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}✗ Security & Safety — failed (2s)`);
+    expect(md).not.toContain('attempts');
   });
 });
 

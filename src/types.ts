@@ -1,3 +1,5 @@
+export const MAX_AGENT_RETRIES = 1;
+
 export type FindingSeverity = 'required' | 'suggestion' | 'nit' | 'ignore';
 
 export interface Finding {
@@ -29,6 +31,8 @@ export interface ReviewResult {
   plannerResult?: PlannerResult;
   failedAgents?: string[];
   agentFailureReasons?: Record<string, string>;
+  partialReview?: boolean;
+  partialNote?: string;
   staticDedupCount?: number;
   llmDedupCount?: number;
   suppressionCount?: number;
@@ -159,9 +163,10 @@ export interface ReviewStats {
 
 export interface AgentProgressEntry {
   name: string;
-  status: 'pending' | 'reviewing' | 'done' | 'failed';
+  status: 'pending' | 'reviewing' | 'done' | 'failed' | 'retrying';
   findingCount?: number;
   durationMs?: number;
+  retryCount?: number;
 }
 
 export interface DashboardData {

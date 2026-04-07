@@ -517,9 +517,17 @@ async function runFullReview(
           if (dashboard.agentProgress && progress.agentName) {
             const entry = dashboard.agentProgress.find(a => a.name === progress.agentName);
             if (entry) {
-              entry.status = progress.agentStatus === 'failure' ? 'failed' : 'done';
-              entry.findingCount = progress.agentFindingCount;
-              entry.durationMs = progress.agentDurationMs;
+              if (progress.agentStatus === 'retrying') {
+                entry.status = 'retrying';
+                entry.retryCount = progress.retryCount;
+              } else {
+                entry.status = progress.agentStatus === 'failure' ? 'failed' : 'done';
+                entry.findingCount = progress.agentFindingCount;
+                entry.durationMs = progress.agentDurationMs;
+                if (progress.agentStatus === 'failure' && progress.retryCount) {
+                  entry.retryCount = progress.retryCount;
+                }
+              }
             }
           }
           scheduleDashboardFlush();

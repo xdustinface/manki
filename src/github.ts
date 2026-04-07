@@ -5,6 +5,7 @@ import * as github from '@actions/github';
 
 import { AgentProgressEntry, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
+import { MAX_AGENT_RETRIES } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -199,7 +200,16 @@ function renderAgentLines(agents: AgentProgressEntry[]): string {
       return `${INDENT}✓ ${a.name} — ${a.findingCount ?? 0} (${formatDuration(a.durationMs ?? 0)})`;
     }
     if (a.status === 'failed') {
+      if (a.retryCount && a.retryCount > 0) {
+        return `${INDENT}✗ ${a.name} — failed after ${a.retryCount + 1} attempts (${formatDuration(a.durationMs ?? 0)})`;
+      }
       return `${INDENT}✗ ${a.name} — failed (${formatDuration(a.durationMs ?? 0)})`;
+    }
+    if (a.status === 'retrying') {
+      if (a.retryCount != null) {
+        return `${INDENT}⟳ ${a.name} — retrying (${a.retryCount + 1}/${MAX_AGENT_RETRIES + 1})...`;
+      }
+      return `${INDENT}⟳ ${a.name} — retrying...`;
     }
     if (a.status === 'reviewing') {
       return `${INDENT}⏳ ${a.name}`;
@@ -265,7 +275,7 @@ export function buildDashboard(data: DashboardData): string {
     reviewLines.push(`${INDENT}pending`);
   } else if (data.phase === 'started') {
     if (hasAgentProgress) {
-      const done = agents.filter(a => a.status === 'done' || a.status === 'failed').length;
+      const done = agents.filter(a => a.status === 'done' || a.status === 'failed' || a.status === 'retrying').length;
       reviewLines.push(`**Review** — ${done}/${agents.length} agents complete`);
       reviewLines.push(renderAgentLines(agents));
     } else {
@@ -530,6 +540,9 @@ export async function postReview(
   }
 
   let body = `${BOT_MARKERS}\n${sanitizeMarkdown(result.summary)}`;
+  if (result.partialNote) {
+    body += `\n\n> **Note:** ${sanitizeMarkdown(result.partialNote)}`;
+  }
   if (stats) {
     body += `\n\n${formatStatsOneLiner(stats)}`;
     body += `\n\n${formatStatsJson(stats)}`;
