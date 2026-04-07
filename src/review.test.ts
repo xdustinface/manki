@@ -2272,7 +2272,7 @@ describe('runPlanner', () => {
 
   it('returns null when teamSize is invalid', async () => {
     const client = makeClient(JSON.stringify({
-      teamSize: 6,
+      teamSize: 8,
       reviewerEffort: 'medium',
       judgeEffort: 'medium',
       prType: 'feature',
@@ -2315,7 +2315,7 @@ describe('runPlanner', () => {
   });
 
   it('accepts all valid team sizes', async () => {
-    for (const size of [1, 3, 5, 7]) {
+    for (const size of [1, 2, 3, 4, 5, 6, 7]) {
       const client = makeClient(JSON.stringify({
         teamSize: size,
         reviewerEffort: 'low',

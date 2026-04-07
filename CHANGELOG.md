@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Default judge model changed from Opus to Sonnet (~5x cost reduction per review)
-- Team sizes 2 and 4 now available — planner can pick more granular team sizes
+- Team sizes 2, 4, and 6 now available — planner can pick more granular team sizes
 - Planner prompt updated with guidance for 2-agent and 4-agent teams
 
 ## [4.5.1] - 2026-04-07
