@@ -1187,14 +1187,14 @@ describe('runReview', () => {
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
     );
 
-    // 3 initial failures + 2 retry rounds * (3 retrying + 3 failure) = 3 + 12 = 15
-    expect(agentCalls.length).toBe(15);
+    // 3 initial failures + 1 retry round * (3 retrying + 3 failure) = 3 + 6 = 9
+    expect(agentCalls.length).toBe(9);
 
     const failureCalls = agentCalls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'failure',
     );
-    // 3 initial + 3 per retry round * 2 = 9
-    expect(failureCalls.length).toBe(9);
+    // 3 initial + 3 per retry round * 1 = 6
+    expect(failureCalls.length).toBe(6);
     for (const [progress] of failureCalls) {
       expect(progress.agentFindingCount).toBe(0);
     }
@@ -1227,14 +1227,14 @@ describe('runReview', () => {
       (call: [import('./review').ReviewProgress]) => call[0].phase === 'agent-complete',
     );
 
-    // All 3 agents run (no break) + 2 retry rounds * (3 retrying + 3 failure) = 3 + 12 = 15
-    expect(agentCalls.length).toBe(15);
+    // All 3 agents run (no break) + 1 retry round * (3 retrying + 3 failure) = 3 + 6 = 9
+    expect(agentCalls.length).toBe(9);
 
     const failureCalls = agentCalls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'failure',
     );
-    // 3 initial + 3*2 retries = 9
-    expect(failureCalls.length).toBe(9);
+    // 3 initial + 3*1 retries = 6
+    expect(failureCalls.length).toBe(6);
     for (const [progress] of failureCalls) {
       expect(progress.agentFindingCount).toBe(0);
     }
@@ -1983,8 +1983,8 @@ describe('runReview', () => {
     expect(result.verdict).toBe('COMMENT');
     expect(result.failedAgents!.length).toBe(1);
     expect(mockedRunJudgeAgent).not.toHaveBeenCalled();
-    // Reviewer called 3 times total (initial + 2 retries)
-    expect((clients.reviewer.sendMessage as jest.Mock).mock.calls.length).toBe(3);
+    // Reviewer called 2 times total (initial + 1 retry)
+    expect((clients.reviewer.sendMessage as jest.Mock).mock.calls.length).toBe(2);
   });
 
   it('fires retrying progress callbacks during retry cycle', async () => {
@@ -2012,7 +2012,7 @@ describe('runReview', () => {
     const retryingCalls = onProgress.mock.calls.filter(
       (call: [import('./review').ReviewProgress]) => call[0].agentStatus === 'retrying',
     );
-    // Security & Safety retried twice (MAX_AGENT_RETRIES = 2)
+    // Security & Safety retried once (MAX_AGENT_RETRIES = 1)
     expect(retryingCalls.length).toBe(MAX_AGENT_RETRIES);
     for (const [progress] of retryingCalls) {
       expect(progress.agentName).toBe('Security & Safety');
@@ -2121,7 +2121,7 @@ describe('runReview', () => {
     expect(result.partialNote).toContain('3 of 5');
     expect(result.partialNote).toContain('Testing & Coverage');
     expect(result.partialNote).toContain('Performance & Efficiency');
-    expect(result.partialNote).toContain('failed after 3 attempts');
+    expect(result.partialNote).toContain('failed after 2 attempts');
   });
 
   it('increments completedCount on retry success in single-pass mode', async () => {

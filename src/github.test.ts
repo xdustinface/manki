@@ -662,13 +662,13 @@ describe('postReview partialNote', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
-      partialNote: '4 of 5 agents completed (Correctness & Logic failed after 3 attempts)',
+      partialNote: '4 of 5 agents completed (Correctness & Logic failed after 2 attempts)',
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
     const body = mockCreateReview.mock.calls[0][0].body as string;
     expect(body).toContain('4 of 5 agents completed');
-    expect(body).toContain('Correctness & Logic failed after 3 attempts');
+    expect(body).toContain('Correctness & Logic failed after 2 attempts');
     expect(body).toContain('**Note:**');
   });
 
@@ -1673,7 +1673,7 @@ describe('buildDashboard', () => {
     };
     const md = buildDashboard(data);
     expect(md).toContain('2/3 agents complete');
-    expect(md).toContain(`${INDENT}⟳ Security & Safety — retrying (2/3)...`);
+    expect(md).toContain(`${INDENT}⟳ Security & Safety — retrying (2/2)...`);
     expect(md).toContain(`${INDENT}✓ Architecture & Design — 2 (3s)`);
     expect(md).toContain(`${INDENT}⏳ Correctness & Logic`);
   });
@@ -1683,13 +1683,13 @@ describe('buildDashboard', () => {
       phase: 'complete', lineCount: 100, agentCount: 3,
       rawFindingCount: 5,
       agentProgress: [
-        { name: 'Security & Safety', status: 'failed', durationMs: 2000, retryCount: 2 },
+        { name: 'Security & Safety', status: 'failed', durationMs: 2000, retryCount: 1 },
         { name: 'Architecture & Design', status: 'done', findingCount: 3, durationMs: 4000 },
         { name: 'Correctness & Logic', status: 'done', findingCount: 2, durationMs: 3000 },
       ],
     };
     const md = buildDashboard(data);
-    expect(md).toContain(`${INDENT}✗ Security & Safety — failed after 3 attempts (2s)`);
+    expect(md).toContain(`${INDENT}✗ Security & Safety — failed after 2 attempts (2s)`);
   });
 
   it('done count does not decrease when a failed agent transitions to retrying', () => {

@@ -1,4 +1,4 @@
-export const MAX_AGENT_RETRIES = 2;
+export const MAX_AGENT_RETRIES = 1;
 
 export type FindingSeverity = 'required' | 'suggestion' | 'nit' | 'ignore';
 
