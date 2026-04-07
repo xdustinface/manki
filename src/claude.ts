@@ -182,7 +182,7 @@ export class ClaudeClient {
         child.kill('SIGTERM');
         killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
         killTimer.unref();
-      }, 600000);
+      }, 1200000);
       timer.unref();
 
       const handleStale = (): void => {
@@ -271,7 +271,7 @@ export class ClaudeClient {
         }
         if (timedOut) {
           const details = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
-          const msg = `Claude CLI timed out after 600s${details ? `. ${details}` : ''}`;
+          const msg = `Claude CLI timed out after 1200s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));
           return;

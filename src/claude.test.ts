@@ -409,7 +409,7 @@ describe('sendViaOAuth — error paths', () => {
     expect(proc.stdin.once).toHaveBeenCalledWith('drain', expect.any(Function));
   });
 
-  it('rejects with 600s timeout and includes stderr snippet', async () => {
+  it('rejects with 1200s timeout and includes stderr snippet', async () => {
     jest.useFakeTimers();
     try {
       const proc = {
@@ -446,19 +446,19 @@ describe('sendViaOAuth — error paths', () => {
       stderrCb!(Buffer.from('some diagnostic output'));
 
       // Keep stdout alive to prevent the stale checker from firing before hard timeout
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 14; i++) {
         await jest.advanceTimersByTimeAsync(80_000);
         stdoutCb!(Buffer.from(`keepalive-${i}`));
       }
 
-      // Fire the 600s timeout (advance remaining ~40s)
-      await jest.advanceTimersByTimeAsync(40_000);
+      // Fire the 1200s timeout (advance remaining ~80s)
+      await jest.advanceTimersByTimeAsync(80_000);
 
       // Simulate process exit after SIGTERM
       closeCb!(null, 'SIGTERM');
 
       const err: Error = await promise.then(() => { throw new Error('expected rejection'); }, (e) => e);
-      expect(err.message).toContain('Claude CLI timed out after 600s');
+      expect(err.message).toContain('Claude CLI timed out after 1200s');
       expect(err.message).toContain('Last stdout: keepalive');
       expect(err.message).toContain('stderr: some diagnostic output');
     } finally {
@@ -466,7 +466,7 @@ describe('sendViaOAuth — error paths', () => {
     }
   });
 
-  it('rejects with plain 600s timeout when stderr is empty', async () => {
+  it('rejects with plain 1200s timeout when stderr is empty', async () => {
     jest.useFakeTimers();
     try {
       const proc = {
@@ -496,15 +496,15 @@ describe('sendViaOAuth — error paths', () => {
       await jest.advanceTimersByTimeAsync(0);
 
       // Keep stdout alive to prevent the stale checker from firing
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 14; i++) {
         await jest.advanceTimersByTimeAsync(80_000);
         stdoutCb!(Buffer.from(`keepalive-${i}`));
       }
 
-      await jest.advanceTimersByTimeAsync(40_000);
+      await jest.advanceTimersByTimeAsync(80_000);
       closeCb!(null, 'SIGTERM');
 
-      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s');
+      await expect(promise).rejects.toThrow('Claude CLI timed out after 1200s');
     } finally {
       jest.useRealTimers();
     }
@@ -882,20 +882,20 @@ describe('sendViaOAuth — stale process detection', () => {
       await jest.advanceTimersByTimeAsync(0);
 
       // Keep producing stdout every 80s — always under the 90s stale threshold
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 14; i++) {
         await jest.advanceTimersByTimeAsync(80_000);
         stdoutCb!(Buffer.from(`chunk-${i}`));
       }
 
-      // At this point ~560s have passed. The stale timer keeps resetting.
-      // Advance to the hard 600s timeout
-      await jest.advanceTimersByTimeAsync(40_000);
+      // At this point ~1120s have passed. The stale timer keeps resetting.
+      // Advance to the hard 1200s timeout
+      await jest.advanceTimersByTimeAsync(80_000);
 
       expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
 
       closeCb!(null, 'SIGTERM');
 
-      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s');
+      await expect(promise).rejects.toThrow('Claude CLI timed out after 1200s');
     } finally {
       jest.useRealTimers();
     }
@@ -1116,13 +1116,13 @@ describe('sendViaOAuth — stale process detection', () => {
 
       // Keep stdout alive past stale threshold until hard timeout.
       // The last keepalive contains a workflow command to verify stdout sanitization.
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 14; i++) {
         await jest.advanceTimersByTimeAsync(80_000);
-        const payload = i === 6 ? 'stdout ::set-env name=X::val' : `keepalive-${i}`;
+        const payload = i === 13 ? 'stdout ::set-env name=X::val' : `keepalive-${i}`;
         stdoutCb!(Buffer.from(payload));
       }
 
-      await jest.advanceTimersByTimeAsync(40_000);
+      await jest.advanceTimersByTimeAsync(80_000);
       closeCb!(null, 'SIGTERM');
 
       const err = await promise.catch((e: unknown) => e) as Error;
