@@ -390,7 +390,7 @@ export async function runPlanner(
     const jsonText = extractJSON(response.content);
     const parsed = JSON.parse(jsonText);
 
-    let teamSize = parsed.teamSize;
+    const teamSize = parsed.teamSize;
     if (!VALID_TEAM_SIZES.has(teamSize)) {
       core.warning(`Planner returned invalid teamSize ${teamSize} — falling back to heuristic`);
       return null;
@@ -414,16 +414,9 @@ export async function runPlanner(
     // Parse agent picks
     const agents = parseAgentPicks(parsed.agents, availableNames);
     if (agents) {
-      // Trust agents array length over teamSize when they differ.
-      // Exclude 1 from correction candidates — teamSize=1 is only valid when the
-      // planner explicitly requests it, not as a side-effect of rounding down.
-      const validSizes = [2, 3, 4, 5, 6, 7];
-      const closestValid = validSizes.reduce((prev, curr) =>
-        Math.abs(curr - agents.length) < Math.abs(prev - agents.length) ? curr : prev,
-      );
       if (agents.length !== teamSize) {
-        core.info(`Planner agents.length (${agents.length}) differs from teamSize (${teamSize}), using closest valid size ${closestValid}`);
-        teamSize = closestValid;
+        core.warning(`Planner agents.length (${agents.length}) differs from teamSize (${teamSize}) — falling back to heuristic`);
+        return null;
       }
     }
 

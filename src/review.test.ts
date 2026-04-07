@@ -2622,6 +2622,19 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(roster.agents).toHaveLength(3);
     expect(roster.agents.map(a => a.name)).toContain('Protocol Expert');
   });
+
+  it('falls through to heuristic when teamSizeOverride=2 and no agentPicks', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const roster = selectTeam(diff, config, undefined, 2);
+    // With no picks, the heuristic starts with all 3 core agents.
+    // teamSize=2 only limits additional (non-core) agents, so at least the 3
+    // core agents are returned and the level is mapped to small.
+    expect(roster.agents.length).toBeGreaterThanOrEqual(2);
+    expect(roster.level).toBe('small');
+    expect(roster.agents.map(a => a.name)).toContain('Security & Safety');
+    expect(roster.agents.map(a => a.name)).toContain('Correctness & Logic');
+  });
 });
 
 describe('buildPlannerSystemPrompt', () => {
@@ -2726,7 +2739,7 @@ describe('runPlanner with agents and language', () => {
     expect(result!.agents).toBeUndefined();
   });
 
-  it('adjusts teamSize to match agents array length', async () => {
+  it('returns null when agents array length does not match teamSize', async () => {
     const response = JSON.stringify({
       teamSize: 3,
       judgeEffort: 'medium',
@@ -2744,9 +2757,7 @@ describe('runPlanner with agents and language', () => {
     const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
     const result = await runPlanner(client, diff);
 
-    expect(result).not.toBeNull();
-    expect(result!.teamSize).toBe(5);
-    expect(result!.agents).toHaveLength(5);
+    expect(result).toBeNull();
   });
 
   it('omits language and context when not provided', async () => {
@@ -3179,7 +3190,7 @@ describe('runPlanner teamSize correction', () => {
     sendMessage: jest.fn().mockResolvedValue({ content: response }),
   } as unknown as import('./claude').ClaudeClient);
 
-  it('corrects teamSize when agents.length does not match', async () => {
+  it('returns null when agents.length does not match teamSize', async () => {
     const response = JSON.stringify({
       teamSize: 3,
       judgeEffort: 'medium',
@@ -3197,9 +3208,7 @@ describe('runPlanner teamSize correction', () => {
     const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
     const result = await runPlanner(client, diff);
 
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(5);
-    expect(result!.teamSize).toBe(5);
+    expect(result).toBeNull();
   });
 
   it('keeps teamSize when agents.length matches', async () => {
@@ -3223,7 +3232,7 @@ describe('runPlanner teamSize correction', () => {
     expect(result!.agents).toHaveLength(3);
   });
 
-  it('corrects to closest valid size for 4 agents', async () => {
+  it('returns null when 4 agents do not match teamSize=3', async () => {
     const response = JSON.stringify({
       teamSize: 3,
       judgeEffort: 'medium',
@@ -3240,13 +3249,10 @@ describe('runPlanner teamSize correction', () => {
     const diff = makeDiff({ totalAdditions: 50, totalDeletions: 10 });
     const result = await runPlanner(client, diff);
 
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(4);
-    // 4 is now a valid size directly
-    expect(result!.teamSize).toBe(4);
+    expect(result).toBeNull();
   });
 
-  it('corrects 2-agent picks to teamSize=2', async () => {
+  it('returns null when 2 agents do not match teamSize=3', async () => {
     const response = JSON.stringify({
       teamSize: 3,
       judgeEffort: 'medium',
@@ -3261,9 +3267,7 @@ describe('runPlanner teamSize correction', () => {
     const diff = makeDiff({ totalAdditions: 30, totalDeletions: 5 });
     const result = await runPlanner(client, diff);
 
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(2);
-    expect(result!.teamSize).toBe(2);
+    expect(result).toBeNull();
   });
 
   it('accepts teamSize 2 and 4 without correction when agents match', async () => {
@@ -3292,7 +3296,7 @@ describe('runPlanner teamSize correction', () => {
     }
   });
 
-  it('corrects 1-agent pick to teamSize=2', async () => {
+  it('returns null when 1 agent does not match teamSize=3', async () => {
     const response = JSON.stringify({
       teamSize: 3,
       judgeEffort: 'medium',
@@ -3306,9 +3310,7 @@ describe('runPlanner teamSize correction', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 2 });
     const result = await runPlanner(client, diff);
 
-    expect(result).not.toBeNull();
-    expect(result!.agents).toHaveLength(1);
-    expect(result!.teamSize).toBe(2);
+    expect(result).toBeNull();
   });
 
   it('sanitizes language field from planner', async () => {
