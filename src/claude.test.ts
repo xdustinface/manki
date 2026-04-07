@@ -409,106 +409,6 @@ describe('sendViaOAuth — error paths', () => {
     expect(proc.stdin.once).toHaveBeenCalledWith('drain', expect.any(Function));
   });
 
-  it('rejects with 600s timeout and includes stderr snippet', async () => {
-    jest.useFakeTimers();
-    try {
-      const proc = {
-        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
-        stdout: { on: jest.fn() },
-        stderr: { on: jest.fn() },
-        on: jest.fn(),
-        kill: jest.fn(),
-      };
-
-      let stdoutCb: ((data: Buffer) => void) | undefined;
-      let stderrCb: ((data: Buffer) => void) | undefined;
-      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
-
-      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
-        if (event === 'data') stdoutCb = cb;
-      });
-      proc.stderr.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
-        if (event === 'data') stderrCb = cb;
-      });
-      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
-        if (event === 'close') closeCb = cb as typeof closeCb;
-      });
-
-      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
-      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
-
-      const promise = client.sendMessage('sys', 'user');
-
-      // Flush microtasks so ensureCLI resolves and spawn is called
-      await jest.advanceTimersByTimeAsync(0);
-
-      // Emit stderr before timeout
-      stderrCb!(Buffer.from('some diagnostic output'));
-
-      // Keep stdout alive to prevent the stale checker from firing before hard timeout
-      for (let i = 0; i < 7; i++) {
-        await jest.advanceTimersByTimeAsync(80_000);
-        stdoutCb!(Buffer.from(`keepalive-${i}`));
-      }
-
-      // Fire the 600s timeout (advance remaining ~40s)
-      await jest.advanceTimersByTimeAsync(40_000);
-
-      // Simulate process exit after SIGTERM
-      closeCb!(null, 'SIGTERM');
-
-      const err: Error = await promise.then(() => { throw new Error('expected rejection'); }, (e) => e);
-      expect(err.message).toContain('Claude CLI timed out after 600s');
-      expect(err.message).toContain('Last stdout: keepalive');
-      expect(err.message).toContain('stderr: some diagnostic output');
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it('rejects with plain 600s timeout when stderr is empty', async () => {
-    jest.useFakeTimers();
-    try {
-      const proc = {
-        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
-        stdout: { on: jest.fn() },
-        stderr: { on: jest.fn() },
-        on: jest.fn(),
-        kill: jest.fn(),
-      };
-
-      let stdoutCb: ((data: Buffer) => void) | undefined;
-      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
-
-      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
-        if (event === 'data') stdoutCb = cb;
-      });
-      proc.stderr.on.mockImplementation(() => {});
-      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
-        if (event === 'close') closeCb = cb as typeof closeCb;
-      });
-
-      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
-      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
-
-      const promise = client.sendMessage('sys', 'user');
-
-      await jest.advanceTimersByTimeAsync(0);
-
-      // Keep stdout alive to prevent the stale checker from firing
-      for (let i = 0; i < 7; i++) {
-        await jest.advanceTimersByTimeAsync(80_000);
-        stdoutCb!(Buffer.from(`keepalive-${i}`));
-      }
-
-      await jest.advanceTimersByTimeAsync(40_000);
-      closeCb!(null, 'SIGTERM');
-
-      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s');
-    } finally {
-      jest.useRealTimers();
-    }
-  });
 
   it('handles stdin.write throwing an error', async () => {
     const proc = {
@@ -852,55 +752,6 @@ describe('sendViaOAuth — stale process detection', () => {
     }
   });
 
-  it('resets stale timer when stdout data arrives, then hard timeout fires', async () => {
-    jest.useFakeTimers();
-    try {
-      const proc = {
-        stdin: { write: jest.fn().mockReturnValue(true), end: jest.fn(), on: jest.fn() },
-        stdout: { on: jest.fn() },
-        stderr: { on: jest.fn() },
-        on: jest.fn(),
-        kill: jest.fn(),
-      };
-
-      let stdoutCb: ((data: Buffer) => void) | undefined;
-      let closeCb: ((code: number | null, signal: string | null) => void) | undefined;
-
-      proc.stdout.on.mockImplementation((event: string, cb: (data: Buffer) => void) => {
-        if (event === 'data') stdoutCb = cb;
-      });
-      proc.stderr.on.mockImplementation(() => {});
-      proc.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
-        if (event === 'close') closeCb = cb as typeof closeCb;
-      });
-
-      mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
-      const client = new ClaudeClient({ oauthToken: 'token', model: 'claude-opus-4-6' });
-
-      const promise = client.sendMessage('sys', 'user');
-
-      await jest.advanceTimersByTimeAsync(0);
-
-      // Keep producing stdout every 80s — always under the 90s stale threshold
-      for (let i = 0; i < 7; i++) {
-        await jest.advanceTimersByTimeAsync(80_000);
-        stdoutCb!(Buffer.from(`chunk-${i}`));
-      }
-
-      // At this point ~560s have passed. The stale timer keeps resetting.
-      // Advance to the hard 600s timeout
-      await jest.advanceTimersByTimeAsync(40_000);
-
-      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
-
-      closeCb!(null, 'SIGTERM');
-
-      await expect(promise).rejects.toThrow('Claude CLI timed out after 600s');
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
   it('includes last stdout chunk in stale error message', async () => {
     jest.useFakeTimers();
     try {
@@ -1080,7 +931,7 @@ describe('sendViaOAuth — stale process detection', () => {
     }
   });
 
-  it('sanitizes workflow commands in timeout warning output', async () => {
+  it('sanitizes workflow commands in stale warning output', async () => {
     jest.useFakeTimers();
     try {
       const proc = {
@@ -1112,17 +963,12 @@ describe('sendViaOAuth — stale process detection', () => {
 
       await jest.advanceTimersByTimeAsync(0);
 
+      // Emit stdout with a workflow command, then stderr with another
+      stdoutCb!(Buffer.from('stdout ::set-env name=X::val'));
       stderrCb!(Buffer.from('::warning::injected'));
 
-      // Keep stdout alive past stale threshold until hard timeout.
-      // The last keepalive contains a workflow command to verify stdout sanitization.
-      for (let i = 0; i < 7; i++) {
-        await jest.advanceTimersByTimeAsync(80_000);
-        const payload = i === 6 ? 'stdout ::set-env name=X::val' : `keepalive-${i}`;
-        stdoutCb!(Buffer.from(payload));
-      }
-
-      await jest.advanceTimersByTimeAsync(40_000);
+      // Let the stale timer fire
+      await jest.advanceTimersByTimeAsync(STALE_TIMEOUT_MS);
       closeCb!(null, 'SIGTERM');
 
       const err = await promise.catch((e: unknown) => e) as Error;

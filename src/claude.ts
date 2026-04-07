@@ -155,11 +155,9 @@ export class ClaudeClient {
       let output = '';
       let jsonBuffer = '';
       let stderr = '';
-      let timedOut = false;
       let stale = false;
       let outputExceeded = false;
       let settled = false;
-      let killTimer: NodeJS.Timeout | undefined;
       let staleKillTimer: NodeJS.Timeout | undefined;
       let outputKillTimer: NodeJS.Timeout | undefined;
       // Only set in the catch block below; clearTimeout(undefined) is a no-op on the normal path
@@ -168,27 +166,15 @@ export class ClaudeClient {
       let rawBytes = 0;
 
       const clearAllTimers = (): void => {
-        clearTimeout(timer);
         clearTimeout(staleTimer);
-        if (killTimer) clearTimeout(killTimer);
         if (staleKillTimer) clearTimeout(staleKillTimer);
         if (outputKillTimer) clearTimeout(outputKillTimer);
         if (stdinKillTimer) clearTimeout(stdinKillTimer);
       };
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        clearTimeout(staleTimer);
-        child.kill('SIGTERM');
-        killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
-        killTimer.unref();
-      }, 600000);
-      timer.unref();
-
       const handleStale = (): void => {
-        if (outputExceeded || timedOut) return;
+        if (outputExceeded) return;
         stale = true;
-        clearTimeout(timer);
         child.kill('SIGTERM');
         staleKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
         staleKillTimer.unref();
@@ -200,7 +186,6 @@ export class ClaudeClient {
       const killOnOutputExceeded = (): void => {
         if (outputExceeded) return;
         outputExceeded = true;
-        clearTimeout(timer);
         clearTimeout(staleTimer);
         child.kill('SIGTERM');
         outputKillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 5000);
@@ -265,13 +250,6 @@ export class ClaudeClient {
         if (stale) {
           const details = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
           const msg = `Claude CLI stale — no output for ${STALE_TIMEOUT_MS / 1000}s${details ? `. ${details}` : ''}`;
-          core.warning(msg);
-          reject(new Error(msg));
-          return;
-        }
-        if (timedOut) {
-          const details = buildTimeoutDiagnostics(lastStdoutChunk, stderr);
-          const msg = `Claude CLI timed out after 600s${details ? `. ${details}` : ''}`;
           core.warning(msg);
           reject(new Error(msg));
           return;
