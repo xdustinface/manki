@@ -213,7 +213,8 @@ export async function handlePRComment(
         return;
       }
       if (!client) { core.warning('Claude client required for explain command'); return; }
-      await handleExplain(octokit, client, owner, repo, issueNumber, command.args);
+      const topic = command.args.slice(0, 500).trim();
+      await handleExplain(octokit, client, owner, repo, issueNumber, topic);
       break;
     }
     case 'dismiss':
@@ -253,7 +254,8 @@ export async function handlePRComment(
         return;
       }
       if (!client) { core.warning('Claude client required for generic questions'); return; }
-      await handleGenericQuestion(octokit, client, owner, repo, issueNumber, body);
+      const sanitizedQuestion = body.replace(/(?:@manki-review|@manki|\/manki)\s*/gi, '').trim().slice(0, 500);
+      await handleGenericQuestion(octokit, client, owner, repo, issueNumber, sanitizedQuestion);
     }
   }
 }

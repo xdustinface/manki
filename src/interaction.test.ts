@@ -1,4 +1,4 @@
-import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser } from './interaction';
+import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser, isLLMAccessAllowed } from './interaction';
 import { ReviewConfig } from './types';
 import * as github from '@actions/github';
 import * as core from '@actions/core';
@@ -810,6 +810,29 @@ describe('isRepoUser', () => {
     expect(isRepoUser('FIRST_TIME_CONTRIBUTOR')).toBe(false);
     expect(isRepoUser(null)).toBe(false);
     expect(isRepoUser(undefined)).toBe(false);
+  });
+});
+
+describe('isLLMAccessAllowed', () => {
+  it('returns true when sender is a repo user regardless of PR author', () => {
+    expect(isLLMAccessAllowed('OWNER', 'anyone', undefined)).toBe(true);
+    expect(isLLMAccessAllowed('CONTRIBUTOR', 'anyone', 'someone-else')).toBe(true);
+  });
+
+  it('returns true when sender login matches PR author login', () => {
+    expect(isLLMAccessAllowed('NONE', 'pr-author', 'pr-author')).toBe(true);
+  });
+
+  it('returns false when non-repo-user does not match PR author', () => {
+    expect(isLLMAccessAllowed('NONE', 'stranger', 'pr-author')).toBe(false);
+    expect(isLLMAccessAllowed('FIRST_TIME_CONTRIBUTOR', 'newcomer', 'pr-author')).toBe(false);
+  });
+
+  it('logs a diagnostic and returns false when prAuthorLogin is undefined', () => {
+    expect(isLLMAccessAllowed('NONE', 'stranger', undefined)).toBe(false);
+    expect(core.info).toHaveBeenCalledWith(
+      expect.stringContaining('PR author login unavailable'),
+    );
   });
 });
 
