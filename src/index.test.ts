@@ -82,6 +82,7 @@ jest.mock('./interaction', () => ({
   hasBotMention: jest.fn().mockReturnValue(false),
   parseCommand: jest.fn().mockReturnValue({ type: 'generic', args: '' }),
   isRepoUser: jest.requireActual('./interaction').isRepoUser,
+  isLLMAccessAllowed: jest.requireActual('./interaction').isLLMAccessAllowed,
 }));
 
 jest.mock('./memory', () => ({

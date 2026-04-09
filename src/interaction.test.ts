@@ -1,4 +1,4 @@
-import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser } from './interaction';
+import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser, isLLMAccessAllowed } from './interaction';
 import { ReviewConfig } from './types';
 import * as github from '@actions/github';
 import * as core from '@actions/core';
@@ -745,6 +745,19 @@ describe('handlePRComment', () => {
     expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
       expect.objectContaining({ body: expect.stringContaining('AI response here') }),
     );
+  });
+
+  it('allows generic question from PR author with NONE association', async () => {
+    setContext({
+      comment: { id: 42, body: '@manki what do you think?', user: { type: 'User' }, author_association: 'NONE' },
+      sender: { login: 'pr-author' },
+      issue: { pull_request: { url: 'https://...' }, user: { login: 'pr-author' } },
+    });
+    const octokit = createMockOctokit();
+    const client = createMockClient();
+    await handlePRComment(octokit, client, 'test-owner', 'test-repo', 1);
+    expect(client.sendMessage).toHaveBeenCalled();
+    expect(core.info).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring @manki command from non-contributor'));
   });
 
   it('does not block non-LLM commands for NONE association users', async () => {

@@ -5,7 +5,7 @@ import { createAuthenticatedOctokit, getMemoryToken } from './auth';
 import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
-import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isRepoUser } from './interaction';
+import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isRepoUser, isLLMAccessAllowed } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
@@ -139,12 +139,6 @@ async function run(): Promise<void> {
       const commentBody = github.context.payload.comment?.body ?? '';
       const forceReviewChecked = action === 'edited' && commentBody.includes(FORCE_REVIEW_MARKER) && commentBody.includes('- [x] Force review');
       if (forceReviewChecked && github.context.payload.issue?.pull_request) {
-        const commentId = github.context.payload.comment?.id;
-        if (commentId) {
-          const octokit = await getOctokit();
-          const { owner, repo } = github.context.repo;
-          await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
-        }
         await handleCommentTrigger(true);
       } else if (isReviewRequest(commentBody) && github.context.payload.issue?.pull_request) {
         await handleCommentTrigger();
@@ -246,10 +240,7 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   const authorAssociation = payload.comment?.author_association;
   const senderLogin = payload.sender?.login;
   const prAuthorLogin = payload.issue?.user?.login;
-  if (!prAuthorLogin) {
-    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
-  }
-  if (!isRepoUser(authorAssociation) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
+  if (!isLLMAccessAllowed(authorAssociation, senderLogin, prAuthorLogin)) {
     core.info(`Ignoring review request from ${senderLogin} (${authorAssociation ?? 'unknown association'})`);
     return;
   }
@@ -259,6 +250,11 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   const prNumber = payload.issue.number;
 
   const octokit = await getOctokit();
+
+  // Acknowledge the review request — for force-review, react here (after auth check passes).
+  if (forceReview && payload.comment?.id) {
+    await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
+  }
 
   const { data: pr } = await octokit.rest.pulls.get({
     owner,
@@ -283,11 +279,10 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
       core.info('Already approved on this commit — skipping review');
       return;
     }
-  }
 
-  // Acknowledge the review request (skip when forceReview — already reacted in run())
-  if (!forceReview && payload.comment?.id) {
-    await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
+    if (payload.comment?.id) {
+      await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
+    }
   }
 
   const prContext: PrContext = {

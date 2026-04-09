@@ -16,6 +16,21 @@ export function isRepoUser(authorAssociation: string | null | undefined): boolea
   return ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'].includes(authorAssociation ?? '');
 }
 
+/**
+ * Returns true if the sender is allowed to trigger LLM calls.
+ * Logs a diagnostic when the PR author cannot be determined from the payload.
+ */
+export function isLLMAccessAllowed(
+  authorAssociation: string | null | undefined,
+  senderLogin: string | undefined,
+  prAuthorLogin: string | undefined,
+): boolean {
+  if (!prAuthorLogin) {
+    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
+  }
+  return isRepoUser(authorAssociation) || !!(prAuthorLogin && senderLogin === prAuthorLogin);
+}
+
 interface MemoryConfig {
   enabled: boolean;
   repo: string;
@@ -48,11 +63,8 @@ export async function handleReviewCommentReply(
 
   const senderLogin = github.context.payload.sender?.login;
   const prAuthorLogin = github.context.payload.pull_request?.user?.login;
-  if (!prAuthorLogin) {
-    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
-  }
-  if (!isRepoUser(comment.author_association) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
-    core.info(`Ignoring reply from non-contributor ${senderLogin} (${comment.author_association})`);
+  if (!isLLMAccessAllowed(comment.author_association, senderLogin, prAuthorLogin)) {
+    core.info(`Ignoring reply from non-contributor ${senderLogin} (${comment.author_association ?? 'unknown association'})`);
     return;
   }
 
@@ -187,22 +199,19 @@ export async function handlePRComment(
     return;
   }
 
-  const senderLogin = payload.sender?.login;
-  const prAuthorLogin = payload.issue?.user?.login;
-  if (!prAuthorLogin) {
-    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
-  }
-
   switch (command.type) {
-    case 'explain':
-      if (!isRepoUser(comment.author_association) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
-        core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association})`);
+    case 'explain': {
+      const senderLogin = payload.sender?.login;
+      const prAuthorLogin = payload.issue?.user?.login;
+      if (!isLLMAccessAllowed(comment.author_association, senderLogin, prAuthorLogin)) {
+        core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association ?? 'unknown association'})`);
         return;
       }
       if (!client) { core.warning('Claude client required for explain command'); return; }
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       await handleExplain(octokit, client, owner, repo, issueNumber, command.args);
       break;
+    }
     case 'dismiss':
       await handleDismiss(octokit, owner, repo, issueNumber, command.args, memoryConfig, memoryToken);
       await reactToIssueComment(octokit, owner, repo, commentId, '+1');
@@ -227,14 +236,17 @@ export async function handlePRComment(
       await reactToIssueComment(octokit, owner, repo, commentId, '+1');
       await handleHelp(octokit, owner, repo, issueNumber);
       break;
-    default:
-      if (!isRepoUser(comment.author_association) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
-        core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association})`);
+    default: {
+      const senderLogin = payload.sender?.login;
+      const prAuthorLogin = payload.issue?.user?.login;
+      if (!isLLMAccessAllowed(comment.author_association, senderLogin, prAuthorLogin)) {
+        core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association ?? 'unknown association'})`);
         return;
       }
       if (!client) { core.warning('Claude client required for generic questions'); return; }
       await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       await handleGenericQuestion(octokit, client, owner, repo, issueNumber, body);
+    }
   }
 }
 
