@@ -25,7 +25,7 @@ export function isLLMAccessAllowed(
   senderLogin: string | undefined,
   prAuthorLogin: string | undefined,
 ): boolean {
-  if (!prAuthorLogin) {
+  if (!prAuthorLogin && !isRepoUser(authorAssociation)) {
     core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
   }
   return isRepoUser(authorAssociation) || !!(prAuthorLogin && senderLogin === prAuthorLogin);
@@ -254,8 +254,10 @@ export async function handlePRComment(
         return;
       }
       if (!client) { core.warning('Claude client required for generic questions'); return; }
-      const sanitizedQuestion = body.replace(/(?:@manki-review|@manki|\/manki)\s*/gi, '').trim().slice(0, 500);
-      await handleGenericQuestion(octokit, client, owner, repo, issueNumber, sanitizedQuestion);
+      // Strip the command prefix and truncate before forwarding to the LLM.
+      // Access is already gated by isLLMAccessAllowed above.
+      const question = body.replace(/(?:@manki-review|@manki|\/manki)\s*/gi, '').trim().slice(0, 500);
+      await handleGenericQuestion(octokit, client, owner, repo, issueNumber, question);
     }
   }
 }

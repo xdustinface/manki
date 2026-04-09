@@ -780,6 +780,7 @@ describe('handlePRComment', () => {
     const client = createMockClient();
     await handlePRComment(octokit, client, 'test-owner', 'test-repo', 1);
     expect(client.sendMessage).toHaveBeenCalled();
+    expect(client.sendMessage).toHaveBeenCalledWith(expect.any(String), expect.not.stringContaining('@manki'));
     expect(core.info).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring @manki command from non-contributor'));
   });
 
