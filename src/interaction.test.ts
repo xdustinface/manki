@@ -1,4 +1,4 @@
-import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser, isLLMAccessAllowed } from './interaction';
+import { parseCommand, buildReplyContext, parseTriageBody, extractFindingContent, triageTitlePrefix, extractPrNumber, ParsedCommand, isBotComment, hasBotMention, isReviewRequest, isBotMentionNonReview, handlePRComment, handleReviewCommentReply, handleReviewCommentCommand, scopeDiffToFile, isRepoUser } from './interaction';
 import { ReviewConfig } from './types';
 import * as github from '@actions/github';
 import * as core from '@actions/core';

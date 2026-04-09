@@ -5,7 +5,7 @@ import { createAuthenticatedOctokit, getMemoryToken } from './auth';
 import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
-import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isRepoUser, isLLMAccessAllowed } from './interaction';
+import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isLLMAccessAllowed } from './interaction';
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
