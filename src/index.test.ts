@@ -81,6 +81,8 @@ jest.mock('./interaction', () => ({
   isBotMentionNonReview: jest.fn().mockReturnValue(false),
   hasBotMention: jest.fn().mockReturnValue(false),
   parseCommand: jest.fn().mockReturnValue({ type: 'generic', args: '' }),
+  isRepoUser: jest.requireActual('./interaction').isRepoUser,
+  isLLMAccessAllowed: jest.requireActual('./interaction').isLLMAccessAllowed,
 }));
 
 jest.mock('./memory', () => ({
@@ -336,7 +338,7 @@ describe('run', () => {
         payload: {
           action: 'created',
           sender: { login: 'user' },
-          comment: { body: '@manki review', id: 42 },
+          comment: { body: '@manki review', id: 42, author_association: 'COLLABORATOR' },
           issue: { number: 5, pull_request: { url: 'https://...' } },
         },
       });
@@ -405,7 +407,7 @@ describe('run', () => {
         payload: {
           action: 'edited',
           sender: { login: 'user' },
-          comment: { body: '@manki review', id: 99 },
+          comment: { body: '@manki review', id: 99, author_association: 'COLLABORATOR' },
           issue: { number: 5, pull_request: { url: 'https://...' } },
         },
       });
@@ -737,7 +739,7 @@ describe('handleCommentTrigger', () => {
       payload: {
         action: 'created',
         issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
-        comment: { id: 42, body: '@manki review' },
+        comment: { id: 42, body: '@manki review', author_association: 'COLLABORATOR' },
       },
     });
 
@@ -763,7 +765,7 @@ describe('handleCommentTrigger', () => {
       payload: {
         action: 'created',
         issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
-        comment: { id: 42, body: '@manki-review review' },
+        comment: { id: 42, body: '@manki-review review', author_association: 'COLLABORATOR' },
       },
     });
 
@@ -771,6 +773,88 @@ describe('handleCommentTrigger', () => {
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith('Already approved on this commit — skipping review');
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
+  });
+
+  it('ignores review request from NONE association non-PR-author', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' }, user: { login: 'pr-author' } },
+        comment: { id: 42, body: '@manki review', author_association: 'NONE' },
+        sender: { login: 'stranger' },
+      },
+    });
+
+    await handleCommentTrigger();
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(expect.stringContaining('Ignoring review request from stranger'));
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can trigger reviews') }),
+    );
+    expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
+  });
+
+  it('allows review request from CONTRIBUTOR', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' }, user: { login: 'pr-author' } },
+        comment: { id: 42, body: '@manki review', author_association: 'CONTRIBUTOR' },
+        sender: { login: 'contributor-user' },
+      },
+    });
+
+    await handleCommentTrigger();
+
+    expect(jest.mocked(core.info)).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring review request'));
+    expect(mockOctokitInstance.rest.pulls.get).toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
+  });
+
+  it('allows review request from PR author with NONE association', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' }, user: { login: 'pr-author' } },
+        comment: { id: 42, body: '@manki review', author_association: 'NONE' },
+        sender: { login: 'pr-author' },
+      },
+    });
+
+    await handleCommentTrigger();
+
+    expect(jest.mocked(core.info)).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring review request'));
+    expect(mockOctokitInstance.rest.pulls.get).toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
+  });
+
+  it('blocks force review from NONE-association non-PR-author', async () => {
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' }, user: { login: 'pr-author' } },
+        comment: { id: 42, body: '@manki review', author_association: 'NONE' },
+        sender: { login: 'stranger' },
+      },
+    });
+
+    await handleCommentTrigger(true);
+
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(expect.stringContaining('Ignoring review request from stranger'));
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can trigger reviews') }),
+    );
+    expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
   });
 });
 
@@ -796,7 +880,7 @@ describe('isApprovedOnCommit guard', () => {
   const commentPayload = {
     action: 'created',
     issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
-    comment: { id: 42, body: '@manki review' },
+    comment: { id: 42, body: '@manki review', author_association: 'COLLABORATOR' },
   };
 
   it('skips review when already approved on commit', async () => {
@@ -2535,7 +2619,7 @@ describe('force review checkbox', () => {
         action: 'edited',
         sender: { login: 'user' },
         issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
-        comment: { id: 42, body: forceBody },
+        comment: { id: 42, body: forceBody, author_association: 'COLLABORATOR' },
       },
     });
 
