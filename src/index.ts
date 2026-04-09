@@ -246,6 +246,9 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   const authorAssociation = payload.comment?.author_association;
   const senderLogin = payload.sender?.login;
   const prAuthorLogin = payload.issue?.user?.login;
+  if (!prAuthorLogin) {
+    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
+  }
   if (!isRepoUser(authorAssociation) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
     core.info(`Ignoring review request from ${senderLogin} (${authorAssociation ?? 'unknown association'})`);
     return;

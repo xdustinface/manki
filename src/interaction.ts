@@ -48,6 +48,9 @@ export async function handleReviewCommentReply(
 
   const senderLogin = github.context.payload.sender?.login;
   const prAuthorLogin = github.context.payload.pull_request?.user?.login;
+  if (!prAuthorLogin) {
+    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
+  }
   if (!isRepoUser(comment.author_association) && !(prAuthorLogin && senderLogin === prAuthorLogin)) {
     core.info(`Ignoring reply from non-contributor ${senderLogin} (${comment.author_association})`);
     return;
@@ -186,6 +189,9 @@ export async function handlePRComment(
 
   const senderLogin = payload.sender?.login;
   const prAuthorLogin = payload.issue?.user?.login;
+  if (!prAuthorLogin) {
+    core.info(`PR author login unavailable in payload — PR-author bypass inactive for ${senderLogin}`);
+  }
 
   switch (command.type) {
     case 'explain':
