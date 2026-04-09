@@ -46,8 +46,10 @@ export async function handleReviewCommentReply(
     return;
   }
 
-  if (!isRepoUser(comment.author_association)) {
-    core.info(`Ignoring reply from non-contributor ${comment.user?.login} (${comment.author_association})`);
+  const senderLogin = github.context.payload.sender?.login;
+  const prAuthorLogin = github.context.payload.pull_request?.user?.login;
+  if (!isRepoUser(comment.author_association) && senderLogin !== prAuthorLogin) {
+    core.info(`Ignoring reply from non-contributor ${senderLogin} (${comment.author_association})`);
     return;
   }
 

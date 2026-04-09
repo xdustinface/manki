@@ -806,6 +806,7 @@ describe('handleCommentTrigger', () => {
 
     expect(jest.mocked(core.info)).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring review request'));
     expect(mockOctokitInstance.rest.pulls.get).toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
   });
 
   it('allows review request from PR author with NONE association', async () => {
@@ -823,6 +824,7 @@ describe('handleCommentTrigger', () => {
 
     expect(jest.mocked(core.info)).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring review request'));
     expect(mockOctokitInstance.rest.pulls.get).toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
   });
 
   it('blocks force review from NONE-association non-PR-author', async () => {

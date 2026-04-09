@@ -794,6 +794,19 @@ describe('handleReviewCommentReply', () => {
     expect(core.info).toHaveBeenCalledWith('Not a reply to an existing comment');
   });
 
+  it('blocks reply from NONE-association non-PR-author', async () => {
+    setContext({
+      comment: { id: 1, body: 'reply text', user: { type: 'User' }, in_reply_to_id: 99, author_association: 'NONE' },
+      pull_request: { number: 1, user: { login: 'pr-author' } },
+      sender: { login: 'stranger' },
+    });
+    const octokit = createMockOctokit();
+    const client = createMockClient();
+    await handleReviewCommentReply(octokit, client, 'test-owner', 'test-repo', 1);
+    expect(core.info).toHaveBeenCalledWith(expect.stringContaining('Ignoring reply from non-contributor stranger'));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('skips when parent comment is not from bot', async () => {
     setContext({ comment: { id: 1, body: 'reply', user: { type: 'User' }, in_reply_to_id: 99, author_association: 'CONTRIBUTOR' }, pull_request: { number: 1 } });
     const octokit = createMockOctokit();
