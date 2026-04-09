@@ -789,6 +789,12 @@ describe('handleCommentTrigger', () => {
     await handleCommentTrigger();
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(expect.stringContaining('Ignoring review request from stranger'));
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can trigger reviews') }),
+    );
     expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
   });
 
@@ -842,6 +848,12 @@ describe('handleCommentTrigger', () => {
     await handleCommentTrigger(true);
 
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(expect.stringContaining('Ignoring review request from stranger'));
+    expect(jest.mocked(ghUtils.reactToIssueComment)).toHaveBeenCalledWith(
+      expect.anything(), 'test-owner', 'test-repo', 42, 'eyes',
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can trigger reviews') }),
+    );
     expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
   });
 });

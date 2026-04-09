@@ -237,23 +237,27 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
     return;
   }
 
-  const authorAssociation = payload.comment?.author_association;
-  const senderLogin = payload.sender?.login;
-  const prAuthorLogin = payload.issue?.user?.login;
-  if (!isLLMAccessAllowed(authorAssociation, senderLogin, prAuthorLogin)) {
-    core.info(`Ignoring review request from ${senderLogin} (${authorAssociation ?? 'unknown association'})`);
-    return;
-  }
-
   const owner = github.context.repo.owner;
   const repo = github.context.repo.repo;
   const prNumber = payload.issue.number;
 
   const octokit = await getOctokit();
 
-  // Acknowledge the review request — for force-review, react here (after auth check passes).
-  if (forceReview && payload.comment?.id) {
+  // Acknowledge the command unconditionally so the user knows it was received.
+  if (payload.comment?.id) {
     await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
+  }
+
+  const authorAssociation = payload.comment?.author_association;
+  const senderLogin = payload.sender?.login;
+  const prAuthorLogin = payload.issue?.user?.login;
+  if (!isLLMAccessAllowed(authorAssociation, senderLogin, prAuthorLogin)) {
+    core.info(`Ignoring review request from ${senderLogin} (${authorAssociation ?? 'unknown association'})`);
+    await octokit.rest.issues.createComment({
+      owner, repo, issue_number: prNumber,
+      body: `${PROGRESS_MARKER}\n**Manki** — Only repo contributors can trigger reviews.`,
+    });
+    return;
   }
 
   const { data: pr } = await octokit.rest.pulls.get({
@@ -264,24 +268,14 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
 
   if (!forceReview) {
     if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
-      if (payload.comment?.id) {
-        await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
-      }
       await postReviewSkippedComment(octokit, owner, repo, prNumber);
       core.info('Review already in progress — skipping');
       return;
     }
 
     if (await isApprovedOnCommit(octokit, owner, repo, prNumber, pr.head.sha)) {
-      if (payload.comment?.id) {
-        await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
-      }
       core.info('Already approved on this commit — skipping review');
       return;
-    }
-
-    if (payload.comment?.id) {
-      await reactToIssueComment(octokit, owner, repo, payload.comment.id, 'eyes');
     }
   }
 

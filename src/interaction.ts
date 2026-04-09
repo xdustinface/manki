@@ -201,14 +201,18 @@ export async function handlePRComment(
 
   switch (command.type) {
     case 'explain': {
+      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       const senderLogin = payload.sender?.login;
       const prAuthorLogin = payload.issue?.user?.login;
       if (!isLLMAccessAllowed(comment.author_association, senderLogin, prAuthorLogin)) {
         core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association ?? 'unknown association'})`);
+        await octokit.rest.issues.createComment({
+          owner, repo, issue_number: issueNumber,
+          body: `${BOT_MARKER}\n**Manki** — Only repo contributors can use this command.`,
+        });
         return;
       }
       if (!client) { core.warning('Claude client required for explain command'); return; }
-      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       await handleExplain(octokit, client, owner, repo, issueNumber, command.args);
       break;
     }
@@ -237,14 +241,18 @@ export async function handlePRComment(
       await handleHelp(octokit, owner, repo, issueNumber);
       break;
     default: {
+      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       const senderLogin = payload.sender?.login;
       const prAuthorLogin = payload.issue?.user?.login;
       if (!isLLMAccessAllowed(comment.author_association, senderLogin, prAuthorLogin)) {
         core.info(`Ignoring @manki command from non-contributor ${senderLogin} (${comment.author_association ?? 'unknown association'})`);
+        await octokit.rest.issues.createComment({
+          owner, repo, issue_number: issueNumber,
+          body: `${BOT_MARKER}\n**Manki** — Only repo contributors can use this command.`,
+        });
         return;
       }
       if (!client) { core.warning('Claude client required for generic questions'); return; }
-      await reactToIssueComment(octokit, owner, repo, commentId, 'eyes');
       await handleGenericQuestion(octokit, client, owner, repo, issueNumber, body);
     }
   }

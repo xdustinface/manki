@@ -697,7 +697,10 @@ describe('handlePRComment', () => {
     const client = createMockClient();
     await handlePRComment(octokit, client, 'test-owner', 'test-repo', 1);
     expect(client.sendMessage).not.toHaveBeenCalled();
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(ghUtils.reactToIssueComment).toHaveBeenCalledWith(octokit, 'test-owner', 'test-repo', 42, 'eyes');
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can use this command') }),
+    );
     expect(core.info).toHaveBeenCalledWith(expect.stringContaining('Ignoring @manki command from non-contributor'));
   });
 
@@ -711,7 +714,27 @@ describe('handlePRComment', () => {
     const client = createMockClient();
     await handlePRComment(octokit, client, 'test-owner', 'test-repo', 1);
     expect(client.sendMessage).not.toHaveBeenCalled();
-    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(ghUtils.reactToIssueComment).toHaveBeenCalledWith(octokit, 'test-owner', 'test-repo', 42, 'eyes');
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can use this command') }),
+    );
+    expect(core.info).toHaveBeenCalledWith(expect.stringContaining('Ignoring @manki command from non-contributor'));
+  });
+
+  it('blocks "what do you think?" from NONE association non-PR-author', async () => {
+    setContext({
+      comment: { id: 42, body: '@manki what do you think?', user: { type: 'User' }, author_association: 'NONE' },
+      sender: { login: 'stranger' },
+      issue: { pull_request: { url: 'https://...' }, user: { login: 'pr-author' } },
+    });
+    const octokit = createMockOctokit();
+    const client = createMockClient();
+    await handlePRComment(octokit, client, 'test-owner', 'test-repo', 1);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(ghUtils.reactToIssueComment).toHaveBeenCalledWith(octokit, 'test-owner', 'test-repo', 42, 'eyes');
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Only repo contributors can use this command') }),
+    );
     expect(core.info).toHaveBeenCalledWith(expect.stringContaining('Ignoring @manki command from non-contributor'));
   });
 
