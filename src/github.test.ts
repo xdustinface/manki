@@ -3074,4 +3074,24 @@ describe('cancelActiveReviewRun', () => {
     expect(cancelWorkflowRun).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
   });
+
+  it.each(['waiting', 'pending', 'requested', 'action_required'])(
+    'returns true and cancels when run status is %s',
+    async (runStatus) => {
+      const updateComment = jest.fn().mockResolvedValue({});
+      const { octokit, cancelWorkflowRun } = makeMockOctokit({
+        comment: { id: 60, body: makeRunIdBody(1111) },
+        updateComment,
+        runStatus,
+      });
+
+      const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+      expect(result).toBe(true);
+      expect(cancelWorkflowRun).toHaveBeenCalled();
+      expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({
+        body: expect.stringContaining(CANCELLED_MARKER),
+      }));
+    },
+  );
 });
