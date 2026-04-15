@@ -786,6 +786,23 @@ describe('handleCommentTrigger', () => {
     expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
   });
 
+  it('does not call cancelActiveReviewRun when forceReview is true', async () => {
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
+
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
+        comment: { id: 42, body: '@manki review', author_association: 'COLLABORATOR' },
+      },
+    });
+
+    await handleCommentTrigger(true);
+
+    expect(jest.mocked(ghUtils.cancelActiveReviewRun)).not.toHaveBeenCalled();
+  });
+
   it('skips review when already approved on this commit', async () => {
     jest.mocked(ghUtils.isApprovedOnCommit).mockResolvedValueOnce(true);
 

@@ -1,4 +1,4 @@
-import { buildDashboard, formatFindingComment, formatStatsJson, formatStatsOneLiner, mapVerdictToEvent, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, VERSION_MARKER_PREFIX, MANKI_VERSION, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd, updateProgressComment, postProgressComment, updateProgressDashboard, dismissPreviousReviews, reactToIssueComment, reactToReviewComment, createNitIssue, fetchPRDiff, fetchConfigFile, fetchRepoContext, getSeverityEmoji, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, extractRunIdFromBody, extractVersionFromBody, INDENT, APP_WARNING_MARKER, postAppWarningIfNeeded } from './github';
+import { buildDashboard, formatFindingComment, formatStatsJson, formatStatsOneLiner, mapVerdictToEvent, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, VERSION_MARKER_PREFIX, MANKI_VERSION, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd, updateProgressComment, postProgressComment, updateProgressDashboard, dismissPreviousReviews, reactToIssueComment, reactToReviewComment, createNitIssue, fetchPRDiff, fetchConfigFile, fetchRepoContext, getSeverityEmoji, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, cancelActiveReviewRun, extractRunIdFromBody, extractVersionFromBody, INDENT, APP_WARNING_MARKER, postAppWarningIfNeeded } from './github';
 import { DashboardData, Finding, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats } from './types';
 
 describe('formatFindingComment', () => {
@@ -2904,5 +2904,105 @@ describe('postAppWarningIfNeeded', () => {
 
     await expect(postAppWarningIfNeeded(octokit, 'owner', 'repo', 1)).resolves.toBeUndefined();
     expect(createComment).toHaveBeenCalled();
+  });
+});
+
+describe('cancelActiveReviewRun', () => {
+  type Octokit = ReturnType<typeof import('@actions/github').getOctokit>;
+
+  function makeRunIdBody(runId: number): string {
+    return `${BOT_MARKER}\n<!-- manki-run-id:${runId} -->\n**Manki** — Review in progress`;
+  }
+
+  function makeMockOctokit(opts: {
+    comment?: { id: number; body: string } | null;
+    cancelError?: Error;
+    updateComment?: jest.Mock;
+  }) {
+    const updateComment = opts.updateComment ?? jest.fn().mockResolvedValue({});
+    const cancelWorkflowRun = opts.cancelError
+      ? jest.fn().mockRejectedValue(opts.cancelError)
+      : jest.fn().mockResolvedValue({});
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockResolvedValue({
+            data: opts.comment === null || opts.comment === undefined
+              ? []
+              : [{ id: opts.comment.id, body: opts.comment.body, user: { login: BOT_LOGIN, type: 'Bot' } }],
+          }),
+          updateComment,
+        },
+        actions: {
+          cancelWorkflowRun,
+        },
+      },
+    } as unknown as Octokit;
+    return { octokit, cancelWorkflowRun, updateComment };
+  }
+
+  it('returns false when no progress comment exists', async () => {
+    const { octokit, cancelWorkflowRun } = makeMockOctokit({ comment: null });
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(cancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('returns false when progress comment has no runId', async () => {
+    const { octokit, cancelWorkflowRun } = makeMockOctokit({
+      comment: { id: 10, body: `${BOT_MARKER}\n**Manki** — Review in progress` },
+    });
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(cancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('returns false and skips cancellation when runId matches current run', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ghCtx = require('@actions/github').context;
+    const originalRunIdAttr = ghCtx.runId;
+    Object.defineProperty(ghCtx, 'runId', { value: 9999, configurable: true, writable: true });
+    try {
+      const { octokit, cancelWorkflowRun } = makeMockOctokit({
+        comment: { id: 11, body: makeRunIdBody(9999) },
+      });
+
+      const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+      expect(result).toBe(false);
+      expect(cancelWorkflowRun).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(ghCtx, 'runId', { value: originalRunIdAttr, configurable: true, writable: true });
+    }
+  });
+
+  it('returns true and marks comment cancelled when cancellation succeeds', async () => {
+    const updateComment = jest.fn().mockResolvedValue({});
+    const { octokit, cancelWorkflowRun } = makeMockOctokit({
+      comment: { id: 20, body: makeRunIdBody(5555) },
+      updateComment,
+    });
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(cancelWorkflowRun).toHaveBeenCalledWith({ owner: 'owner', repo: 'repo', run_id: 5555 });
+    expect(updateComment).toHaveBeenCalled();
+  });
+
+  it('returns false when cancelWorkflowRun throws', async () => {
+    const { octokit, cancelWorkflowRun } = makeMockOctokit({
+      comment: { id: 30, body: makeRunIdBody(7777) },
+      cancelError: new Error('API failure'),
+    });
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(cancelWorkflowRun).toHaveBeenCalled();
   });
 });

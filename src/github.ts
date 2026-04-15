@@ -1286,8 +1286,15 @@ async function cancelActiveReviewRun(
   const runId = progress.runId;
   if (!runId) return false;
 
+  if (runId === github.context.runId) {
+    core.warning('Skipping self-cancellation');
+    return false;
+  }
+
   try {
     await octokit.rest.actions.cancelWorkflowRun({ owner, repo, run_id: runId });
+    // cancelWorkflowRun transitions the run to 'cancelling' — the old run may
+    // still complete in-flight API calls before stopping.
     core.info(`Cancelled in-progress review run ${runId}`);
     await markProgressCommentCancelled(octokit, owner, repo, progress.id, progress.body);
     return true;
