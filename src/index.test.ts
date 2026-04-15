@@ -48,7 +48,7 @@ const mockOctokitInstance = {
 };
 
 jest.mock('./auth', () => ({
-  createAuthenticatedOctokit: jest.fn().mockResolvedValue({ octokit: mockOctokitInstance, resolvedToken: 'mock-resolved-token' }),
+  createAuthenticatedOctokit: jest.fn().mockResolvedValue({ octokit: mockOctokitInstance, resolvedToken: 'mock-resolved-token', identity: 'app' }),
   getMemoryToken: jest.fn().mockReturnValue(null),
 }));
 
@@ -126,10 +126,12 @@ jest.mock('./github', () => ({
   isReviewInProgress: jest.fn().mockResolvedValue(false),
   isApprovedOnCommit: jest.fn().mockResolvedValue(false),
   markOwnProgressCommentCancelled: jest.fn().mockResolvedValue(false),
+  postAppWarningIfNeeded: jest.fn().mockResolvedValue(undefined),
   BOT_LOGIN: 'manki-review[bot]',
   BOT_MARKER: '<!-- manki-bot -->',
   REVIEW_COMPLETE_MARKER: '<!-- manki-review-complete -->',
   FORCE_REVIEW_MARKER: '<!-- manki-force-review -->',
+  APP_WARNING_MARKER: '<!-- manki-app-warning -->',
 }));
 
 jest.mock('./state', () => ({
@@ -2357,6 +2359,34 @@ describe('runFullReview orchestration', () => {
 
     expect(jest.mocked(core.setFailed)).not.toHaveBeenCalled();
     expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
+  });
+
+  it('posts app warning when identity is actions', async () => {
+    jest.mocked(authModule.createAuthenticatedOctokit).mockResolvedValue({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      octokit: mockOctokitInstance as any,
+      resolvedToken: 'mock-token',
+      identity: 'actions',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.postAppWarningIfNeeded)).toHaveBeenCalledWith(
+      mockOctokitInstance, 'test-owner', 'test-repo', 42,
+    );
+  });
+
+  it('does not post app warning when identity is app', async () => {
+    jest.mocked(authModule.createAuthenticatedOctokit).mockResolvedValue({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      octokit: mockOctokitInstance as any,
+      resolvedToken: 'mock-token',
+      identity: 'app',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.postAppWarningIfNeeded)).not.toHaveBeenCalled();
   });
 });
 

@@ -1239,4 +1239,26 @@ async function isApprovedOnCommit(octokit: Octokit, owner: string, repo: string,
   }
 }
 
-export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, RUN_ID_MARKER_PREFIX, VERSION_MARKER_PREFIX, MANKI_VERSION, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, extractRunIdFromBody, extractVersionFromBody };
+const APP_WARNING_MARKER = '<!-- manki-app-warning -->';
+
+async function postAppWarningIfNeeded(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<void> {
+  const { data: comments } = await octokit.rest.issues.listComments({
+    owner, repo, issue_number: prNumber, per_page: 100,
+  });
+
+  if (comments.some(c => c.body?.includes(APP_WARNING_MARKER))) {
+    return;
+  }
+
+  await octokit.rest.issues.createComment({
+    owner, repo, issue_number: prNumber,
+    body: `${APP_WARNING_MARKER}\n**Manki** — The [Manki GitHub App](https://github.com/apps/manki-review) is not installed on this repository. Reviews are posting as \`github-actions[bot]\` instead of \`manki-review[bot]\`. Some features (memory repo access, bot identity for review dismissal) may not work correctly.\n\nInstall the app at: https://github.com/apps/manki-review`,
+  });
+}
+
+export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, RUN_ID_MARKER_PREFIX, VERSION_MARKER_PREFIX, MANKI_VERSION, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, extractRunIdFromBody, extractVersionFromBody, APP_WARNING_MARKER, postAppWarningIfNeeded };
