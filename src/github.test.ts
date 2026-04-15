@@ -2862,7 +2862,17 @@ describe('postAppWarningIfNeeded', () => {
     }));
   });
 
-  it('skips posting when bot has already posted the warning', async () => {
+  it('skips posting when github-actions[bot] has already posted the warning', async () => {
+    const { octokit, createComment } = makeOctokit([
+      { body: `${APP_WARNING_MARKER}\nWarning text`, user: { login: 'github-actions[bot]' } },
+    ]);
+
+    await postAppWarningIfNeeded(octokit, 'owner', 'repo', 1);
+
+    expect(createComment).not.toHaveBeenCalled();
+  });
+
+  it('skips posting when manki-review[bot] has already posted the warning', async () => {
     const { octokit, createComment } = makeOctokit([
       { body: `${APP_WARNING_MARKER}\nWarning text`, user: { login: BOT_LOGIN } },
     ]);

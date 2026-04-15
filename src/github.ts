@@ -10,6 +10,7 @@ import { MAX_AGENT_RETRIES } from './types';
 type Octokit = ReturnType<typeof github.getOctokit>;
 
 const BOT_LOGIN = 'manki-review[bot]';
+const ACTIONS_BOT_LOGIN = 'github-actions[bot]';
 const BOT_MARKER = '<!-- manki-bot -->';
 const REVIEW_COMPLETE_MARKER = '<!-- manki-review-complete -->';
 const FORCE_REVIEW_MARKER = '<!-- manki-force-review -->';
@@ -1251,7 +1252,10 @@ async function postAppWarningIfNeeded(
     owner, repo, issue_number: prNumber,
   });
 
-  if (comments.some(c => c.user?.login === BOT_LOGIN && c.body?.includes(APP_WARNING_MARKER))) {
+  if (comments.some(c =>
+    (c.user?.login === BOT_LOGIN || c.user?.login === ACTIONS_BOT_LOGIN) &&
+    c.body?.includes(APP_WARNING_MARKER)
+  )) {
     return;
   }
 
