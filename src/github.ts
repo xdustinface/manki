@@ -1265,4 +1265,36 @@ async function postAppWarningIfNeeded(
   });
 }
 
-export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, RUN_ID_MARKER_PREFIX, VERSION_MARKER_PREFIX, MANKI_VERSION, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, extractRunIdFromBody, extractVersionFromBody, APP_WARNING_MARKER, postAppWarningIfNeeded };
+/**
+ * Cancel the in-progress review run for a PR, if one exists.
+ * Returns true if a run was successfully cancelled, false otherwise.
+ */
+async function cancelActiveReviewRun(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<boolean> {
+  let progress: ProgressComment | null;
+  try {
+    progress = await findProgressComment(octokit, owner, repo, prNumber);
+  } catch {
+    return false;
+  }
+  if (!progress) return false;
+
+  const runId = progress.runId;
+  if (!runId) return false;
+
+  try {
+    await octokit.rest.actions.cancelWorkflowRun({ owner, repo, run_id: runId });
+    core.info(`Cancelled in-progress review run ${runId}`);
+    await markProgressCommentCancelled(octokit, owner, repo, progress.id, progress.body);
+    return true;
+  } catch (error) {
+    core.warning(`Failed to cancel run ${runId}: ${error instanceof Error ? error.message : error}`);
+    return false;
+  }
+}
+
+export { dynamicFence, formatFindingComment, formatStatsJson, formatStatsOneLiner, getSeverityEmoji, getSeverityLabel, mapVerdictToEvent, resolveReferences, safeTruncate, sanitizeFilePath, sanitizeMarkdown, truncateBody, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, RUN_ID_MARKER_PREFIX, VERSION_MARKER_PREFIX, MANKI_VERSION, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, cancelActiveReviewRun, extractRunIdFromBody, extractVersionFromBody, APP_WARNING_MARKER, postAppWarningIfNeeded };
