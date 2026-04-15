@@ -2994,7 +2994,12 @@ describe('cancelActiveReviewRun', () => {
 
     expect(result).toBe(true);
     expect(cancelWorkflowRun).toHaveBeenCalledWith({ owner: 'owner', repo: 'repo', run_id: 5555 });
-    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining(CANCELLED_MARKER) }));
+    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({
+      owner: 'owner',
+      repo: 'repo',
+      comment_id: 20,
+      body: expect.stringContaining(CANCELLED_MARKER),
+    }));
   });
 
   it('returns false when cancelWorkflowRun throws', async () => {
@@ -3021,5 +3026,39 @@ describe('cancelActiveReviewRun', () => {
     expect(result).toBe(false);
     expect(cancelWorkflowRun).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
+  });
+
+  it('returns false when listComments throws', async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          listComments: jest.fn().mockRejectedValue(new Error('network error')),
+          updateComment: jest.fn(),
+        },
+        actions: { cancelWorkflowRun: jest.fn(), getWorkflowRun: jest.fn() },
+      },
+    } as unknown as Octokit;
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(false);
+    expect(octokit.rest.actions.cancelWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it('returns true when run is queued', async () => {
+    const updateComment = jest.fn().mockResolvedValue({});
+    const { octokit, cancelWorkflowRun } = makeMockOctokit({
+      comment: { id: 21, body: makeRunIdBody(5556) },
+      updateComment,
+      runStatus: 'queued',
+    });
+
+    const result = await cancelActiveReviewRun(octokit, 'owner', 'repo', 1);
+
+    expect(result).toBe(true);
+    expect(cancelWorkflowRun).toHaveBeenCalledWith({ owner: 'owner', repo: 'repo', run_id: 5556 });
+    expect(updateComment).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining(CANCELLED_MARKER),
+    }));
   });
 });

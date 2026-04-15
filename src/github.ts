@@ -1295,7 +1295,8 @@ async function cancelActiveReviewRun(
 
   try {
     const { data: runData } = await octokit.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
-    if (runData.status !== 'in_progress' && runData.status !== 'queued') {
+    const cancellableStatuses = new Set(['in_progress', 'queued', 'waiting', 'pending', 'requested', 'action_required']);
+    if (!cancellableStatuses.has(runData.status ?? '')) {
       core.info(`Run ${runId} is already ${runData.status} — skipping cancel`);
       return false;
     }
