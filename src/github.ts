@@ -1293,13 +1293,20 @@ async function cancelActiveReviewRun(
     return false;
   }
 
+  let runData: { status?: string | null };
   try {
-    const { data: runData } = await octokit.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
-    const cancellableStatuses = new Set(['in_progress', 'queued', 'waiting', 'pending', 'requested', 'action_required']);
-    if (!cancellableStatuses.has(runData.status ?? '')) {
-      core.info(`Run ${runId} is already ${runData.status} — skipping cancel`);
-      return false;
-    }
+    const { data } = await octokit.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
+    runData = data;
+  } catch (error) {
+    core.warning(`Failed to query run ${runId}: ${error instanceof Error ? error.message : error}`);
+    return false;
+  }
+  const cancellableStatuses = new Set(['in_progress', 'queued', 'waiting', 'pending', 'requested', 'action_required']);
+  if (!cancellableStatuses.has(runData.status ?? '')) {
+    core.info(`Run ${runId} is already ${runData.status} — skipping cancel`);
+    return false;
+  }
+  try {
     await octokit.rest.actions.cancelWorkflowRun({ owner, repo, run_id: runId });
     // cancelWorkflowRun transitions the run to 'cancelling' — the old run may
     // still complete in-flight API calls before stopping.
