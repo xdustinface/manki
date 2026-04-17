@@ -44,6 +44,8 @@ export interface HandoverFinding {
   title: string;
   authorReply: AuthorReplyClass;
   threadId?: string;
+  /** Originating specialist name (from `Finding.reviewers[0]`). Absent in handover files written before this field was added. */
+  specialist?: string;
 }
 
 /** A single completed review round recorded in the per-PR handover. */
@@ -109,6 +111,21 @@ export interface PlannerResult {
   agents?: AgentPick[];
   language?: string;
   context?: string;
+}
+
+/** Per-specialist outcome aggregate for a single prior round. */
+export interface SpecialistOutcome {
+  specialist: string;
+  /** Count of findings the author did not acknowledge as fixed (`authorReply !== 'agree'`). */
+  findingsKept: number;
+  /** Count of findings the author agreed with and acted on (`authorReply === 'agree'`). */
+  findingsDismissed: number;
+}
+
+/** Compact summary of a prior review round fed back to the planner for budget allocation. */
+export interface PlannerRoundHint {
+  round: number;
+  specialistOutcomes: SpecialistOutcome[];
 }
 
 export type ReviewLevel = 'auto' | 'small' | 'medium' | 'large';

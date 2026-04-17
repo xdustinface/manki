@@ -5,6 +5,7 @@ import {
   buildReviewerSystemPrompt,
   buildReviewerUserMessage,
   buildPlannerSystemPrompt,
+  buildPlannerHints,
   selectTeam,
   titlesMatch,
   truncateDiff,
@@ -23,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent } from './judge';
 import { applySuppressions } from './memory';
 
@@ -1897,6 +1898,310 @@ describe('runReview', () => {
     expect(result.agentNames).toContain('Domain Expert');
   });
 
+  it('clamps high effort to low when last-round dismiss rate is 100% with sample size >= 2', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [
+        { name: 'Security & Safety', effort: 'high' },
+        { name: 'Correctness & Logic', effort: 'high' },
+        { name: 'Architecture & Design', effort: 'medium' },
+      ],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+          { specialist: 'Correctness & Logic', findingsKept: 1, findingsDismissed: 2 },
+        ],
+      },
+    ];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        hints,
+      );
+      expect(result.plannerResult?.agents).toBeDefined();
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      const corPick = result.plannerResult!.agents!.find(a => a.name === 'Correctness & Logic');
+      // 100% dismiss rate with sample >= 2 and effort high -> clamp to low
+      expect(secPick?.effort).toBe('low');
+      // Non-zero keep rate, guard does not fire
+      expect(corPick?.effort).toBe('high');
+
+      const clampLogs = infoSpy.mock.calls.filter(
+        c => typeof c[0] === 'string' && c[0].includes('Downgrading "Security & Safety"'),
+      );
+      expect(clampLogs.length).toBe(1);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('does not downgrade effort when dismiss sample is below threshold', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [
+        { name: 'Security & Safety', effort: 'high' },
+        { name: 'Correctness & Logic', effort: 'medium' },
+        { name: 'Architecture & Design', effort: 'low' },
+      ],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 1 },
+        ],
+      },
+    ];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      hints,
+    );
+    const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+    expect(secPick?.effort).toBe('high');
+  });
+
+  it('uses only the most recent hint when an older round has 100% dismissals but the latest does not', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Round 1: 100% dismiss rate (would trigger downgrade). Round 2 (most recent): 50% keep rate (guard must NOT fire).
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        ],
+      },
+      {
+        round: 2,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 2 },
+        ],
+      },
+    ];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      hints,
+    );
+    const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+    // Most recent round has kept findings — guard must not fire even though round 1 had 100% dismissals.
+    expect(secPick?.effort).toBe('high');
+  });
+
+  it('downgrades based on most recent hint when an older round has non-zero keeps', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Round 1: non-zero keeps (guard would not fire). Round 2 (most recent): 100% dismissals (guard SHOULD fire).
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 1 },
+        ],
+      },
+      {
+        round: 2,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        ],
+      },
+    ];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        hints,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      // Most recent round dismissed all findings — guard fires based on last hint.
+      expect(secPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('applies effort downgrade per-specialist independently when hints cover multiple specialists', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [
+        { name: 'Security & Safety', effort: 'high' },
+        { name: 'Correctness & Logic', effort: 'high' },
+        { name: 'Architecture & Design', effort: 'high' },
+      ],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Single round hint with three specialists: two should downgrade, one should not.
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+          { specialist: 'Correctness & Logic', findingsKept: 1, findingsDismissed: 2 },
+          { specialist: 'Architecture & Design', findingsKept: 0, findingsDismissed: 4 },
+        ],
+      },
+    ];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        hints,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      const corPick = result.plannerResult!.agents!.find(a => a.name === 'Correctness & Logic');
+      const archPick = result.plannerResult!.agents!.find(a => a.name === 'Architecture & Design');
+      // 100% dismiss, sample >= 2 -> downgrade
+      expect(secPick?.effort).toBe('low');
+      // Non-zero keeps -> no downgrade
+      expect(corPick?.effort).toBe('high');
+      // 100% dismiss, sample >= 2 -> downgrade
+      expect(archPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('forwards priorRoundHints to the planner prompt', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+    });
+    const plannerSpy = jest.fn().mockResolvedValue({ content: plannerResponse });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: { sendMessage: plannerSpy } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Architecture & Design', findingsKept: 3, findingsDismissed: 2 },
+        ],
+      },
+    ];
+
+    await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      hints,
+    );
+
+    const systemPrompt = plannerSpy.mock.calls[0][0] as string;
+    expect(systemPrompt).toContain('Prior Round Outcomes');
+    expect(systemPrompt).toContain('"Architecture & Design" — 3 kept, 2 dismissed');
+  });
+
   it('falls back to selectTeam when planner returns error', async () => {
     const clients: ReviewClients = {
       reviewer: {
@@ -2742,6 +3047,86 @@ describe('selectTeam with teamSizeOverride', () => {
   });
 });
 
+describe('buildPlannerHints', () => {
+  const makeRound = (round: number, findings: HandoverRound['findings']): HandoverRound => ({
+    round,
+    commitSha: `sha${round}`,
+    timestamp: '2025-01-01T00:00:00Z',
+    findings,
+  });
+
+  it('returns [] for undefined or empty rounds', () => {
+    expect(buildPlannerHints(undefined)).toEqual([]);
+    expect(buildPlannerHints([])).toEqual([]);
+  });
+
+  it('groups findings by specialist with kept/dismissed counts', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'suggestion', title: 't3', authorReply: 'none', specialist: 'Testing & Coverage' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints).toHaveLength(1);
+    expect(hints[0].round).toBe(1);
+    const sec = hints[0].specialistOutcomes.find(o => o.specialist === 'Security & Safety');
+    const test = hints[0].specialistOutcomes.find(o => o.specialist === 'Testing & Coverage');
+    expect(sec).toEqual({ specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 2 });
+    expect(test).toEqual({ specialist: 'Testing & Coverage', findingsKept: 1, findingsDismissed: 0 });
+  });
+
+  it('skips findings without a specialist field (legacy handover entries)', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Correctness & Logic' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints).toHaveLength(1);
+    expect(hints[0].specialistOutcomes).toHaveLength(1);
+    expect(hints[0].specialistOutcomes[0].specialist).toBe('Correctness & Logic');
+  });
+
+  it('consumes only the last two rounds when more are present', () => {
+    const make = (n: number, spec: string): HandoverRound => makeRound(n, [
+      { fingerprint: { file: 'a.ts', lineStart: n, lineEnd: n, slug: `s${n}` }, severity: 'required', title: `t${n}`, authorReply: 'none', specialist: spec },
+    ]);
+    const rounds = [make(1, 'Security & Safety'), make(2, 'Architecture & Design'), make(3, 'Testing & Coverage')];
+    const hints = buildPlannerHints(rounds);
+    expect(hints.map(h => h.round)).toEqual([2, 3]);
+  });
+
+  it('omits rounds whose findings all lack a specialist', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree' },
+      ]),
+      makeRound(2, [
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Correctness & Logic' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints.map(h => h.round)).toEqual([2]);
+  });
+
+  it('treats disagree/partial/none replies as kept', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'disagree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'partial', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'none', specialist: 'Security & Safety' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints[0].specialistOutcomes[0]).toEqual({
+      specialist: 'Security & Safety', findingsKept: 3, findingsDismissed: 0,
+    });
+  });
+});
+
 describe('buildPlannerSystemPrompt', () => {
   it('lists all agent names with focus descriptions in the prompt', () => {
     const agents = [
@@ -2767,6 +3152,47 @@ describe('buildPlannerSystemPrompt', () => {
     // The word "reviewerEffort" should not appear as a required field
     // (it may appear in the example output but not in the "Decide" section)
     expect(prompt).not.toContain('reviewerEffort:');
+  });
+
+  it('renders prior round outcomes when hints are provided', () => {
+    const hints = [
+      {
+        round: 2,
+        specialistOutcomes: [
+          { specialist: 'Testing & Coverage', findingsKept: 0, findingsDismissed: 7 },
+          { specialist: 'Architecture & Design', findingsKept: 3, findingsDismissed: 2 },
+        ],
+      },
+      {
+        round: 3,
+        specialistOutcomes: [
+          { specialist: 'Testing & Coverage', findingsKept: 7, findingsDismissed: 0 },
+        ],
+      },
+    ];
+    const prompt = buildPlannerSystemPrompt([{ name: 'A', focus: 'test focus' }], hints);
+
+    expect(prompt).toContain('Prior Round Outcomes');
+    expect(prompt).toContain('Round 3: "Testing & Coverage" — 7 kept, 0 dismissed');
+    expect(prompt).toContain('Round 2: "Testing & Coverage" — 0 kept, 7 dismissed');
+    expect(prompt).toContain('"Architecture & Design" — 3 kept, 2 dismissed');
+
+    // Most recent round first.
+    const r3 = prompt.indexOf('Round 3:');
+    const r2 = prompt.indexOf('Round 2:');
+    expect(r3).toBeGreaterThan(-1);
+    expect(r2).toBeGreaterThan(r3);
+
+    // Outcomes block appears before the "Decide:" section.
+    expect(r3).toBeLessThan(prompt.indexOf('Decide:'));
+  });
+
+  it('produces identical output to no-hint call when hints array is empty', () => {
+    const agents = [{ name: 'A', focus: 'test focus' }];
+    const baseline = buildPlannerSystemPrompt(agents);
+    const withEmptyHints = buildPlannerSystemPrompt(agents, []);
+    expect(withEmptyHints).toBe(baseline);
+    expect(withEmptyHints).not.toContain('Prior Round Outcomes');
   });
 });
 
@@ -2922,6 +3348,31 @@ describe('runPlanner with agents and language', () => {
     expect(systemPrompt).toContain('"Security & Safety"');
     expect(systemPrompt).toContain('"Domain Expert"');
     expect(systemPrompt).toContain('"agents"');
+  });
+
+  it('forwards prior-round hints into the planner system prompt', async () => {
+    const response = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'low',
+      judgeEffort: 'low',
+      prType: 'chore',
+    });
+    const client = makeClient(response);
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const hints = [
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Testing & Coverage', findingsKept: 0, findingsDismissed: 3 },
+        ],
+      },
+    ];
+
+    await runPlanner(client, diff, undefined, undefined, hints);
+
+    const systemPrompt = (client.sendMessage as jest.Mock).mock.calls[0][0] as string;
+    expect(systemPrompt).toContain('Prior Round Outcomes');
+    expect(systemPrompt).toContain('"Testing & Coverage" — 0 kept, 3 dismissed');
   });
 });
 

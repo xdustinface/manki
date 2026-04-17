@@ -5,7 +5,7 @@ import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
 import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
-import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, PlannerRoundHint, SpecialistOutcome, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
 import { extractJSON } from './json';
 
 const DISMISSED_LINE_TOLERANCE = 5;
@@ -276,12 +276,69 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
   return summary.slice(0, 2000);
 }
 
-export function buildPlannerSystemPrompt(agents: Array<{ name: string; focus: string }>): string {
+/** Number of most recent rounds consumed when building planner hints. */
+const PLANNER_HINTS_ROUND_WINDOW = 2;
+
+/**
+ * Summarize recent rounds from the per-PR handover as per-specialist outcome
+ * counts for the planner. Groups each round's findings by `specialist`,
+ * skipping entries that predate the `specialist` field. Returns an empty
+ * array when no round carries specialist attribution.
+ */
+export function buildPlannerHints(rounds: HandoverRound[] | undefined): PlannerRoundHint[] {
+  if (!rounds || rounds.length === 0) return [];
+
+  const recent = rounds.slice(-PLANNER_HINTS_ROUND_WINDOW);
+  const hints: PlannerRoundHint[] = [];
+
+  for (const round of recent) {
+    const bySpecialist = new Map<string, SpecialistOutcome>();
+    for (const f of round.findings) {
+      if (!f.specialist) continue;
+      let entry = bySpecialist.get(f.specialist);
+      if (!entry) {
+        entry = { specialist: f.specialist, findingsKept: 0, findingsDismissed: 0 };
+        bySpecialist.set(f.specialist, entry);
+      }
+      if (f.authorReply === 'agree') entry.findingsDismissed++;
+      else entry.findingsKept++;
+    }
+
+    if (bySpecialist.size === 0) continue;
+    hints.push({ round: round.round, specialistOutcomes: Array.from(bySpecialist.values()) });
+  }
+
+  return hints;
+}
+
+function renderPlannerHints(hints: PlannerRoundHint[]): string {
+  // Most recent round first — helps the model weight recent signal strongest.
+  const ordered = [...hints].sort((a, b) => b.round - a.round);
+  const lines = ordered.map(hint => {
+    const entries = hint.specialistOutcomes
+      .map(o => `"${o.specialist}" — ${o.findingsKept} kept, ${o.findingsDismissed} dismissed`)
+      .join(' | ');
+    return `Round ${hint.round}: ${entries}`;
+  });
+  return `## Prior Round Outcomes (most recent first)
+
+${lines.join('\n')}
+
+Specialists whose recent findings were entirely dismissed warrant lower priority. Specialists with strong keep rates warrant full weight. Use this to calibrate agent selection and effort levels.
+
+`;
+}
+
+export function buildPlannerSystemPrompt(
+  agents: Array<{ name: string; focus: string }>,
+  hints?: PlannerRoundHint[],
+): string {
   const agentList = agents.map(a => `  - "${a.name}" — ${a.focus}`).join('\n');
+  const hintsBlock = hints && hints.length > 0 ? renderPlannerHints(hints) : '';
 
   return `You are a code review planning assistant. Analyze this PR and decide how to review it.
 
-Decide:
+${hintsBlock}Decide:
 1. teamSize: 1-7 reviewer agents.
    Default to 3. Use 2 when the change is small but non-trivial. Scale to 4-5 for broader changes. 7 is rare — reserve it for changes where missing a specialist would be dangerous. Diff size alone doesn't determine team size — a 50-line auth change needs more eyes than a 500-line rename.
    - 1: changes where a bug is unrealistic (docs, comments, renames)
@@ -369,6 +426,7 @@ export async function runPlanner(
   diff: ParsedDiff,
   prContext?: PrContext,
   customReviewers?: ReviewerAgent[],
+  priorRoundHints?: PlannerRoundHint[],
 ): Promise<PlannerResult | null> {
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -378,7 +436,7 @@ export async function runPlanner(
   try {
     const pool = buildAgentPool(customReviewers);
     const availableNames = new Set(pool.map(a => a.name));
-    const systemPrompt = buildPlannerSystemPrompt(pool);
+    const systemPrompt = buildPlannerSystemPrompt(pool, priorRoundHints);
 
     const userMessage = buildPlannerSummary(diff, prContext);
     const response = await Promise.race([
@@ -440,6 +498,34 @@ function heuristicFallback(diff: ParsedDiff, config: ReviewConfig): TeamRoster {
   return team;
 }
 
+/** Minimum dismissed-finding sample size required before a 100% dismiss rate triggers an effort downgrade. */
+const EFFORT_DOWNGRADE_MIN_SAMPLE = 2;
+
+/**
+ * Safety net for when the planner LLM keeps an agent at \`high\` effort despite
+ * the most recent round dismissing all of that specialist's findings. Clamps
+ * such picks to \`low\` and logs the change. Mutates picks in place for
+ * simplicity; the planner result object is not shared across reviews.
+ */
+function applyEffortDowngrade(picks: AgentPick[], hints: PlannerRoundHint[]): void {
+  if (hints.length === 0) return;
+
+  const lastHint = hints[hints.length - 1];
+  const byName = new Map(lastHint.specialistOutcomes.map(o => [o.specialist, o]));
+
+  for (const pick of picks) {
+    if (pick.effort !== 'high') continue;
+    const outcome = byName.get(pick.name);
+    if (!outcome) continue;
+    if (outcome.findingsDismissed < EFFORT_DOWNGRADE_MIN_SAMPLE) continue;
+    if (outcome.findingsKept !== 0) continue;
+    core.info(
+      `Downgrading "${pick.name}" effort from high to low — round ${lastHint.round} dismissed all ${outcome.findingsDismissed} findings from this specialist`,
+    );
+    pick.effort = 'low';
+  }
+}
+
 export async function runReview(
   clients: ReviewClients,
   config: ReviewConfig,
@@ -455,6 +541,7 @@ export async function runReview(
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>,
   previousFindings?: PreviousFinding[],
   priorRounds?: HandoverRound[],
+  priorRoundHints?: PlannerRoundHint[],
 ): Promise<ReviewResult> {
   let team: TeamRoster;
   let plannerResult: PlannerResult | null = null;
@@ -464,9 +551,12 @@ export async function runReview(
       onProgress({ phase: 'planning', rawFindingCount: 0 });
     }
     const plannerStart = Date.now();
-    plannerResult = await runPlanner(clients.planner, diff, prContext, config.reviewers);
+    plannerResult = await runPlanner(clients.planner, diff, prContext, config.reviewers, priorRoundHints);
     const plannerDurationMs = Date.now() - plannerStart;
     if (plannerResult) {
+      if (plannerResult.agents && priorRoundHints && priorRoundHints.length > 0) {
+        applyEffortDowngrade(plannerResult.agents, priorRoundHints);
+      }
       team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize, plannerResult.agents);
       core.info(`Planner: ${plannerResult.teamSize} agents, reviewer: ${plannerResult.reviewerEffort}, judge: ${plannerResult.judgeEffort} (${plannerResult.prType})`);
       if (plannerResult.teamSize === 1) {
