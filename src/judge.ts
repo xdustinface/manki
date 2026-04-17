@@ -13,7 +13,7 @@ import {
 import { LinkedIssue, titleToSlug } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
@@ -36,6 +36,8 @@ export interface JudgeInput {
   isFollowUp?: boolean;
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>;
   priorRounds?: HandoverRound[];
+  /** Regions of the current diff that implement prior-round suggestedFix text. */
+  provenanceMap?: ProvenanceEntry[];
   effort?: 'low' | 'medium' | 'high';
 }
 

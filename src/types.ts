@@ -8,6 +8,21 @@ export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
 export const RATCHET_SUPPRESSED_TAG = 'suppressed-by-ratchet' as const;
 export const CONTRADICTION_TAG = 'contradicts-prior-round' as const;
 
+export const OWN_PROPOSAL_TAG = 'own-proposal-followup' as const;
+
+/**
+ * A region of the current diff that implements code manki itself suggested in a
+ * prior review round. Produced by matching prior-round `suggestedFix` text
+ * against the raw diff's added lines.
+ */
+export interface ProvenanceEntry {
+  file: string;
+  lineStart: number;
+  lineEnd: number;
+  originatingRound: number;
+  originatingTitle: string;
+}
+
 export interface Finding {
   severity: FindingSeverity;
   title: string;
