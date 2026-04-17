@@ -194,8 +194,6 @@ export interface JudgeInput {
   isFollowUp?: boolean;
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>;
   priorRounds?: HandoverRound[];
-  /** Regions of the current diff that implement prior-round suggestedFix text. */
-  provenanceMap?: ProvenanceEntry[];
   effort?: 'low' | 'medium' | 'high';
 }
 
@@ -693,7 +691,8 @@ export async function runJudgeAgent(
   crossRoundSuppressed?: number;
   crossRoundDemoted?: number;
 }> {
-  const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, provenanceMap } = input;
+  const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds } = input;
+  const provenanceMap = computeProvenanceMap(priorRounds, rawDiff);
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
 
