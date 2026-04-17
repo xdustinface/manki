@@ -709,16 +709,9 @@ export function applyCrossRoundSuppression(
     const current = { ...finding };
     const slug = titleToSlug(current.title);
 
-    const ratchetMatch = acceptedPriors.find(({ finding: prior }) =>
-      prior.fingerprint.file === current.file && prior.fingerprint.slug === slug,
-    );
-    if (ratchetMatch && current.severity !== 'required') {
-      current.severity = 'ignore';
-      current.tags = addTag(current.tags, RATCHET_SUPPRESSED_TAG);
-      suppressedCount++;
-      return current;
-    }
-
+    // Contradiction has a more specific predicate (line proximity + reversal word) so it
+    // runs first. This ensures a suggestion that contradicts prior guidance gets a visible
+    // demotion note rather than being silently suppressed by ratchet.
     const contradictionMatch = acceptedPriors.find(({ finding: prior }) =>
       prior.fingerprint.file === current.file
       && prior.fingerprint.slug === slug
@@ -731,6 +724,17 @@ export function applyCrossRoundSuppression(
       const note = `Contradicts round ${contradictionMatch.round} guidance accepted by author`;
       current.judgeNotes = current.judgeNotes ? `${current.judgeNotes} ${note}` : note;
       demotedCount++;
+      return current;
+    }
+
+    const ratchetMatch = acceptedPriors.find(({ finding: prior }) =>
+      prior.fingerprint.file === current.file && prior.fingerprint.slug === slug,
+    );
+    if (ratchetMatch && current.severity !== 'required') {
+      current.severity = 'ignore';
+      current.tags = addTag(current.tags, RATCHET_SUPPRESSED_TAG);
+      suppressedCount++;
+      return current;
     }
 
     return current;
