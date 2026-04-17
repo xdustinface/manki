@@ -13,7 +13,7 @@ import {
 import { LinkedIssue } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { DiffFile, Finding, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 export interface JudgeInput {
   findings: Finding[];
@@ -34,6 +34,8 @@ export interface JudgedFinding {
   severity: FindingSeverity;
   reasoning: string;
   confidence: 'high' | 'medium' | 'low';
+  reachability?: FindingReachability;
+  reachabilityReasoning?: string;
 }
 
 export interface ResolveThread {
@@ -150,6 +152,18 @@ Examples of **ignore**:
   - Known workaround documented in comments
   - Style preference that does not affect correctness
 
+## Practical Reachability
+
+For every finding, decide whether the failure mode it describes is **practically reachable** given the code you can see in this PR and the surrounding diff context. Classify into exactly one of:
+
+- **reachable**: there is a concrete call site, input path, or execution flow visible in the diff (or the changed files it touches) that would actually trigger the failure described by the finding. Defaults here when in doubt about active code paths.
+- **hypothetical**: the finding is technically correct about the code as written, but no caller, input, or control flow visible in the diff would exercise the failure mode. Typical examples: defensive guards on values that are always produced by trusted internal code, branches that cannot be reached with the current call graph, edge cases that would require the author to change unrelated code to trigger.
+- **unknown**: you cannot determine reachability from the diff alone. Use this when the flagged code is exported or called from outside the changed files and you have no visibility into its callers.
+
+Populate \`reachability\` on every finding. When you choose \`hypothetical\`, also give a one-sentence \`reachabilityReasoning\` explaining why no current caller triggers the failure — this is how the author audits a demotion.
+
+Reachability is independent of severity. A finding can be \`required\` and \`hypothetical\`, or \`nit\` and \`reachable\`. Severity captures how bad the failure is; reachability captures whether it can actually happen today.
+
 ## Evaluation Criteria
 
 For each finding, evaluate:
@@ -157,6 +171,7 @@ For each finding, evaluate:
 1. **Accuracy**: Is the finding technically correct given the code context?
 2. **Actionability**: Can the developer fix this? Is the fix clear?
 3. **Severity**: Based on actual impact, not the reviewer's original assessment.
+4. **Reachability**: See "Practical Reachability" above.
 
 ## Guidelines
 
@@ -212,7 +227,9 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
       "title": "Short title matching or close to the original finding title",
       "severity": "required" | "suggestion" | "nit" | "ignore",
       "reasoning": "1-2 sentences explaining your judgment",
-      "confidence": "high" | "medium" | "low"
+      "confidence": "high" | "medium" | "low",
+      "reachability": "reachable" | "hypothetical" | "unknown",
+      "reachabilityReasoning": "Required when reachability is 'hypothetical'. One sentence explaining why no current caller triggers the failure"
     }
   ]${hasOpenThreads ? `,
   "resolveThreads": [
@@ -413,12 +430,20 @@ export function parseJudgeResponse(responseText: string): JudgeResult {
     const parsed = JSON.parse(jsonText);
 
     const parseFindings = (arr: unknown[]): JudgedFinding[] =>
-      arr.map((item: unknown) => item as Record<string, unknown>).map((f) => ({
-        title: String(f.title || 'Untitled'),
-        severity: validateSeverity(f.severity),
-        reasoning: String(f.reasoning || ''),
-        confidence: validateConfidence(f.confidence),
-      }));
+      arr.map((item: unknown) => item as Record<string, unknown>).map((f) => {
+        const reachability = validateReachability(f.reachability);
+        const reachabilityReasoning = reachability && typeof f.reachabilityReasoning === 'string' && f.reachabilityReasoning
+          ? f.reachabilityReasoning
+          : undefined;
+        return {
+          title: String(f.title || 'Untitled'),
+          severity: validateSeverity(f.severity),
+          reasoning: String(f.reasoning || ''),
+          confidence: validateConfidence(f.confidence),
+          ...(reachability && { reachability }),
+          ...(reachabilityReasoning && { reachabilityReasoning }),
+        };
+      });
 
     // New object format with summary + findings + resolveThreads
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -452,6 +477,13 @@ function validateConfidence(value: unknown): 'high' | 'medium' | 'low' {
     return value;
   }
   return 'medium';
+}
+
+function validateReachability(value: unknown): FindingReachability | undefined {
+  if (value === 'reachable' || value === 'hypothetical' || value === 'unknown') {
+    return value;
+  }
+  return undefined;
 }
 
 export async function runJudgeAgent(
@@ -525,12 +557,32 @@ export function mapJudgedToFindings(original: Finding[], judged: JudgedFinding[]
       finding.severity = match.severity;
       finding.judgeNotes = match.reasoning;
       finding.judgeConfidence = match.confidence;
+      applyReachability(finding, match);
     }
 
     result.push(finding);
   }
 
   return result;
+}
+
+function applyReachability(finding: Finding, judged: JudgedFinding): void {
+  if (!judged.reachability) return;
+  finding.reachability = judged.reachability;
+  if (judged.reachabilityReasoning) {
+    finding.reachabilityReasoning = judged.reachabilityReasoning;
+  }
+  if (judged.reachability !== 'hypothetical') return;
+  if (judged.severity !== 'required' && judged.severity !== 'suggestion') return;
+  finding.originalSeverity = judged.severity;
+  finding.severity = 'nit';
+  finding.tags = addTag(finding.tags, DEFENSIVE_HARDENING_TAG);
+}
+
+function addTag(tags: string[] | undefined, tag: string): string[] {
+  if (!tags || tags.length === 0) return [tag];
+  if (tags.includes(tag)) return tags;
+  return [...tags, tag];
 }
 
 function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Finding[] {
@@ -550,6 +602,7 @@ function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Findin
     merged.severity = j.severity;
     merged.judgeNotes = j.reasoning;
     merged.judgeConfidence = j.confidence;
+    applyReachability(merged, j);
 
     // Combine reviewers from all matched originals
     const allReviewers = new Set<string>();

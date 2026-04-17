@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { AgentProgressEntry, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
+import { AgentProgressEntry, DEFENSIVE_HARDENING_TAG, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
 import { MAX_AGENT_RETRIES } from './types';
 
@@ -729,7 +729,11 @@ function formatFindingComment(finding: Finding): string {
   const safeDescription = sanitizeMarkdown(finding.description);
 
   const confidence = finding.judgeConfidence ? ` <sub>[${finding.judgeConfidence} confidence]</sub>` : '';
-  let comment = `${severityEmoji} **${severityLabel}**${confidence}: ${safeTitle}\n\n${safeDescription}`;
+  let comment = `${severityEmoji} **${severityLabel}**${confidence}: ${safeTitle}`;
+  if (finding.tags?.includes(DEFENSIVE_HARDENING_TAG) && finding.originalSeverity) {
+    comment += `\n<sub>[defensive hardening — capped from ${finding.originalSeverity}]</sub>`;
+  }
+  comment += `\n\n${safeDescription}`;
 
   if (finding.suggestedFix) {
     // Content inside dynamically-fenced code blocks is rendered literally by GitHub,
@@ -752,6 +756,10 @@ function formatFindingComment(finding: Finding): string {
     flaggedBy: finding.reviewers,
     title: finding.title,
     ...(finding.suggestedFix && { fix: finding.suggestedFix.slice(0, 200) }),
+    ...(finding.tags && finding.tags.length > 0 && { tags: finding.tags }),
+    ...(finding.reachability && { reachability: finding.reachability }),
+    ...(finding.reachabilityReasoning && { reachabilityReasoning: finding.reachabilityReasoning }),
+    ...(finding.originalSeverity && { originalSeverity: finding.originalSeverity }),
   };
   comment += `\n\n<details>\n<summary>AI context</summary>\n\n\`\`\`json\n${JSON.stringify(aiContext, null, 2)}\n\`\`\`\n</details>`;
 
