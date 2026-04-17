@@ -1711,6 +1711,20 @@ describe('computeProvenanceMap', () => {
     const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: longFix })])];
     expect(computeProvenanceMap(rounds, contextDiff)).toEqual([]);
   });
+
+  it('treats an added line starting with "+++ " as content, not a file header', () => {
+    // A line whose diff content begins with "++ " produces a raw diff line starting
+    // with "+++ ". Without the !inHunk guard this was mistaken for a file header,
+    // causing newLineNum to stall and corrupting all subsequent line numbers.
+    const tripleMinusFix = '+++ heap-allocated pointer freed on exit — no leak possible here';
+    const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: tripleMinusFix })])];
+    const diff = buildDiff('src/a.ts', 20, [tripleMinusFix]);
+
+    const entries = computeProvenanceMap(rounds, diff);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].lineStart).toBe(20);
+    expect(entries[0].lineEnd).toBe(20);
+  });
 });
 
 describe('buildJudgeUserMessage with linked issues', () => {

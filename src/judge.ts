@@ -92,7 +92,7 @@ function extractAddedLineBlocks(rawDiff: string): AddedLineBlock[] {
       continue;
     }
 
-    if (line.startsWith('+++ ')) {
+    if (!inHunk && line.startsWith('+++ ')) {
       // Alternative source of the file path, used when no `diff --git` header.
       if (!currentFile) {
         const m = /^\+\+\+ b\/(.+)$/.exec(line) ?? /^\+\+\+ (.+)$/.exec(line);
@@ -101,7 +101,7 @@ function extractAddedLineBlocks(rawDiff: string): AddedLineBlock[] {
       continue;
     }
 
-    if (line.startsWith('--- ')) {
+    if (!inHunk && line.startsWith('--- ')) {
       continue;
     }
 
