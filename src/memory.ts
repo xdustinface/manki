@@ -526,10 +526,18 @@ async function fetchJsonFile<T>(
     const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
     if ('content' in data && data.encoding === 'base64') {
       const content = Buffer.from(data.content, 'base64').toString('utf-8');
-      return JSON.parse(content) as T;
+      try {
+        return JSON.parse(content) as T;
+      } catch (parseError) {
+        core.warning(`Failed to parse JSON at ${path}: ${parseError}`);
+        return null;
+      }
     }
     return null;
-  } catch {
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    if (status === 404) return null;
+    core.warning(`Failed to fetch ${path}: ${error}`);
     return null;
   }
 }
