@@ -2849,6 +2849,47 @@ describe('buildPlannerSystemPrompt', () => {
     // (it may appear in the example output but not in the "Decide" section)
     expect(prompt).not.toContain('reviewerEffort:');
   });
+
+  it('renders prior round outcomes when hints are provided', () => {
+    const hints = [
+      {
+        round: 2,
+        specialistOutcomes: [
+          { specialist: 'Testing & Coverage', findingsKept: 0, findingsDismissed: 7 },
+          { specialist: 'Architecture & Design', findingsKept: 3, findingsDismissed: 2 },
+        ],
+      },
+      {
+        round: 3,
+        specialistOutcomes: [
+          { specialist: 'Testing & Coverage', findingsKept: 7, findingsDismissed: 0 },
+        ],
+      },
+    ];
+    const prompt = buildPlannerSystemPrompt([{ name: 'A', focus: 'test focus' }], hints);
+
+    expect(prompt).toContain('Prior Round Outcomes');
+    expect(prompt).toContain('Round 3: "Testing & Coverage" — 7 kept, 0 dismissed');
+    expect(prompt).toContain('Round 2: "Testing & Coverage" — 0 kept, 7 dismissed');
+    expect(prompt).toContain('"Architecture & Design" — 3 kept, 2 dismissed');
+
+    // Most recent round first.
+    const r3 = prompt.indexOf('Round 3:');
+    const r2 = prompt.indexOf('Round 2:');
+    expect(r3).toBeGreaterThan(-1);
+    expect(r2).toBeGreaterThan(r3);
+
+    // Outcomes block appears before the "Decide:" section.
+    expect(r3).toBeLessThan(prompt.indexOf('Decide:'));
+  });
+
+  it('produces identical output to no-hint call when hints array is empty', () => {
+    const agents = [{ name: 'A', focus: 'test focus' }];
+    const baseline = buildPlannerSystemPrompt(agents);
+    const withEmptyHints = buildPlannerSystemPrompt(agents, []);
+    expect(withEmptyHints).toBe(baseline);
+    expect(withEmptyHints).not.toContain('Prior Round Outcomes');
+  });
 });
 
 describe('runPlanner with agents and language', () => {

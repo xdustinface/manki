@@ -311,12 +311,34 @@ export function buildPlannerHints(rounds: HandoverRound[] | undefined): PlannerR
   return hints;
 }
 
-export function buildPlannerSystemPrompt(agents: Array<{ name: string; focus: string }>): string {
+function renderPlannerHints(hints: PlannerRoundHint[]): string {
+  // Most recent round first — helps the model weight recent signal strongest.
+  const ordered = [...hints].sort((a, b) => b.round - a.round);
+  const lines = ordered.map(hint => {
+    const entries = hint.specialistOutcomes
+      .map(o => `"${o.specialist}" — ${o.findingsKept} kept, ${o.findingsDismissed} dismissed`)
+      .join(' | ');
+    return `Round ${hint.round}: ${entries}`;
+  });
+  return `## Prior Round Outcomes (most recent first)
+
+${lines.join('\n')}
+
+Specialists whose recent findings were entirely dismissed warrant lower priority. Specialists with strong keep rates warrant full weight. Use this to calibrate agent selection and effort levels.
+
+`;
+}
+
+export function buildPlannerSystemPrompt(
+  agents: Array<{ name: string; focus: string }>,
+  hints?: PlannerRoundHint[],
+): string {
   const agentList = agents.map(a => `  - "${a.name}" — ${a.focus}`).join('\n');
+  const hintsBlock = hints && hints.length > 0 ? renderPlannerHints(hints) : '';
 
   return `You are a code review planning assistant. Analyze this PR and decide how to review it.
 
-Decide:
+${hintsBlock}Decide:
 1. teamSize: 1-7 reviewer agents.
    Default to 3. Use 2 when the change is small but non-trivial. Scale to 4-5 for broader changes. 7 is rare — reserve it for changes where missing a specialist would be dangerous. Diff size alone doesn't determine team size — a 50-line auth change needs more eyes than a 500-line rename.
    - 1: changes where a bug is unrealistic (docs, comments, renames)
