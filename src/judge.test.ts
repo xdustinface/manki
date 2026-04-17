@@ -1712,6 +1712,34 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].tags).toContain('security');
     expect(result.findings[0].tags).toContain('suppressed-by-ratchet');
   });
+
+  it('ratchet fires when same slug+file was agreed in round 2 even if disagreed in round 1', () => {
+    const findings = [makeFinding({
+      title: 'Unused variable',
+      file: 'src/a.ts',
+      line: 10,
+      severity: 'suggestion',
+    })];
+    const prior = [
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Unused variable') },
+        severity: 'suggestion',
+        title: 'Unused variable',
+        authorReply: 'disagree',
+      }], 1),
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Unused variable') },
+        severity: 'suggestion',
+        title: 'Unused variable',
+        authorReply: 'agree',
+      }], 2),
+    ];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.suppressedCount).toBe(1);
+    expect(result.findings[0].severity).toBe('ignore');
+    expect(result.findings[0].tags).toContain('suppressed-by-ratchet');
+  });
 });
 
 describe('runJudgeAgent cross-round suppression', () => {
