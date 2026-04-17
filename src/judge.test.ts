@@ -1056,6 +1056,24 @@ describe('mapJudgedToFindings', () => {
     expect(result[0].reachabilityReasoning).toBe('No caller passes negative values.');
   });
 
+  it('appends defensive-hardening without dropping pre-existing tags', () => {
+    const originals = [makeFinding({ title: 'Bug', severity: 'required', tags: ['security'] })];
+    const judged: JudgedFinding[] = [
+      {
+        title: 'Bug',
+        severity: 'required',
+        reasoning: 'Correct but unreachable.',
+        confidence: 'high',
+        reachability: 'hypothetical',
+      },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged);
+    expect(result[0].tags).toContain('security');
+    expect(result[0].tags).toContain('defensive-hardening');
+    expect(result[0].tags).toHaveLength(2);
+  });
+
   it('leaves hypothetical nit findings unchanged and does not tag', () => {
     const originals = [makeFinding({ title: 'Bug', severity: 'suggestion' })];
     const judged: JudgedFinding[] = [
