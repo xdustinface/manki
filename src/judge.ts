@@ -813,7 +813,7 @@ function applyOwnProposal(finding: Finding, provenanceMap?: ProvenanceEntry[]): 
   if (!match) return;
 
   if (finding.severity === 'ignore') return;
-  if (finding.reachability === 'reachable' && finding.severity === 'required') return;
+  if (finding.severity === 'required') return;
 
   if (finding.severity !== 'nit') {
     finding.originalSeverity ??= finding.severity;
