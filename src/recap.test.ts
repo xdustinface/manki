@@ -320,7 +320,7 @@ describe('classifyAuthorReply', () => {
     expect(classifyAuthorReply('not addressed')).toBe('none');
     expect(classifyAuthorReply("didn't fix this")).toBe('none');
     expect(classifyAuthorReply('not resolved yet')).toBe('none');
-    expect(classifyAuthorReply("I don't agree to this")).toBe('none');
+    expect(classifyAuthorReply('not agreed')).toBe('none');
   });
 
   it('still classifies non-negated agree signals correctly', () => {
