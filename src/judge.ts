@@ -432,7 +432,7 @@ export function parseJudgeResponse(responseText: string): JudgeResult {
     const parseFindings = (arr: unknown[]): JudgedFinding[] =>
       arr.map((item: unknown) => item as Record<string, unknown>).map((f) => {
         const reachability = validateReachability(f.reachability);
-        const reachabilityReasoning = typeof f.reachabilityReasoning === 'string' && f.reachabilityReasoning
+        const reachabilityReasoning = reachability && typeof f.reachabilityReasoning === 'string' && f.reachabilityReasoning
           ? f.reachabilityReasoning
           : undefined;
         return {

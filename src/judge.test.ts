@@ -583,6 +583,7 @@ describe('parseJudgeResponse', () => {
         reasoning: 'x',
         confidence: 'medium',
         reachability: 'yes',
+        reachabilityReasoning: 'because reasons',
       },
     ]);
 
