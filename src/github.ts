@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { AgentProgressEntry, DEFENSIVE_HARDENING_TAG, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
+import { AgentProgressEntry, DEFENSIVE_HARDENING_TAG, DashboardData, Finding, FindingSeverity, OWN_PROPOSAL_TAG, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
 import { MAX_AGENT_RETRIES } from './types';
 
@@ -737,6 +737,10 @@ function formatFindingComment(finding: Finding): string {
   let comment = `${severityEmoji} **${severityLabel}**${confidence}: ${safeTitle}`;
   if (finding.tags?.includes(DEFENSIVE_HARDENING_TAG) && finding.originalSeverity) {
     comment += `\n<sub>[defensive hardening — capped from ${finding.originalSeverity}]</sub>`;
+  }
+  if (finding.tags?.includes(OWN_PROPOSAL_TAG)) {
+    const cappedFrom = finding.originalSeverity ?? finding.severity;
+    comment += `\n<sub>[own-proposal followup — capped from ${cappedFrom}]</sub>`;
   }
   comment += `\n\n${safeDescription}`;
 

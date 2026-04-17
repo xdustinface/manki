@@ -182,6 +182,49 @@ describe('formatFindingComment', () => {
     const comment = formatFindingComment(finding);
     expect(comment).not.toContain('defensive hardening');
   });
+
+  it('renders own-proposal-followup tag with originalSeverity when present', () => {
+    const finding: Finding = {
+      ...baseFinding,
+      severity: 'nit',
+      tags: ['own-proposal-followup'],
+      originalSeverity: 'required',
+    };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('[own-proposal followup — capped from required]');
+    const jsonMatch = comment.match(/```json\n([\s\S]*?)\n```/);
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.tags).toEqual(['own-proposal-followup']);
+    expect(parsed.originalSeverity).toBe('required');
+  });
+
+  it('renders own-proposal-followup tag with current severity when originalSeverity is absent', () => {
+    const finding: Finding = {
+      ...baseFinding,
+      severity: 'nit',
+      tags: ['own-proposal-followup'],
+    };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('[own-proposal followup — capped from nit]');
+  });
+
+  it('renders both defensive-hardening and own-proposal-followup tags when both are present', () => {
+    const finding: Finding = {
+      ...baseFinding,
+      severity: 'nit',
+      tags: ['defensive-hardening', 'own-proposal-followup'],
+      originalSeverity: 'required',
+      reachability: 'hypothetical',
+    };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('[defensive hardening — capped from required]');
+    expect(comment).toContain('[own-proposal followup — capped from required]');
+  });
+
+  it('omits own-proposal-followup line when tag is absent', () => {
+    const comment = formatFindingComment(baseFinding);
+    expect(comment).not.toContain('own-proposal followup');
+  });
 });
 
 describe('mapVerdictToEvent', () => {
