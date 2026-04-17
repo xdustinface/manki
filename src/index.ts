@@ -604,6 +604,7 @@ async function runFullReview(
     }
     const { verdict: recomputedVerdict, verdictReason } = determineVerdict(result.findings, priorFindingsFlat);
     result.verdict = recomputedVerdict;
+    result.verdictReason = verdictReason;
 
     // Enrich findings with code context from the diff for nit issues
     for (const finding of result.findings) {

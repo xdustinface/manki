@@ -1999,6 +1999,9 @@ describe('runFullReview orchestration', () => {
 
     const statsArg = jest.mocked(ghUtils.postReview).mock.calls[0][7];
     expect(statsArg?.judgeMetrics?.verdictReason).toBe('novel_suggestion');
+    // result.verdictReason must also be updated alongside result.verdict after escalation
+    const reviewResultArg = jest.mocked(ghUtils.postReview).mock.calls[0][5];
+    expect(reviewResultArg?.verdictReason).toBe('novel_suggestion');
   });
 
   it('populates verdictReason in judgeMetrics on clean APPROVE with no findings', async () => {
