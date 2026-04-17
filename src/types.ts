@@ -48,6 +48,12 @@ export interface HandoverFinding {
   threadId?: string;
   /** Originating specialist name (from `Finding.reviewers[0]`). Absent in handover files written before this field was added. */
   specialist?: string;
+  /**
+   * Text of the reviewer's proposed fix at the time the finding was raised.
+   * Stored so later rounds can detect code that implements a prior-round
+   * proposal (own-proposal caveat rule).
+   */
+  suggestedFix?: string;
 }
 
 /** A single completed review round recorded in the per-PR handover. */

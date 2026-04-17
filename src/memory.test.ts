@@ -1052,10 +1052,16 @@ describe('appendHandoverRound', () => {
     const finding = makeFinding({
       title: 'Null check', file: 'src/a.ts', line: 5, reviewers: ['Security & Safety'],
     });
+    const findingWithFix = makeFinding({
+      title: 'Clamp value',
+      file: 'src/b.ts',
+      line: 12,
+      suggestedFix: 'let clamped = value.max(0);',
+    });
 
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
-      'sha1', [finding], [],
+      'sha1', [finding, findingWithFix], [],
       'One issue found', noopFingerprint, noopClassify,
     );
 
@@ -1065,6 +1071,9 @@ describe('appendHandoverRound', () => {
     expect(loaded!.rounds[0].findings[0].title).toBe('Null check');
     expect(loaded!.rounds[0].findings[0].authorReply).toBe('none');
     expect(loaded!.rounds[0].findings[0].specialist).toBe('Security & Safety');
+    // suggestedFix is stored when present on the source finding and omitted otherwise
+    expect(loaded!.rounds[0].findings[0].suggestedFix).toBeUndefined();
+    expect(loaded!.rounds[0].findings[1].suggestedFix).toBe('let clamped = value.max(0);');
     expect(loaded!.rounds[0].judgeSummary).toBe('One issue found');
 
     await appendHandoverRound(

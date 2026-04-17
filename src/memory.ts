@@ -652,6 +652,7 @@ export async function appendHandoverRound(
     };
     const specialist = f.reviewers?.[0];
     if (specialist) entry.specialist = specialist;
+    if (f.suggestedFix) entry.suggestedFix = f.suggestedFix;
     return entry;
   });
 
