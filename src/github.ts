@@ -758,6 +758,7 @@ function formatFindingComment(finding: Finding): string {
     ...(finding.suggestedFix && { fix: finding.suggestedFix.slice(0, 200) }),
     ...(finding.tags && finding.tags.length > 0 && { tags: finding.tags }),
     ...(finding.reachability && { reachability: finding.reachability }),
+    ...(finding.reachabilityReasoning && { reachabilityReasoning: finding.reachabilityReasoning }),
     ...(finding.originalSeverity && { originalSeverity: finding.originalSeverity }),
   };
   comment += `\n\n<details>\n<summary>AI context</summary>\n\n\`\`\`json\n${JSON.stringify(aiContext, null, 2)}\n\`\`\`\n</details>`;

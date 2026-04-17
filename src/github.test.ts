@@ -155,6 +155,7 @@ describe('formatFindingComment', () => {
       tags: ['defensive-hardening'],
       originalSeverity: 'required',
       reachability: 'hypothetical',
+      reachabilityReasoning: 'no caller passes a negative value',
     };
     const comment = formatFindingComment(finding);
     expect(comment).toContain('[defensive hardening — capped from required]');
@@ -162,6 +163,7 @@ describe('formatFindingComment', () => {
     const parsed = JSON.parse(jsonMatch![1]);
     expect(parsed.tags).toEqual(['defensive-hardening']);
     expect(parsed.reachability).toBe('hypothetical');
+    expect(parsed.reachabilityReasoning).toBe('no caller passes a negative value');
     expect(parsed.originalSeverity).toBe('required');
   });
 
