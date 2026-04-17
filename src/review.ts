@@ -5,7 +5,7 @@ import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
 import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
-import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, PlannerRoundHint, SpecialistOutcome, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
 import { extractJSON } from './json';
 
 const DISMISSED_LINE_TOLERANCE = 5;
@@ -274,6 +274,41 @@ function buildPlannerSummary(diff: ParsedDiff, prContext?: PrContext): string {
   }
 
   return summary.slice(0, 2000);
+}
+
+/** Number of most recent rounds consumed when building planner hints. */
+const PLANNER_HINTS_ROUND_WINDOW = 2;
+
+/**
+ * Summarize recent rounds from the per-PR handover as per-specialist outcome
+ * counts for the planner. Groups each round's findings by `specialist`,
+ * skipping entries that predate the `specialist` field. Returns an empty
+ * array when no round carries specialist attribution.
+ */
+export function buildPlannerHints(rounds: HandoverRound[] | undefined): PlannerRoundHint[] {
+  if (!rounds || rounds.length === 0) return [];
+
+  const recent = rounds.slice(-PLANNER_HINTS_ROUND_WINDOW);
+  const hints: PlannerRoundHint[] = [];
+
+  for (const round of recent) {
+    const bySpecialist = new Map<string, SpecialistOutcome>();
+    for (const f of round.findings) {
+      if (!f.specialist) continue;
+      let entry = bySpecialist.get(f.specialist);
+      if (!entry) {
+        entry = { specialist: f.specialist, findingsKept: 0, findingsDismissed: 0 };
+        bySpecialist.set(f.specialist, entry);
+      }
+      if (f.authorReply === 'agree') entry.findingsDismissed++;
+      else entry.findingsKept++;
+    }
+
+    if (bySpecialist.size === 0) continue;
+    hints.push({ round: round.round, specialistOutcomes: Array.from(bySpecialist.values()) });
+  }
+
+  return hints;
 }
 
 export function buildPlannerSystemPrompt(agents: Array<{ name: string; focus: string }>): string {

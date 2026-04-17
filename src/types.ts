@@ -113,6 +113,21 @@ export interface PlannerResult {
   context?: string;
 }
 
+/** Per-specialist outcome aggregate for a single prior round. */
+export interface SpecialistOutcome {
+  specialist: string;
+  /** Count of findings the author did not acknowledge as fixed (`authorReply !== 'agree'`). */
+  findingsKept: number;
+  /** Count of findings the author agreed with and acted on (`authorReply === 'agree'`). */
+  findingsDismissed: number;
+}
+
+/** Compact summary of a prior review round fed back to the planner for budget allocation. */
+export interface PlannerRoundHint {
+  round: number;
+  specialistOutcomes: SpecialistOutcome[];
+}
+
 export type ReviewLevel = 'auto' | 'small' | 'medium' | 'large';
 
 export interface ReviewThresholds {

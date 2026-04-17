@@ -5,6 +5,7 @@ import {
   buildReviewerSystemPrompt,
   buildReviewerUserMessage,
   buildPlannerSystemPrompt,
+  buildPlannerHints,
   selectTeam,
   titlesMatch,
   truncateDiff,
@@ -23,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent } from './judge';
 import { applySuppressions } from './memory';
 
@@ -2739,6 +2740,86 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(roster.level).toBe('small');
     expect(roster.agents.map(a => a.name)).toContain('Security & Safety');
     expect(roster.agents.map(a => a.name)).toContain('Correctness & Logic');
+  });
+});
+
+describe('buildPlannerHints', () => {
+  const makeRound = (round: number, findings: HandoverRound['findings']): HandoverRound => ({
+    round,
+    commitSha: `sha${round}`,
+    timestamp: '2025-01-01T00:00:00Z',
+    findings,
+  });
+
+  it('returns [] for undefined or empty rounds', () => {
+    expect(buildPlannerHints(undefined)).toEqual([]);
+    expect(buildPlannerHints([])).toEqual([]);
+  });
+
+  it('groups findings by specialist with kept/dismissed counts', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'suggestion', title: 't3', authorReply: 'none', specialist: 'Testing & Coverage' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints).toHaveLength(1);
+    expect(hints[0].round).toBe(1);
+    const sec = hints[0].specialistOutcomes.find(o => o.specialist === 'Security & Safety');
+    const test = hints[0].specialistOutcomes.find(o => o.specialist === 'Testing & Coverage');
+    expect(sec).toEqual({ specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 2 });
+    expect(test).toEqual({ specialist: 'Testing & Coverage', findingsKept: 1, findingsDismissed: 0 });
+  });
+
+  it('skips findings without a specialist field (legacy handover entries)', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Correctness & Logic' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints).toHaveLength(1);
+    expect(hints[0].specialistOutcomes).toHaveLength(1);
+    expect(hints[0].specialistOutcomes[0].specialist).toBe('Correctness & Logic');
+  });
+
+  it('consumes only the last two rounds when more are present', () => {
+    const make = (n: number, spec: string): HandoverRound => makeRound(n, [
+      { fingerprint: { file: 'a.ts', lineStart: n, lineEnd: n, slug: `s${n}` }, severity: 'required', title: `t${n}`, authorReply: 'none', specialist: spec },
+    ]);
+    const rounds = [make(1, 'Security & Safety'), make(2, 'Architecture & Design'), make(3, 'Testing & Coverage')];
+    const hints = buildPlannerHints(rounds);
+    expect(hints.map(h => h.round)).toEqual([2, 3]);
+  });
+
+  it('omits rounds whose findings all lack a specialist', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree' },
+      ]),
+      makeRound(2, [
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Correctness & Logic' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints.map(h => h.round)).toEqual([2]);
+  });
+
+  it('treats disagree/partial/none replies as kept', () => {
+    const rounds = [
+      makeRound(1, [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'disagree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'partial', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'none', specialist: 'Security & Safety' },
+      ]),
+    ];
+    const hints = buildPlannerHints(rounds);
+    expect(hints[0].specialistOutcomes[0]).toEqual({
+      specialist: 'Security & Safety', findingsKept: 3, findingsDismissed: 0,
+    });
   });
 });
 
