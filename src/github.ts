@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
-import { AgentProgressEntry, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
+import { AgentProgressEntry, DEFENSIVE_HARDENING_TAG, DashboardData, Finding, FindingSeverity, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats, ReviewVerdict } from './types';
 import { isLineInDiff, findClosestDiffLine } from './diff';
 import { MAX_AGENT_RETRIES } from './types';
 
@@ -730,7 +730,7 @@ function formatFindingComment(finding: Finding): string {
 
   const confidence = finding.judgeConfidence ? ` <sub>[${finding.judgeConfidence} confidence]</sub>` : '';
   let comment = `${severityEmoji} **${severityLabel}**${confidence}: ${safeTitle}`;
-  if (finding.tags?.includes('defensive-hardening') && finding.originalSeverity) {
+  if (finding.tags?.includes(DEFENSIVE_HARDENING_TAG) && finding.originalSeverity) {
     comment += `\n<sub>[defensive hardening — capped from ${finding.originalSeverity}]</sub>`;
   }
   comment += `\n\n${safeDescription}`;

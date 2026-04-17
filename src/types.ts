@@ -4,6 +4,8 @@ export type FindingSeverity = 'required' | 'suggestion' | 'nit' | 'ignore';
 
 export type FindingReachability = 'reachable' | 'hypothetical' | 'unknown';
 
+export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
+
 export interface Finding {
   severity: FindingSeverity;
   title: string;

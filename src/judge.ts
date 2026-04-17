@@ -13,7 +13,7 @@ import {
 import { LinkedIssue } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { DiffFile, Finding, FindingReachability, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 export interface JudgeInput {
   findings: Finding[];
@@ -576,7 +576,7 @@ function applyReachability(finding: Finding, judged: JudgedFinding): void {
   if (finding.severity !== 'required' && finding.severity !== 'suggestion') return;
   finding.originalSeverity = finding.severity;
   finding.severity = 'nit';
-  finding.tags = addTag(finding.tags, 'defensive-hardening');
+  finding.tags = addTag(finding.tags, DEFENSIVE_HARDENING_TAG);
 }
 
 function addTag(tags: string[] | undefined, tag: string): string[] {

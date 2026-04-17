@@ -9,7 +9,7 @@ import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, 
 import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { fetchRecapState } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
-import { DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
+import { DEFENSIVE_HARDENING_TAG, DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
 import {
   fetchPRDiff,
   fetchConfigFile,
@@ -652,7 +652,7 @@ async function runFullReview(
         - (result.staticDedupCount ?? 0)
         - (result.llmDedupCount ?? 0)
         - allJudged.length;
-      const defensiveHardeningCount = allJudged.filter(f => f.tags?.includes('defensive-hardening')).length;
+      const defensiveHardeningCount = allJudged.filter(f => f.tags?.includes(DEFENSIVE_HARDENING_TAG)).length;
       judgeMetrics = {
         confidenceDistribution,
         severityChanges,
