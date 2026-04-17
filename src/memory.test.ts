@@ -6,6 +6,7 @@ import {
   sanitizeMemoryField,
   filterLearningsForFinding,
   filterSuppressionsForFinding,
+  appendHandoverRound,
   loadHandover,
   loadMemory,
   removeLearning,
@@ -21,7 +22,8 @@ import {
   Learning,
   RepoMemory,
 } from './memory';
-import { Finding, PrHandover } from './types';
+import * as core from '@actions/core';
+import { AuthorReplyClass, Finding, FindingFingerprint, PrHandover } from './types';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -941,6 +943,162 @@ describe('writeHandover', () => {
     await writeHandover(octokit, 'owner/memory', 'rust-dashcore', 106, makeHandover());
     expect(createCalls).toBe(2);
     expect(store.has('rust-dashcore/prs/106/handover.json')).toBe(true);
+  });
+});
+
+const noopFingerprint = (title: string, file: string, line: number): FindingFingerprint => ({
+  file, lineStart: line, lineEnd: line, slug: title.replace(/[^a-zA-Z0-9]/g, '-'),
+});
+const noopClassify = (): AuthorReplyClass => 'none';
+
+describe('appendHandoverRound', () => {
+  it('backfills authorReply on a prior-round finding when threadId matches', async () => {
+    const existing = makeHandover({
+      rounds: [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [{
+          fingerprint: { file: 'src/a.ts', lineStart: 5, lineEnd: 5, slug: 'Null-check' },
+          severity: 'required',
+          title: 'Null check',
+          authorReply: 'none',
+          threadId: 't1',
+        }],
+      }],
+    });
+    const octokit = mockJsonOctokit({ 'rust-dashcore/prs/106/handover.json': existing });
+
+    const classifyFn = (): AuthorReplyClass => 'agree';
+    const previousFindings = [{ threadId: 't1', authorReplyText: 'Fixed!', file: 'src/a.ts', line: 5 }];
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'def', [], previousFindings,
+      'No issues', noopFingerprint, classifyFn,
+    );
+
+    const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(reloaded!.rounds[0].findings[0].authorReply).toBe('agree');
+  });
+
+  it('retroactively sets threadId on prior-round findings when matched by file:line', async () => {
+    const existing = makeHandover({
+      rounds: [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [{
+          fingerprint: { file: 'src/a.ts', lineStart: 5, lineEnd: 5, slug: 'Null-check' },
+          severity: 'required',
+          title: 'Null check',
+          authorReply: 'none',
+          // no threadId yet
+        }],
+      }],
+    });
+    const octokit = mockJsonOctokit({ 'rust-dashcore/prs/106/handover.json': existing });
+
+    const classifyFn = (): AuthorReplyClass => 'agree';
+    const previousFindings = [{ threadId: 't1', authorReplyText: 'Fixed!', file: 'src/a.ts', line: 5 }];
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'def', [], previousFindings,
+      'No issues', noopFingerprint, classifyFn,
+    );
+
+    const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(reloaded!.rounds[0].findings[0].threadId).toBe('t1');
+    expect(reloaded!.rounds[0].findings[0].authorReply).toBe('agree');
+  });
+
+  it('appends a new round without overwriting prior rounds', async () => {
+    const octokit = mockJsonOctokit({});
+    const finding = makeFinding({ title: 'Null check', file: 'src/a.ts', line: 5 });
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'sha1', [finding], [],
+      'One issue found', noopFingerprint, noopClassify,
+    );
+
+    const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(loaded!.rounds).toHaveLength(1);
+    expect(loaded!.rounds[0].round).toBe(1);
+    expect(loaded!.rounds[0].findings[0].title).toBe('Null check');
+    expect(loaded!.rounds[0].findings[0].authorReply).toBe('none');
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'sha2', [], [],
+      'All clear', noopFingerprint, noopClassify, loaded,
+    );
+
+    const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(reloaded!.rounds).toHaveLength(2);
+    expect(reloaded!.rounds[1].round).toBe(2);
+  });
+
+  it('uses pre-loaded handover and skips the extra loadHandover fetch', async () => {
+    // When existingHandover is provided, appendHandoverRound should NOT call loadHandover.
+    // We verify by supplying an octokit whose getContent fails for any handover read
+    // but succeeds for the sha lookup needed by writeHandover.
+    let getContentCallCount = 0;
+    const octokit = {
+      rest: {
+        repos: {
+          getContent: jest.fn(async ({ path }: { path: string }) => {
+            getContentCallCount++;
+            // Simulate no existing file (write needs sha = undefined)
+            const err = Object.assign(new Error(`Not found: ${path}`), { status: 404 });
+            throw err;
+          }),
+          createOrUpdateFileContents: jest.fn(async () => undefined),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const preLoaded = makeHandover({ rounds: [] });
+    // Should NOT call getContent for the handover load since existingHandover is provided.
+    // It may call getContent once for the SHA lookup in writeHandover, but not for loading.
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'sha1', [], [],
+      'Summary', noopFingerprint, noopClassify, preLoaded,
+    );
+
+    // getContent is called at most once (for the SHA lookup), not twice (load + SHA)
+    expect(getContentCallCount).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('fetchJsonFile error handling', () => {
+  it('returns null silently on 404', async () => {
+    const octokit = mockJsonOctokit({});
+    const result = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 999);
+    expect(result).toBeNull();
+  });
+
+  it('logs a warning and returns null on non-404 errors', async () => {
+    const octokit = {
+      rest: {
+        repos: {
+          getContent: jest.fn(async () => {
+            const err = Object.assign(new Error('Internal Server Error'), { status: 500 });
+            throw err;
+          }),
+          createOrUpdateFileContents: jest.fn(),
+        },
+      },
+    } as unknown as ReturnType<typeof import('@actions/github').getOctokit>;
+
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => undefined);
+    const result = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('rust-dashcore/prs/106/handover.json'));
+    warnSpy.mockRestore();
   });
 });
 

@@ -89,6 +89,7 @@ jest.mock('./memory', () => ({
   loadMemory: jest.fn().mockResolvedValue(null),
   loadHandover: jest.fn().mockResolvedValue(null),
   writeHandover: jest.fn().mockResolvedValue(undefined),
+  appendHandoverRound: jest.fn().mockResolvedValue(undefined),
   applyEscalations: jest.fn((findings: unknown[]) => findings),
   updatePattern: jest.fn().mockResolvedValue(undefined),
 }));
@@ -1919,6 +1920,12 @@ describe('runFullReview orchestration', () => {
 
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
     expect(runReviewCall[13]).toEqual(priorRounds);
+
+    // Write path: appendHandoverRound must be called once with the loaded handover
+    expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+    const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+    // existingHandover param (index 10) should be the already-loaded handover, not re-fetched
+    expect(appendCall[10]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
   });
 
   it('applies memory escalations when patterns exist', async () => {

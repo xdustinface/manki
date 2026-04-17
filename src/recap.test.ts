@@ -314,6 +314,30 @@ describe('classifyAuthorReply', () => {
   it('prefers agree over disagree when both signals are present', () => {
     expect(classifyAuthorReply('Good catch, but I disagree on severity.')).toBe('agree');
   });
+
+  it('returns none for negated agree signals', () => {
+    expect(classifyAuthorReply('not fixed')).toBe('none');
+    expect(classifyAuthorReply('not addressed')).toBe('none');
+    expect(classifyAuthorReply("didn't fix this")).toBe('none');
+    expect(classifyAuthorReply('not resolved yet')).toBe('none');
+    expect(classifyAuthorReply("I don't agree to this")).toBe('none');
+  });
+
+  it('still classifies non-negated agree signals correctly', () => {
+    expect(classifyAuthorReply('fixed now')).toBe('agree');
+    expect(classifyAuthorReply('addressed in latest commit')).toBe('agree');
+    expect(classifyAuthorReply('resolved by the refactor')).toBe('agree');
+  });
+
+  it('returns none for negated disagree signals', () => {
+    expect(classifyAuthorReply('not intentional')).toBe('none');
+    expect(classifyAuthorReply("wasn't intentional")).toBe('none');
+  });
+
+  it('still classifies disagree signals correctly when not negated', () => {
+    expect(classifyAuthorReply('this is intentional')).toBe('disagree');
+    expect(classifyAuthorReply('Not a bug, this is fine.')).toBe('disagree');
+  });
 });
 
 describe('fingerprintFinding', () => {
