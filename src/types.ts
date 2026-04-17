@@ -64,6 +64,8 @@ export interface PrHandover {
 
 export type ReviewVerdict = 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES';
 
+export type VerdictReason = 'required_present' | 'novel_suggestion' | 'only_dismissed_or_nit';
+
 export interface ReviewResult {
   verdict: ReviewVerdict;
   summary: string;
@@ -206,6 +208,7 @@ export interface ReviewStats {
     severityChanges: number;
     mergedDuplicates: number;
     defensiveHardeningCount?: number;
+    verdictReason?: VerdictReason;
   };
 
   // File analysis
