@@ -872,6 +872,36 @@ describe('runJudgeAgent', () => {
     expect(result.findings[0].reachability).toBe('hypothetical');
   });
 
+  it('demotes hypothetical suggestion findings to nit with defensive-hardening tag', async () => {
+    const judgedResponse = JSON.stringify({
+      summary: 'Suggestion demoted.',
+      findings: [
+        {
+          title: 'Unused variable',
+          severity: 'suggestion',
+          reasoning: 'Defensive guard.',
+          confidence: 'medium',
+          reachability: 'hypothetical',
+          reachabilityReasoning: 'No caller exercises this path.',
+        },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const input: JudgeInput = {
+      findings: [makeFinding()],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(result.findings[0].severity).toBe('nit');
+    expect(result.findings[0].originalSeverity).toBe('suggestion');
+    expect(result.findings[0].tags).toEqual(['defensive-hardening']);
+  });
+
   it('preserves severity when judge marks finding reachable', async () => {
     const judgedResponse = JSON.stringify({
       summary: 'Real bug.',
