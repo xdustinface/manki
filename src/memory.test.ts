@@ -1013,6 +1013,40 @@ describe('appendHandoverRound', () => {
     expect(reloaded!.rounds[0].findings[0].authorReply).toBe('agree');
   });
 
+  it('retroactively sets threadId on multi-line findings using lineStart from previousFindings', async () => {
+    // lineStart=40, line=44 (multi-line annotation): fingerprint uses lineStart=40,
+    // but pf.line is 44. Without pf.lineStart the lookup would miss.
+    const existing = makeHandover({
+      rounds: [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [{
+          fingerprint: { file: 'src/a.ts', lineStart: 40, lineEnd: 44, slug: 'Range-check' },
+          severity: 'required',
+          title: 'Range check',
+          authorReply: 'none',
+          // no threadId yet
+        }],
+      }],
+    });
+    const octokit = mockJsonOctokit({ 'rust-dashcore/prs/106/handover.json': existing });
+
+    const classifyFn = (): AuthorReplyClass => 'agree';
+    // pf.line is the end line (44), pf.lineStart is the start line (40)
+    const previousFindings = [{ threadId: 't2', authorReplyText: 'Fixed!', file: 'src/a.ts', line: 44, lineStart: 40 }];
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'def', [], previousFindings,
+      'No issues', noopFingerprint, classifyFn,
+    );
+
+    const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(reloaded!.rounds[0].findings[0].threadId).toBe('t2');
+    expect(reloaded!.rounds[0].findings[0].authorReply).toBe('agree');
+  });
+
   it('appends a new round without overwriting prior rounds', async () => {
     const octokit = mockJsonOctokit({});
     const finding = makeFinding({ title: 'Null check', file: 'src/a.ts', line: 5 });

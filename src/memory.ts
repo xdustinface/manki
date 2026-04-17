@@ -576,7 +576,10 @@ export interface HandoverPreviousFinding {
   threadId?: string;
   authorReplyText?: string;
   file: string;
+  /** End line (annotation `line`). Use `lineStart` when available for key lookups. */
   line: number;
+  /** Start line of the annotation range. When set, preferred over `line` for key matching. */
+  lineStart?: number;
 }
 
 /**
@@ -611,7 +614,7 @@ export async function appendHandoverRound(
   for (const pf of previousFindings) {
     if (pf.threadId) {
       replyByThread.set(pf.threadId, pf);
-      threadByKey.set(`${pf.file}:${pf.line}`, pf.threadId);
+      threadByKey.set(`${pf.file}:${pf.lineStart ?? pf.line}`, pf.threadId);
     }
   }
 
