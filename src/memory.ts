@@ -3,7 +3,7 @@ import * as github from '@actions/github';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { minimatch } from 'minimatch';
 
-import { Finding, FindingSeverity, PrHandover } from './types';
+import { AuthorReplyClass, Finding, FindingSeverity, HandoverFinding, HandoverRound, PrHandover } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -569,6 +569,84 @@ export async function writeHandover(
   const path = handoverPath(targetRepo, prNumber);
   const content = JSON.stringify(handover, null, 2);
   await writeFile(octokit, owner, repo, path, content, `Update handover for PR #${prNumber}`);
+}
+
+/** Minimal shape of a previous finding required by `appendHandoverRound`. */
+export interface HandoverPreviousFinding {
+  threadId?: string;
+  authorReplyText?: string;
+  file: string;
+  line: number;
+}
+
+/**
+ * Append a new round to the per-PR handover.
+ * Prior rounds' findings are backfilled with fresh `authorReply` classifications
+ * drawn from the latest recap state, matched by thread ID.
+ *
+ * Pass the already-loaded `handover` to avoid a redundant fetch; if omitted,
+ * the function loads it from the memory repo.
+ */
+export async function appendHandoverRound(
+  octokit: Octokit,
+  memoryRepo: string,
+  targetRepo: string,
+  prNumber: number,
+  commitSha: string,
+  findings: Finding[],
+  previousFindings: HandoverPreviousFinding[],
+  judgeSummary: string,
+  fingerprintFn: (title: string, file: string, line: number) => HandoverFinding['fingerprint'],
+  classifyFn: (text: string | undefined) => AuthorReplyClass,
+  existingHandover?: PrHandover | null,
+): Promise<void> {
+  const loaded = existingHandover !== undefined
+    ? existingHandover
+    : await loadHandover(octokit, memoryRepo, targetRepo, prNumber);
+  const handover: PrHandover = loaded ?? { prNumber, repo: targetRepo, rounds: [] };
+
+  const replyByThread = new Map<string, HandoverPreviousFinding>();
+  for (const pf of previousFindings) {
+    if (pf.threadId) replyByThread.set(pf.threadId, pf);
+  }
+  for (const round of handover.rounds) {
+    for (const f of round.findings) {
+      if (!f.threadId) continue;
+      const pf = replyByThread.get(f.threadId);
+      if (pf) f.authorReply = classifyFn(pf.authorReplyText);
+    }
+  }
+
+  const threadByKey = new Map<string, string>();
+  for (const pf of previousFindings) {
+    if (pf.threadId) {
+      threadByKey.set(`${pf.file}:${pf.line}`, pf.threadId);
+    }
+  }
+
+  const roundFindings: HandoverFinding[] = findings.map(f => {
+    const threadId = threadByKey.get(`${f.file}:${f.line}`);
+    const entry: HandoverFinding = {
+      fingerprint: fingerprintFn(f.title, f.file, f.line),
+      severity: f.severity,
+      title: f.title,
+      authorReply: 'none',
+    };
+    if (threadId !== undefined) entry.threadId = threadId;
+    return entry;
+  });
+
+  const newRound: HandoverRound = {
+    round: handover.rounds.length + 1,
+    commitSha,
+    timestamp: new Date().toISOString(),
+    findings: roundFindings,
+    judgeSummary,
+  };
+  handover.rounds.push(newRound);
+
+  await writeHandover(octokit, memoryRepo, targetRepo, prNumber, handover);
+  core.info(`Handover updated for PR #${prNumber}: ${handover.rounds.length} round(s)`);
 }
 
 async function getFileSha(

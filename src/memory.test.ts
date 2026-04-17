@@ -810,7 +810,10 @@ function mockJsonOctokit(jsonFiles: Record<string, unknown>): MockOctokit {
     rest: {
       repos: {
         getContent: jest.fn(async ({ path }: { path: string }) => {
-          if (!store.has(path)) throw new Error(`Not found: ${path}`);
+          if (!store.has(path)) {
+            const err = Object.assign(new Error(`Not found: ${path}`), { status: 404 });
+            throw err;
+          }
           return {
             data: {
               content: Buffer.from(JSON.stringify(store.get(path))).toString('base64'),

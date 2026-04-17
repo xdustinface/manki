@@ -6,10 +6,10 @@ import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isLLMAccessAllowed } from './interaction';
-import { loadHandover, loadMemory, applyEscalations, updatePattern, writeHandover, RepoMemory } from './memory';
-import { classifyAuthorReply, fetchRecapState, fingerprintFinding, PreviousFinding } from './recap';
+import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
+import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
-import { DEFENSIVE_HARDENING_TAG, DashboardData, Finding, HandoverFinding, HandoverRound, PrContext, PrHandover, ReviewMetadata, ReviewStats } from './types';
+import { DEFENSIVE_HARDENING_TAG, DashboardData, Finding, PrContext, PrHandover, ReviewMetadata, ReviewStats } from './types';
 import {
   fetchPRDiff,
   fetchConfigFile,
@@ -762,6 +762,9 @@ async function runFullReview(
             result.findings,
             recap.previousFindings,
             result.summary,
+            fingerprintFinding,
+            classifyAuthorReply,
+            handover,
           );
         } catch (error) {
           core.warning(`Failed to write handover for PR #${prNumber}: ${error}`);
@@ -874,56 +877,6 @@ async function runFullReview(
       agentCount: 0,
     });
   }
-}
-
-/**
- * Append a new round to the per-PR handover.
- * Prior rounds' findings are backfilled with fresh `authorReply` classifications
- * drawn from the latest recap state, matched by thread ID.
- */
-async function appendHandoverRound(
-  memoryOctokit: Octokit,
-  memoryRepo: string,
-  targetRepo: string,
-  prNumber: number,
-  commitSha: string,
-  findings: Finding[],
-  previousFindings: PreviousFinding[],
-  judgeSummary: string,
-): Promise<void> {
-  const existing = await loadHandover(memoryOctokit, memoryRepo, targetRepo, prNumber);
-  const handover: PrHandover = existing ?? { prNumber, repo: targetRepo, rounds: [] };
-
-  const replyByThread = new Map<string, PreviousFinding>();
-  for (const pf of previousFindings) {
-    if (pf.threadId) replyByThread.set(pf.threadId, pf);
-  }
-  for (const round of handover.rounds) {
-    for (const f of round.findings) {
-      if (!f.threadId) continue;
-      const pf = replyByThread.get(f.threadId);
-      if (pf) f.authorReply = classifyAuthorReply(pf.authorReplyText);
-    }
-  }
-
-  const roundFindings: HandoverFinding[] = findings.map(f => ({
-    fingerprint: fingerprintFinding(f.title, f.file, f.line),
-    severity: f.severity,
-    title: f.title,
-    authorReply: 'none',
-  }));
-
-  const newRound: HandoverRound = {
-    round: handover.rounds.length + 1,
-    commitSha,
-    timestamp: new Date().toISOString(),
-    findings: roundFindings,
-    judgeSummary,
-  };
-  handover.rounds.push(newRound);
-
-  await writeHandover(memoryOctokit, memoryRepo, targetRepo, prNumber, handover);
-  core.info(`Handover updated for PR #${prNumber}: ${handover.rounds.length} round(s)`);
 }
 
 async function handleReviewStateCheck(): Promise<void> {
