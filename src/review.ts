@@ -5,7 +5,7 @@ import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue } from './github';
 import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
-import { ReviewConfig, ReviewerAgent, Finding, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, HandoverRound, ReviewResult, ReviewVerdict, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, EffortLevel, AgentPick, MAX_AGENT_RETRIES } from './types';
 import { extractJSON } from './json';
 
 export const HIGH_CONF_SUGGESTION_THRESHOLD = 1;
@@ -454,6 +454,7 @@ export async function runReview(
   isFollowUp?: boolean,
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>,
   previousFindings?: PreviousFinding[],
+  priorRounds?: HandoverRound[],
 ): Promise<ReviewResult> {
   let team: TeamRoster;
   let plannerResult: PlannerResult | null = null;
@@ -885,6 +886,7 @@ export async function runReview(
       agentCount: team.agents.length,
       isFollowUp,
       openThreads,
+      priorRounds,
       effort: judgeEffort as 'low' | 'medium' | 'high',
     };
     const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
