@@ -1592,6 +1592,27 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].tags ?? []).not.toContain('contradicts-prior-round');
   });
 
+  it('demotes contradiction when current line is within lineEnd + LINE_WINDOW of a multi-line prior', () => {
+    const findings = [makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 33,
+      severity: 'required',
+      description: 'Replace the old helper instead.',
+    })];
+    const prior = [makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 30, slug: 'Naming-convention' },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }], 2)];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.demotedCount).toBe(1);
+    expect(result.findings[0].severity).toBe('nit');
+    expect(result.findings[0].tags).toContain('contradicts-prior-round');
+  });
+
   it('passes through findings unchanged when priorRounds is empty or undefined', () => {
     const findings = [makeFinding({ title: 'Unused variable', severity: 'suggestion' })];
     const emptyResult = applyCrossRoundSuppression(findings, []);

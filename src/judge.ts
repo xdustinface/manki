@@ -715,7 +715,10 @@ export function applyCrossRoundSuppression(
     const contradictionMatch = acceptedPriors.find(({ finding: prior }) =>
       prior.fingerprint.file === current.file
       && prior.fingerprint.slug === slug
-      && Math.abs(current.line - prior.fingerprint.lineStart) <= LINE_WINDOW,
+      && (
+        current.line >= prior.fingerprint.lineStart - LINE_WINDOW
+        && current.line <= prior.fingerprint.lineEnd + LINE_WINDOW
+      ),
     );
     if (contradictionMatch && hasReversalWord(current) && (current.severity === 'required' || current.severity === 'suggestion')) {
       current.originalSeverity = current.severity;
