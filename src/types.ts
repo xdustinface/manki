@@ -23,6 +23,45 @@ export interface Finding {
   originalSeverity?: FindingSeverity;
 }
 
+/**
+ * Stable identifier for a finding across review rounds.
+ * Title is reduced to a slug using the same expression used when posting the
+ * `<!-- manki:severity:SLUG -->` HTML comment marker in review threads.
+ */
+export interface FindingFingerprint {
+  file: string;
+  lineStart: number;
+  lineEnd: number;
+  slug: string;
+}
+
+export type AuthorReplyClass = 'agree' | 'disagree' | 'partial' | 'none';
+
+/** One finding as captured in a prior review round. */
+export interface HandoverFinding {
+  fingerprint: FindingFingerprint;
+  severity: FindingSeverity | 'unknown';
+  title: string;
+  authorReply: AuthorReplyClass;
+  threadId?: string;
+}
+
+/** A single completed review round recorded in the per-PR handover. */
+export interface HandoverRound {
+  round: number;
+  commitSha: string;
+  timestamp: string;
+  findings: HandoverFinding[];
+  judgeSummary?: string;
+}
+
+/** Per-PR cross-round state stored at `{targetRepo}/prs/{prNumber}/handover.json`. */
+export interface PrHandover {
+  prNumber: number;
+  repo: string;
+  rounds: HandoverRound[];
+}
+
 export type ReviewVerdict = 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES';
 
 export interface ReviewResult {

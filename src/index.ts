@@ -6,10 +6,10 @@ import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isLLMAccessAllowed } from './interaction';
-import { loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
-import { fetchRecapState } from './recap';
+import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
+import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
-import { DEFENSIVE_HARDENING_TAG, DashboardData, PrContext, ReviewMetadata, ReviewStats } from './types';
+import { DEFENSIVE_HARDENING_TAG, DashboardData, PrContext, PrHandover, ReviewMetadata, ReviewStats } from './types';
 import {
   fetchPRDiff,
   fetchConfigFile,
@@ -442,6 +442,7 @@ async function runFullReview(
     }
 
     let memory: RepoMemory | null = null;
+    let handover: PrHandover | null = null;
     if (config.memory?.enabled) {
       const memoryToken = getMemoryToken(octokitCache.resolvedToken);
       if (!memoryToken) {
@@ -455,6 +456,15 @@ async function runFullReview(
           core.info(`Loaded memory: ${memory.learnings.length} learnings, ${memory.suppressions.length} suppressions`);
         } catch (error) {
           core.warning(`Failed to load review memory: ${error}`);
+        }
+
+        try {
+          handover = await loadHandover(memoryOctokit, memoryRepo, repo, prNumber);
+          if (handover) {
+            core.info(`Loaded handover: ${handover.rounds.length} prior round(s)`);
+          }
+        } catch (error) {
+          core.warning(`Failed to load handover for PR #${prNumber}: ${error}`);
         }
       }
     }
@@ -571,6 +581,7 @@ async function runFullReview(
       isFollowUp,
       openThreads,
       recap.previousFindings,
+      handover?.rounds,
     );
     const judgeEndTime = Date.now();
 
@@ -740,6 +751,24 @@ async function runFullReview(
           }
         }
         core.info(`Updated ${result.findings.length} patterns in memory repo`);
+
+        try {
+          await appendHandoverRound(
+            memoryOctokit,
+            memoryRepo,
+            repo,
+            prNumber,
+            commitSha,
+            result.findings,
+            recap.previousFindings,
+            result.summary,
+            fingerprintFinding,
+            classifyAuthorReply,
+            handover,
+          );
+        } catch (error) {
+          core.warning(`Failed to write handover for PR #${prNumber}: ${error}`);
+        }
       }
     }
 

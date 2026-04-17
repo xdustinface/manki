@@ -87,6 +87,9 @@ jest.mock('./interaction', () => ({
 
 jest.mock('./memory', () => ({
   loadMemory: jest.fn().mockResolvedValue(null),
+  loadHandover: jest.fn().mockResolvedValue(null),
+  writeHandover: jest.fn().mockResolvedValue(undefined),
+  appendHandoverRound: jest.fn().mockResolvedValue(undefined),
   applyEscalations: jest.fn((findings: unknown[]) => findings),
   updatePattern: jest.fn().mockResolvedValue(undefined),
 }));
@@ -95,6 +98,8 @@ jest.mock('./recap', () => ({
   fetchRecapState: jest.fn().mockResolvedValue({ previousFindings: [], recapContext: '' }),
   deduplicateFindings: jest.fn().mockReturnValue({ unique: [], duplicates: [] }),
   llmDeduplicateFindings: jest.fn().mockResolvedValue({ unique: [], duplicates: [] }),
+  classifyAuthorReply: jest.fn().mockReturnValue('none'),
+  fingerprintFinding: jest.fn((title: string, file: string, line: number) => ({ file, lineStart: line, lineEnd: line, slug: title })),
 }));
 
 jest.mock('./review', () => ({
@@ -1877,6 +1882,70 @@ describe('runFullReview orchestration', () => {
     // dedup runs before the judge stage.
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
     expect(runReviewCall[12]).toEqual(previousFindings);
+  });
+
+  it('loads handover and forwards its rounds to runReview when memory is enabled', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+
+    const priorRounds = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [],
+    }];
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+    });
+
+    await callRunFullReview();
+
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    expect(runReviewCall[13]).toEqual(priorRounds);
+
+    // Write path: appendHandoverRound must be called once with the loaded handover
+    expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+    const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+    // existingHandover param (index 10) should be the already-loaded handover, not re-fetched
+    expect(appendCall[10]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+  });
+
+  it('does not load or write handover when memory is disabled', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+    // Default config already has memory.enabled = false, so no override needed.
+
+    await callRunFullReview();
+
+    expect(jest.mocked(memoryModule.loadHandover)).not.toHaveBeenCalled();
+    expect(jest.mocked(memoryModule.appendHandoverRound)).not.toHaveBeenCalled();
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    // priorRounds param (index 13) should be undefined when memory is disabled
+    expect(runReviewCall[13]).toBeUndefined();
   });
 
   it('applies memory escalations when patterns exist', async () => {

@@ -1,8 +1,9 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { ClaudeClient } from './claude';
+import { titleToSlug } from './github';
 import { matchesSuppression, Suppression } from './memory';
-import { Finding, FindingSeverity } from './types';
+import { AuthorReplyClass, Finding, FindingFingerprint, FindingSeverity } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -15,13 +16,97 @@ export function sanitize(s: string, maxLength = 200): string {
 }
 
 
+/**
+ * Build a stable fingerprint for a finding. The slug mirrors the regex used
+ * when writing the `<!-- manki:severity:SLUG -->` HTML marker in `github.ts`,
+ * so fingerprints round-trip through posted review comments.
+ */
+function fingerprintFinding(
+  title: string,
+  file: string,
+  lineStart: number,
+  lineEnd: number = lineStart,
+): FindingFingerprint {
+  return {
+    file,
+    lineStart,
+    lineEnd,
+    slug: titleToSlug(title),
+  };
+}
+
+const AGREE_SIGNALS = [
+  'fixed', 'done', "you're right", 'good catch', 'addressed',
+  'resolved', 'agreed', 'will do', '\u{1F44D}',
+];
+
+const DISAGREE_SIGNALS = [
+  'disagree', 'intentional', 'keeping', "won't", 'wontfix',
+  'by design', 'not a bug', 'unnecessary', 'this is fine', '\u{1F44E}',
+];
+
+const PARTIAL_SIGNALS = [
+  'partially', 'sort of', 'kind of', 'some of', 'most of',
+  'mostly', 'working on', 'follow-up',
+];
+
+const NEGATION_WORDS = new Set([
+  'not', "don't", "doesn't", "didn't", "won't", "can't", "isn't", "wasn't", 'never',
+]);
+
+/**
+ * Tokenize text by splitting on whitespace and stripping leading/trailing
+ * ASCII punctuation from each token. Emoji and other non-ASCII characters
+ * are preserved so emoji signals match correctly.
+ */
+function tokenize(text: string): string[] {
+  return text.split(/\s+/).map(t => t.replace(/^[\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E]+|[\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E]+$/g, ''));
+}
+
+/**
+ * Returns true if the signal (a phrase) appears in `tokens` starting at some
+ * index, AND none of the two tokens immediately before that index is a
+ * negation word. Multi-word signals are matched as a contiguous token run.
+ */
+function hasSignalWithoutNegation(tokens: string[], signal: string): boolean {
+  const sigTokens = signal.split(/\s+/);
+  outer: for (let i = 0; i <= tokens.length - sigTokens.length; i++) {
+    for (let j = 0; j < sigTokens.length; j++) {
+      if (tokens[i + j] !== sigTokens[j]) continue outer;
+    }
+    // Found signal at index i — check for preceding negation
+    for (let offset = 1; offset <= 2; offset++) {
+      const prev = i - offset;
+      if (prev >= 0 && NEGATION_WORDS.has(tokens[prev])) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Classify an author reply body into a coarse stance.
+ * Keyword order matters: agree wins over disagree, which wins over partial.
+ * Signals preceded by a negation word within two tokens are skipped.
+ */
+function classifyAuthorReply(text: string | undefined): AuthorReplyClass {
+  if (!text) return 'none';
+  const tokens = tokenize(text.toLowerCase());
+  if (AGREE_SIGNALS.some(s => hasSignalWithoutNegation(tokens, s))) return 'agree';
+  if (DISAGREE_SIGNALS.some(s => hasSignalWithoutNegation(tokens, s))) return 'disagree';
+  if (PARTIAL_SIGNALS.some(s => hasSignalWithoutNegation(tokens, s))) return 'partial';
+  return 'none';
+}
+
 interface PreviousFinding {
   title: string;
   file: string;
   line: number;
+  lineStart?: number;
   severity: FindingSeverity | 'unknown';
   status: 'open' | 'resolved' | 'replied';
   threadId?: string;
+  authorReplyText?: string;
 }
 
 interface RecapState {
@@ -46,9 +131,11 @@ async function fetchRecapState(
       title: t.findingTitle,
       file: t.file,
       line: t.line,
+      lineStart: t.lineStart,
       severity: t.severity,
       status: t.isResolved ? 'resolved' as const : (t.hasHumanReply ? 'replied' as const : 'open' as const),
       threadId: t.threadId,
+      authorReplyText: t.authorReplyText,
     }));
 
   const resolved = previousFindings.filter(f => f.status === 'resolved');
@@ -89,7 +176,9 @@ interface ReviewThread {
   findingTitle: string;
   file: string;
   line: number;
+  lineStart: number;
   severity: FindingSeverity | 'unknown';
+  authorReplyText?: string;
 }
 
 async function fetchReviewThreads(
@@ -98,6 +187,8 @@ async function fetchReviewThreads(
   repo: string,
   prNumber: number,
 ): Promise<ReviewThread[]> {
+  // Note: `comments(first: 10)` caps at 10 comments per thread — sufficient for
+  // fingerprinting and reply extraction, but longer discussions are truncated.
   const query = `
     query($owner: String!, $repo: String!, $prNumber: Int!) {
       repository(owner: $owner, name: $repo) {
@@ -108,6 +199,7 @@ async function fetchReviewThreads(
               isResolved
               path
               line
+              startLine
               comments(first: 10) {
                 nodes {
                   body
@@ -133,6 +225,7 @@ async function fetchReviewThreads(
               isResolved: boolean;
               path: string;
               line: number | null;
+              startLine: number | null;
               comments: {
                 nodes: Array<{
                   body: string;
@@ -149,15 +242,20 @@ async function fetchReviewThreads(
       const firstComment = thread.comments.nodes[0];
       const isBotThread = firstComment?.body?.includes(BOT_MARKER) ?? false;
 
-      const hasHumanReply = thread.comments.nodes.some((c, i) =>
+      const firstNonBotReply = thread.comments.nodes.find((c, i) =>
         i > 0 && c.author?.login !== 'github-actions[bot]'
       );
+      const hasHumanReply = firstNonBotReply !== undefined;
+      const authorReplyText = firstNonBotReply?.body;
 
       const severityMatch = firstComment?.body?.match(/manki:(required|suggestion|nit|ignore):/);
       const severity = (severityMatch?.[1] ?? 'unknown') as FindingSeverity | 'unknown';
 
       const titleMatch = firstComment?.body?.match(/\*\*(?:Required|Suggestion|Nit|Ignore)\*\*(?:\s*<sub>\[[^\]]*\]<\/sub>)?\s*:\s*(.+?)(?:\n|$)/);
       const findingTitle = titleMatch?.[1]?.trim() ?? '';
+
+      const line = thread.line ?? 0;
+      const lineStart = thread.startLine ?? line;
 
       return {
         threadId: thread.id,
@@ -166,8 +264,10 @@ async function fetchReviewThreads(
         hasHumanReply,
         findingTitle,
         file: thread.path ?? '',
-        line: thread.line ?? 0,
+        line,
+        lineStart,
         severity,
+        authorReplyText,
       };
     });
   } catch (error) {
@@ -327,4 +427,4 @@ async function llmDeduplicateFindings(
   }
 }
 
-export { DuplicateMatch, PreviousFinding, RecapState, fetchRecapState, deduplicateFindings, titlesOverlap, llmDeduplicateFindings };
+export { DuplicateMatch, PreviousFinding, RecapState, classifyAuthorReply, fingerprintFinding, fetchRecapState, deduplicateFindings, titlesOverlap, llmDeduplicateFindings };

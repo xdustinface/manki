@@ -1,6 +1,6 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { deduplicateFindings, PreviousFinding, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
+import { classifyAuthorReply, deduplicateFindings, fingerprintFinding, PreviousFinding, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -275,6 +275,95 @@ describe('deduplicateFindings', () => {
     const result = deduplicateFindings(findings, previous);
     expect(result.unique).toHaveLength(1);
     expect(result.duplicates).toHaveLength(0);
+  });
+});
+
+describe('classifyAuthorReply', () => {
+  it('classifies acknowledgments as agree', () => {
+    expect(classifyAuthorReply('Fixed, done.')).toBe('agree');
+    expect(classifyAuthorReply('Good catch, will fix.')).toBe('agree');
+    expect(classifyAuthorReply('Addressed in latest push.')).toBe('agree');
+  });
+
+  it('classifies pushback as disagree', () => {
+    expect(classifyAuthorReply('This is intentional by design')).toBe('disagree');
+    expect(classifyAuthorReply('Disagree, keeping as-is.')).toBe('disagree');
+    expect(classifyAuthorReply('Not a bug, this is fine.')).toBe('disagree');
+  });
+
+  it('classifies partial acknowledgments as partial', () => {
+    expect(classifyAuthorReply("I'll handle most of it in a follow-up")).toBe('partial');
+    expect(classifyAuthorReply('Working on it')).toBe('partial');
+    expect(classifyAuthorReply('Partially handled')).toBe('partial');
+  });
+
+  it('returns none for undefined or empty text', () => {
+    expect(classifyAuthorReply(undefined)).toBe('none');
+    expect(classifyAuthorReply('')).toBe('none');
+  });
+
+  it('classifies emoji reactions', () => {
+    expect(classifyAuthorReply('\u{1F44D}')).toBe('agree');
+    expect(classifyAuthorReply('\u{1F44E}')).toBe('disagree');
+  });
+
+  it('returns none for neutral text with no signal words', () => {
+    expect(classifyAuthorReply('I will take a look later.')).toBe('none');
+  });
+
+  it('prefers agree over disagree when both signals are present', () => {
+    expect(classifyAuthorReply('Good catch, but I disagree on severity.')).toBe('agree');
+  });
+
+  it('returns none for negated agree signals', () => {
+    expect(classifyAuthorReply('not fixed')).toBe('none');
+    expect(classifyAuthorReply('not addressed')).toBe('none');
+    expect(classifyAuthorReply("didn't fix this")).toBe('none');
+    expect(classifyAuthorReply('not resolved yet')).toBe('none');
+    expect(classifyAuthorReply('not agreed')).toBe('none');
+  });
+
+  it('still classifies non-negated agree signals correctly', () => {
+    expect(classifyAuthorReply('fixed now')).toBe('agree');
+    expect(classifyAuthorReply('addressed in latest commit')).toBe('agree');
+    expect(classifyAuthorReply('resolved by the refactor')).toBe('agree');
+  });
+
+  it('returns none for negated disagree signals', () => {
+    expect(classifyAuthorReply('not intentional')).toBe('none');
+    expect(classifyAuthorReply("wasn't intentional")).toBe('none');
+  });
+
+  it('still classifies disagree signals correctly when not negated', () => {
+    expect(classifyAuthorReply('this is intentional')).toBe('disagree');
+    expect(classifyAuthorReply('Not a bug, this is fine.')).toBe('disagree');
+  });
+});
+
+describe('fingerprintFinding', () => {
+  it('replaces non-alphanumeric characters in the slug', () => {
+    const fp = fingerprintFinding('Hardcoded ServiceFlags::NETWORK', 'src/peer_store.rs', 42);
+    expect(fp.slug).toBe('Hardcoded-ServiceFlags--NETWORK');
+    expect(fp.file).toBe('src/peer_store.rs');
+    expect(fp.lineStart).toBe(42);
+    expect(fp.lineEnd).toBe(42);
+  });
+
+  it('supports multi-line ranges', () => {
+    const fp = fingerprintFinding('Fix this', 'src/a.ts', 10, 15);
+    expect(fp.lineStart).toBe(10);
+    expect(fp.lineEnd).toBe(15);
+  });
+
+  it('collapses lineEnd to lineStart when omitted', () => {
+    const fp = fingerprintFinding('Fix this', 'src/a.ts', 7);
+    expect(fp.lineStart).toBe(7);
+    expect(fp.lineEnd).toBe(7);
+  });
+
+  it('preserves alphanumeric characters in the slug', () => {
+    const fp = fingerprintFinding('Null123 Check', 'a.ts', 1);
+    expect(fp.slug).toBe('Null123-Check');
   });
 });
 
@@ -581,6 +670,58 @@ describe('fetchRecapState', () => {
 
     const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
     expect(state.previousFindings[0].line).toBe(0);
+  });
+
+  it('treats first non-bot comment body as author reply text', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:required:Bug --> \u{1F6AB} **Required**: Bug found\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            {
+              body: 'Fixed, done.',
+              author: { login: 'developer' },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyText).toBe('Fixed, done.');
+  });
+
+  it('leaves authorReplyText undefined for threads with only bot comments', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1' }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyText).toBeUndefined();
+  });
+
+  it('populates lineStart from startLine when present for multi-line annotations', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1', line: 44, startLine: 40 }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].line).toBe(44);
+    expect(state.previousFindings[0].lineStart).toBe(40);
+  });
+
+  it('falls back lineStart to line when startLine is null', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1', line: 42, startLine: null }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].lineStart).toBe(42);
   });
 
   it('builds recap context with only resolved findings', async () => {
