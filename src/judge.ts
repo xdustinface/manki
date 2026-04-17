@@ -13,7 +13,7 @@ import {
 import { LinkedIssue, titleToSlug } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
@@ -693,7 +693,7 @@ export async function runJudgeAgent(
   crossRoundSuppressed?: number;
   crossRoundDemoted?: number;
 }> {
-  const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds } = input;
+  const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, provenanceMap } = input;
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
 
@@ -731,7 +731,7 @@ export async function runJudgeAgent(
     };
   }
 
-  const mapped = deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings));
+  const mapped = deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings, provenanceMap));
   const suppression = applyCrossRoundSuppression(mapped, priorRounds);
 
   return {
@@ -743,10 +743,14 @@ export async function runJudgeAgent(
   };
 }
 
-export function mapJudgedToFindings(original: Finding[], judged: JudgedFinding[]): Finding[] {
+export function mapJudgedToFindings(
+  original: Finding[],
+  judged: JudgedFinding[],
+  provenanceMap?: ProvenanceEntry[],
+): Finding[] {
   // When judge returns fewer results (due to merging duplicates), use fuzzy matching only
   if (judged.length < original.length) {
-    return mapMergedFindings(original, judged);
+    return mapMergedFindings(original, judged, provenanceMap);
   }
 
   // 1:1 mapping: match by position, fall back to fuzzy title match
@@ -772,6 +776,7 @@ export function mapJudgedToFindings(original: Finding[], judged: JudgedFinding[]
       finding.judgeNotes = match.reasoning;
       finding.judgeConfidence = match.confidence;
       applyReachability(finding, match);
+      applyOwnProposal(finding, provenanceMap);
     }
 
     result.push(finding);
@@ -793,13 +798,46 @@ function applyReachability(finding: Finding, judged: JudgedFinding): void {
   finding.tags = addTag(finding.tags, DEFENSIVE_HARDENING_TAG);
 }
 
+/**
+ * Demote findings that flag code implementing a prior-round `suggestedFix`.
+ * A reachable required bug introduced by the fix itself is preserved — only
+ * caveat-level concerns are capped to nit.
+ */
+function applyOwnProposal(finding: Finding, provenanceMap?: ProvenanceEntry[]): void {
+  if (!provenanceMap || provenanceMap.length === 0) return;
+
+  const match = provenanceMap.find(entry =>
+    entry.file === finding.file &&
+    finding.line >= entry.lineStart &&
+    finding.line <= entry.lineEnd,
+  );
+  if (!match) return;
+
+  if (finding.severity === 'ignore') return;
+  if (finding.reachability === 'reachable' && finding.severity === 'required') return;
+
+  if (finding.severity !== 'nit') {
+    finding.originalSeverity ??= finding.severity;
+    finding.severity = 'nit';
+  }
+
+  finding.tags = addTag(finding.tags, OWN_PROPOSAL_TAG);
+
+  const note = `Own-proposal follow-up: implements round ${match.originatingRound} finding "${match.originatingTitle}"`;
+  finding.judgeNotes = finding.judgeNotes ? `${finding.judgeNotes}\n${note}` : note;
+}
+
 function addTag(tags: string[] | undefined, tag: string): string[] {
   if (!tags || tags.length === 0) return [tag];
   if (tags.includes(tag)) return tags;
   return [...tags, tag];
 }
 
-function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Finding[] {
+function mapMergedFindings(
+  original: Finding[],
+  judged: JudgedFinding[],
+  provenanceMap?: ProvenanceEntry[],
+): Finding[] {
   const result: Finding[] = [];
 
   for (const j of judged) {
@@ -817,6 +855,7 @@ function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Findin
     merged.judgeNotes = j.reasoning;
     merged.judgeConfidence = j.confidence;
     applyReachability(merged, j);
+    applyOwnProposal(merged, provenanceMap);
 
     // Combine reviewers from all matched originals
     const allReviewers = new Set<string>();

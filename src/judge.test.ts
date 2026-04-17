@@ -15,7 +15,7 @@ import {
 import { ClaudeClient } from './claude';
 import { RepoMemory, Learning, Suppression } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, HandoverRound, ReviewConfig, ParsedDiff, DiffFile, DiffHunk } from './types';
+import { Finding, HandoverFinding, HandoverRound, ProvenanceEntry, ReviewConfig, ParsedDiff, DiffFile, DiffHunk } from './types';
 
 const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   auto_review: true,
@@ -1374,6 +1374,157 @@ describe('mapJudgedToFindings', () => {
     expect(result[0].originalSeverity).toBeUndefined();
     expect(result[0].tags).toBeUndefined();
     expect(result[0].reachability).toBe(reachability);
+  });
+});
+
+describe('mapJudgedToFindings own-proposal demotion', () => {
+  const makeProvenance = (overrides: Partial<ProvenanceEntry> = {}): ProvenanceEntry => ({
+    file: 'src/index.ts',
+    lineStart: 5,
+    lineEnd: 15,
+    originatingRound: 2,
+    originatingTitle: 'Clamp future time',
+    ...overrides,
+  });
+
+  it('demotes a required finding that overlaps prior-round proposal to nit and tags it', () => {
+    const originals = [makeFinding({ title: 'Missing bounds check', severity: 'suggestion', line: 10 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Missing bounds check', severity: 'required', reasoning: 'Real issue.', confidence: 'high' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('nit');
+    expect(result[0].originalSeverity).toBe('required');
+    expect(result[0].tags).toEqual(['own-proposal-followup']);
+    expect(result[0].judgeNotes).toContain('Own-proposal follow-up: implements round 2 finding "Clamp future time"');
+  });
+
+  it('demotes a suggestion finding that overlaps to nit', () => {
+    const originals = [makeFinding({ title: 'Naming nit', severity: 'suggestion', line: 8 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Naming nit', severity: 'suggestion', reasoning: 'Cleaner name.', confidence: 'medium' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('nit');
+    expect(result[0].originalSeverity).toBe('suggestion');
+    expect(result[0].tags).toEqual(['own-proposal-followup']);
+  });
+
+  it('tags a nit finding without setting originalSeverity', () => {
+    const originals = [makeFinding({ title: 'Style nit', severity: 'suggestion', line: 12 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Style nit', severity: 'nit', reasoning: 'Tiny.', confidence: 'low' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('nit');
+    expect(result[0].originalSeverity).toBeUndefined();
+    expect(result[0].tags).toEqual(['own-proposal-followup']);
+  });
+
+  it('does not tag an ignore finding that overlaps provenance', () => {
+    const originals = [makeFinding({ title: 'Spurious', severity: 'suggestion', line: 6 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Spurious', severity: 'ignore', reasoning: 'False positive.', confidence: 'high' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('ignore');
+    expect(result[0].tags).toBeUndefined();
+    expect(result[0].originalSeverity).toBeUndefined();
+  });
+
+  it('does not demote a reachable + required finding (concrete bug guard)', () => {
+    const originals = [makeFinding({ title: 'Real bug', severity: 'suggestion', line: 9 })];
+    const judged: JudgedFinding[] = [
+      {
+        title: 'Real bug',
+        severity: 'required',
+        reasoning: 'Triggered by caller X.',
+        confidence: 'high',
+        reachability: 'reachable',
+      },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('required');
+    expect(result[0].reachability).toBe('reachable');
+    expect(result[0].originalSeverity).toBeUndefined();
+    expect(result[0].tags).toBeUndefined();
+  });
+
+  it('leaves findings outside the provenance range unchanged', () => {
+    const originals = [makeFinding({ title: 'Elsewhere', severity: 'suggestion', line: 50 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Elsewhere', severity: 'required', reasoning: 'Different spot.', confidence: 'high' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('required');
+    expect(result[0].tags).toBeUndefined();
+    expect(result[0].originalSeverity).toBeUndefined();
+  });
+
+  it('preserves pre-existing tags when adding own-proposal-followup', () => {
+    const originals = [makeFinding({ title: 'Bug', severity: 'suggestion', line: 10, tags: ['security'] })];
+    const judged: JudgedFinding[] = [
+      { title: 'Bug', severity: 'required', reasoning: 'Real.', confidence: 'high' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].tags).toContain('security');
+    expect(result[0].tags).toContain('own-proposal-followup');
+    expect(result[0].tags).toHaveLength(2);
+  });
+
+  it('retains originalSeverity from applyReachability when own-proposal also fires', () => {
+    // applyReachability runs first and sets originalSeverity to the judge's severity.
+    // applyOwnProposal must not overwrite it.
+    const originals = [makeFinding({ title: 'Guard', severity: 'suggestion', line: 10 })];
+    const judged: JudgedFinding[] = [
+      {
+        title: 'Guard',
+        severity: 'required',
+        reasoning: 'Unreachable.',
+        confidence: 'high',
+        reachability: 'hypothetical',
+        reachabilityReasoning: 'no caller triggers this.',
+      },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('nit');
+    expect(result[0].originalSeverity).toBe('required');
+    expect(result[0].tags).toContain('defensive-hardening');
+    expect(result[0].tags).toContain('own-proposal-followup');
+  });
+
+  it('demotes through mapMergedFindings when judge merges duplicates', () => {
+    const originals = [
+      makeFinding({ title: 'Clamp A', severity: 'required', line: 10, reviewers: ['R1'] }),
+      makeFinding({ title: 'Clamp A missing', severity: 'suggestion', line: 10, reviewers: ['R2'] }),
+    ];
+    const judged: JudgedFinding[] = [
+      { title: 'Clamp A', severity: 'required', reasoning: 'Merged.', confidence: 'high' },
+    ];
+
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('nit');
+    expect(result[0].originalSeverity).toBe('required');
+    expect(result[0].tags).toEqual(['own-proposal-followup']);
+  });
+
+  it('is a no-op when provenanceMap is undefined or empty', () => {
+    const originals = [makeFinding({ title: 'Bug', severity: 'suggestion', line: 10 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Bug', severity: 'required', reasoning: 'Real.', confidence: 'high' },
+    ];
+
+    expect(mapJudgedToFindings(originals, judged)[0].severity).toBe('required');
+    expect(mapJudgedToFindings(originals, judged, [])[0].severity).toBe('required');
   });
 });
 

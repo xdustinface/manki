@@ -1089,6 +1089,7 @@ describe('selectTeam maintainability scoring', () => {
 
 jest.mock('./judge', () => ({
   runJudgeAgent: jest.fn(),
+  computeProvenanceMap: jest.fn().mockReturnValue([]),
   JudgeInput: {},
 }));
 

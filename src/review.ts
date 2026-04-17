@@ -1,7 +1,7 @@
 import * as core from '@actions/core';
 
 import { ClaudeClient } from './claude';
-import { runJudgeAgent, JudgeInput, ResolveThread } from './judge';
+import { computeProvenanceMap, runJudgeAgent, JudgeInput, ResolveThread } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
 import { deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
@@ -967,6 +967,10 @@ export async function runReview(
   let judgeCrossRoundDemoted: number | undefined;
   try {
     core.info(`Running judge on ${findingsForJudge.length} findings...`);
+    const provenanceMap = computeProvenanceMap(priorRounds, rawDiff);
+    if (provenanceMap.length > 0) {
+      core.info(`Provenance: ${provenanceMap.length} region(s) implement prior-round suggestions`);
+    }
     const judgeInput: JudgeInput = {
       findings: findingsForJudge,
       diff,
@@ -979,6 +983,7 @@ export async function runReview(
       isFollowUp,
       openThreads,
       priorRounds,
+      provenanceMap,
       effort: judgeEffort as 'low' | 'medium' | 'high',
     };
     const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
