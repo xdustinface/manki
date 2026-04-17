@@ -686,7 +686,9 @@ function mapMergedFindings(original: Finding[], judged: JudgedFinding[]): Findin
  *
  * Contradiction: if a prior finding with the same slug + file + line proximity
  * exists, the author agreed, and the current finding uses a reversal word,
- * demote `required`/`suggestion` to `nit` and annotate `judgeNotes`.
+ * demote `suggestion` to `nit` and annotate `judgeNotes`. `required` findings
+ * are intentionally excluded from contradiction demotion to prevent prompt
+ * injection attacks where adversarial PR content could silently hide real bugs.
  */
 export function applyCrossRoundSuppression(
   findings: Finding[],
@@ -727,7 +729,7 @@ export function applyCrossRoundSuppression(
         && current.line <= prior.fingerprint.lineEnd + LINE_WINDOW
       ),
     );
-    if (contradictionMatch && hasReversalWord(current) && (current.severity === 'required' || current.severity === 'suggestion')) {
+    if (contradictionMatch && hasReversalWord(current) && current.severity === 'suggestion') {
       current.originalSeverity = current.severity;
       current.severity = 'nit';
       current.tags = addTag(current.tags, CONTRADICTION_TAG);
