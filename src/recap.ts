@@ -19,9 +19,11 @@ interface PreviousFinding {
   title: string;
   file: string;
   line: number;
+  lineStart?: number;
   severity: FindingSeverity | 'unknown';
   status: 'open' | 'resolved' | 'replied';
   threadId?: string;
+  authorReplyText?: string;
 }
 
 interface RecapState {
@@ -46,9 +48,11 @@ async function fetchRecapState(
       title: t.findingTitle,
       file: t.file,
       line: t.line,
+      lineStart: t.lineStart,
       severity: t.severity,
       status: t.isResolved ? 'resolved' as const : (t.hasHumanReply ? 'replied' as const : 'open' as const),
       threadId: t.threadId,
+      authorReplyText: t.authorReplyText,
     }));
 
   const resolved = previousFindings.filter(f => f.status === 'resolved');
@@ -89,7 +93,9 @@ interface ReviewThread {
   findingTitle: string;
   file: string;
   line: number;
+  lineStart: number;
   severity: FindingSeverity | 'unknown';
+  authorReplyText?: string;
 }
 
 async function fetchReviewThreads(
@@ -98,6 +104,8 @@ async function fetchReviewThreads(
   repo: string,
   prNumber: number,
 ): Promise<ReviewThread[]> {
+  // Note: `comments(first: 10)` caps at 10 comments per thread — sufficient for
+  // fingerprinting and reply extraction, but longer discussions are truncated.
   const query = `
     query($owner: String!, $repo: String!, $prNumber: Int!) {
       repository(owner: $owner, name: $repo) {
@@ -108,6 +116,7 @@ async function fetchReviewThreads(
               isResolved
               path
               line
+              startLine
               comments(first: 10) {
                 nodes {
                   body
@@ -133,6 +142,7 @@ async function fetchReviewThreads(
               isResolved: boolean;
               path: string;
               line: number | null;
+              startLine: number | null;
               comments: {
                 nodes: Array<{
                   body: string;
@@ -149,15 +159,20 @@ async function fetchReviewThreads(
       const firstComment = thread.comments.nodes[0];
       const isBotThread = firstComment?.body?.includes(BOT_MARKER) ?? false;
 
-      const hasHumanReply = thread.comments.nodes.some((c, i) =>
+      const firstNonBotReply = thread.comments.nodes.find((c, i) =>
         i > 0 && c.author?.login !== 'github-actions[bot]'
       );
+      const hasHumanReply = firstNonBotReply !== undefined;
+      const authorReplyText = firstNonBotReply?.body;
 
       const severityMatch = firstComment?.body?.match(/manki:(required|suggestion|nit|ignore):/);
       const severity = (severityMatch?.[1] ?? 'unknown') as FindingSeverity | 'unknown';
 
       const titleMatch = firstComment?.body?.match(/\*\*(?:Required|Suggestion|Nit|Ignore)\*\*(?:\s*<sub>\[[^\]]*\]<\/sub>)?\s*:\s*(.+?)(?:\n|$)/);
       const findingTitle = titleMatch?.[1]?.trim() ?? '';
+
+      const line = thread.line ?? 0;
+      const lineStart = thread.startLine ?? line;
 
       return {
         threadId: thread.id,
@@ -166,8 +181,10 @@ async function fetchReviewThreads(
         hasHumanReply,
         findingTitle,
         file: thread.path ?? '',
-        line: thread.line ?? 0,
+        line,
+        lineStart,
         severity,
+        authorReplyText,
       };
     });
   } catch (error) {

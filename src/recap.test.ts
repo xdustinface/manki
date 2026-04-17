@@ -583,6 +583,58 @@ describe('fetchRecapState', () => {
     expect(state.previousFindings[0].line).toBe(0);
   });
 
+  it('treats first non-bot comment body as author reply text', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:required:Bug --> \u{1F6AB} **Required**: Bug found\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            {
+              body: 'Fixed, done.',
+              author: { login: 'developer' },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyText).toBe('Fixed, done.');
+  });
+
+  it('leaves authorReplyText undefined for threads with only bot comments', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1' }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyText).toBeUndefined();
+  });
+
+  it('populates lineStart from startLine when present for multi-line annotations', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1', line: 44, startLine: 40 }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].line).toBe(44);
+    expect(state.previousFindings[0].lineStart).toBe(40);
+  });
+
+  it('falls back lineStart to line when startLine is null', async () => {
+    const octokit = mockOctokit([
+      makeThread({ id: 't1', line: 42, startLine: null }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].lineStart).toBe(42);
+  });
+
   it('builds recap context with only resolved findings', async () => {
     const octokit = mockOctokit([
       makeThread({ id: 't1', isResolved: true }),
