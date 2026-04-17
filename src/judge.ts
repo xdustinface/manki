@@ -823,7 +823,8 @@ function applyOwnProposal(finding: Finding, provenanceMap?: ProvenanceEntry[]): 
 
   finding.tags = addTag(finding.tags, OWN_PROPOSAL_TAG);
 
-  const note = `Own-proposal follow-up: implements round ${match.originatingRound} finding "${match.originatingTitle}"`;
+  const safeTitle = match.originatingTitle.replace(/[\n\r`]/g, ' ').slice(0, 200);
+  const note = `Own-proposal follow-up: implements round ${match.originatingRound} finding "${safeTitle}"`;
   finding.judgeNotes = finding.judgeNotes ? `${finding.judgeNotes}\n${note}` : note;
 }
 
