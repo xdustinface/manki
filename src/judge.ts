@@ -22,7 +22,7 @@ const PRIOR_ROUNDS_WINDOW = 3;
 const LINE_WINDOW = 5;
 
 /** Words that, when present in a current finding, suggest it reverses prior guidance. */
-const REVERSAL_WORDS = ['remove', 'delete', 'add', 'use', 'avoid', 'replace', 'revert', 'undo', 'instead'];
+const REVERSAL_WORDS = ['remove', 'delete', 'avoid', 'replace', 'revert', 'undo', 'instead'];
 
 export interface JudgeInput {
   findings: Finding[];
