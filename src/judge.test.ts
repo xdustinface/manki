@@ -1683,6 +1683,51 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].tags ?? []).not.toContain('contradicts-prior-round');
   });
 
+  it('demotes suggestion via contradiction at exact LINE_WINDOW boundary (inside)', () => {
+    // prior lineEnd=10, LINE_WINDOW=5 → boundary is line 15 (inclusive)
+    const findings = [makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 15,
+      severity: 'suggestion',
+      description: 'Replace the old helper instead.',
+    })];
+    const prior = [makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }])];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.demotedCount).toBe(1);
+    expect(result.findings[0].severity).toBe('nit');
+    expect(result.findings[0].originalSeverity).toBe('suggestion');
+    expect(result.findings[0].tags).toContain('contradicts-prior-round');
+  });
+
+  it('does not demote suggestion via contradiction at LINE_WINDOW + 1 (outside)', () => {
+    // prior lineEnd=10, LINE_WINDOW=5 → boundary is 15; line 16 is outside
+    const findings = [makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 16,
+      severity: 'suggestion',
+      description: 'Replace the old helper instead.',
+    })];
+    const prior = [makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }])];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.demotedCount).toBe(0);
+    expect(result.findings[0].severity).not.toBe('nit');
+    expect(result.findings[0].tags ?? []).not.toContain('contradicts-prior-round');
+  });
+
   it('demotes suggestion via contradiction when current line is within lineEnd + LINE_WINDOW of a multi-line prior', () => {
     const findings = [makeFinding({
       title: 'Naming convention',
