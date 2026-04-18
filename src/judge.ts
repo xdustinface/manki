@@ -117,7 +117,12 @@ function extractAddedLineBlocks(rawDiff: string): AddedLineBlock[] {
       flush();
       inHunk = true;
       const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      newLineNum = match ? parseInt(match[1], 10) : 0;
+      if (!match) {
+        core.warning(`extractAddedLineBlocks: malformed @@ header, skipping hunk: ${line}`);
+        inHunk = false;
+        continue;
+      }
+      newLineNum = parseInt(match[1], 10);
       continue;
     }
 
@@ -729,7 +734,7 @@ export async function runJudgeAgent(
 
   if (judgeResult.findings.length === 0) {
     if (findings.length > 0) {
-      core.warning('Judge returned no findings — returning originals unchanged');
+      core.warning('Judge returned no findings — returning (possibly demoted) originals');
     }
     const earlySuppress = applyCrossRoundSuppression(findings, priorRounds);
     return {
