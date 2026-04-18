@@ -424,6 +424,32 @@ describe('determineVerdict', () => {
     expect(determineVerdict(outsideEndBoundary, [prior]).verdict).toBe('REQUEST_CHANGES');
   });
 
+  it('matches when finding.line equals lineStart - 5 (exact tolerance below lineStart)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const atLowerBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 5, description: 'd', reviewers: ['r'] },
+    ];
+    expect(determineVerdict(atLowerBoundary, [prior]).verdict).toBe('COMMENT');
+  });
+
+  it('does not match when finding.line equals lineStart - 6 (one outside tolerance below lineStart)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const outsideLowerBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 4, description: 'd', reviewers: ['r'] },
+    ];
+    expect(determineVerdict(outsideLowerBoundary, [prior]).verdict).toBe('REQUEST_CHANGES');
+  });
+
   it('returns COMMENT for a PR #106 R7 replay (4 suggestions all dismissed)', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'F1', file: 'src/a.ts', line: 10, description: 'd', reviewers: ['r'] },
