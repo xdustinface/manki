@@ -2201,6 +2201,87 @@ describe('runReview', () => {
     }
   });
 
+  it('fires effort downgrade when findingsDismissed equals EFFORT_DOWNGRADE_MIN_SAMPLE (2)', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Exactly 2 dismissed, 0 kept → 100% dismiss rate at EFFORT_DOWNGRADE_MIN_SAMPLE boundary.
+    const hints = [{
+      round: 1,
+      specialistOutcomes: [
+        { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 2 },
+      ],
+    }];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        hints,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      expect(secPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('does not fire effort downgrade when findingsDismissed is below EFFORT_DOWNGRADE_MIN_SAMPLE (1 < 2)', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Only 1 dismissed — below the minimum sample threshold, guard must not fire.
+    const hints = [{
+      round: 1,
+      specialistOutcomes: [
+        { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 1 },
+      ],
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      hints,
+    );
+    const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+    expect(secPick?.effort).toBe('high');
+  });
+
   it('applyEffortDowngrade uses last hint by array position, not by round number', async () => {
     // When hints are out of order by round number, the guard reads hints[hints.length - 1]
     // (the last element by position). This test documents that coupling so future changes
