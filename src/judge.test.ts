@@ -1749,6 +1749,31 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].tags).toContain('contradicts-prior-round');
   });
 
+  it('does not overwrite pre-existing originalSeverity when contradiction fires', () => {
+    // Simulates a finding that was already demoted by applyReachability (originalSeverity='required')
+    // before applyCrossRoundSuppression runs. The contradiction path must preserve it.
+    const findings = [makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 12,
+      severity: 'suggestion',
+      originalSeverity: 'required',
+      description: 'Replace the old helper instead.',
+    })];
+    const prior = [makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }])];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.demotedCount).toBe(1);
+    expect(result.findings[0].severity).toBe('nit');
+    expect(result.findings[0].originalSeverity).toBe('required');
+    expect(result.findings[0].tags).toContain('contradicts-prior-round');
+  });
+
   it('passes through findings unchanged when priorRounds is empty or undefined', () => {
     const findings = [makeFinding({ title: 'Unused variable', severity: 'suggestion' })];
     const emptyResult = applyCrossRoundSuppression(findings, []);
