@@ -1246,6 +1246,13 @@ describe('sanitizeSuggestedFix', () => {
     expect(result).toBe('use `Option<T>` here');
   });
 
+  it('preserves angle brackets so provenance matching works for generic-type fixes', () => {
+    const result = sanitizeSuggestedFix('const x: Array<T> = foo<T>();');
+    expect(result).toContain('<');
+    expect(result).toContain('>');
+    expect(result).toBe('const x: Array<T> = foo<T>();');
+  });
+
   it('collapses runs of 3+ newlines to two newlines', () => {
     const result = sanitizeSuggestedFix('a\n\n\n\nb');
     expect(result).toBe('a\n\nb');

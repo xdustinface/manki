@@ -123,6 +123,8 @@ function extractAddedLineBlocks(rawDiff: string): AddedLineBlock[] {
 
     if (!inHunk || !currentFile) continue;
 
+    if (line.startsWith('\\')) continue; // '\ No newline at end of file' — not a real line
+
     if (line.startsWith('+')) {
       if (blockLines.length === 0) blockStart = newLineNum;
       blockLines.push(line.slice(1));

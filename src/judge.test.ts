@@ -1570,6 +1570,20 @@ describe('mapJudgedToFindings own-proposal demotion', () => {
     expect(result[0].tags).toBeUndefined();
   });
 
+  it('does not demote a finding whose file differs from the provenance entry file', () => {
+    // Line 10 is inside makeProvenance()'s range (5–15) but the file is different.
+    // The entry.file === finding.file guard must prevent demotion.
+    const originals = [makeFinding({ title: 'Cross-file finding', severity: 'suggestion', file: 'src/other.ts', line: 10 })];
+    const judged: JudgedFinding[] = [
+      { title: 'Cross-file finding', severity: 'suggestion', reasoning: 'Caveat.', confidence: 'high' },
+    ];
+
+    // makeProvenance() defaults to file: 'src/index.ts'
+    const result = mapJudgedToFindings(originals, judged, [makeProvenance()]);
+    expect(result[0].severity).toBe('suggestion');
+    expect(result[0].tags).toBeUndefined();
+  });
+
   it('demotes a reachable+suggestion finding (guard only exempts required)', () => {
     const originals = [makeFinding({ title: 'Style issue', severity: 'suggestion', line: 9 })];
     const judged: JudgedFinding[] = [
