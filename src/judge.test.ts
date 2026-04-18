@@ -1303,7 +1303,7 @@ describe('runJudgeAgent', () => {
     }];
 
     const input: JudgeInput = {
-      findings: [makeFinding({ title: 'Null check missing', line: 20 })],
+      findings: [makeFinding({ title: 'Null check missing', file: 'src/handler.ts', line: 20 })],
       diff: makeDiff(),
       rawDiff: '',
       repoContext: '',
