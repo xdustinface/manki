@@ -188,6 +188,26 @@ export function sanitizeMemoryField(value: string): string {
   return sanitized;
 }
 
+const MAX_SUGGESTED_FIX_LENGTH = 2000;
+
+/**
+ * Sanitize a `suggestedFix` value before persisting it to handover storage.
+ * Caps length, collapses excessive newline runs, and strips backticks to
+ * prevent the stored value from disrupting prompt context when re-rendered
+ * in subsequent judge rounds.
+ */
+export function sanitizeSuggestedFix(value: string): string {
+  let sanitized = value.trim();
+  // Collapse runs of more than two consecutive newlines.
+  sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
+  // Strip backticks to avoid breaking the code-fence delimiters in the prompt.
+  sanitized = sanitized.replace(/`/g, "'");
+  if (sanitized.length > MAX_SUGGESTED_FIX_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_SUGGESTED_FIX_LENGTH) + '...';
+  }
+  return sanitized;
+}
+
 /**
  * Build a context string from memory to inject into reviewer prompts.
  */
@@ -652,7 +672,7 @@ export async function appendHandoverRound(
     };
     const specialist = f.reviewers?.[0];
     if (specialist) entry.specialist = specialist;
-    if (f.suggestedFix) entry.suggestedFix = f.suggestedFix;
+    if (f.suggestedFix) entry.suggestedFix = sanitizeSuggestedFix(f.suggestedFix);
     return entry;
   });
 

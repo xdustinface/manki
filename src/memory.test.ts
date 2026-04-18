@@ -4,6 +4,7 @@ import {
   matchesSuppression,
   buildMemoryContext,
   sanitizeMemoryField,
+  sanitizeSuggestedFix,
   filterLearningsForFinding,
   filterSuppressionsForFinding,
   appendHandoverRound,
@@ -1195,6 +1196,57 @@ describe('appendHandoverRound', () => {
     expect(round1Findings[0].authorReply).toBe('agree');
     expect(round1Findings[1].threadId).toBe('t2');
     expect(round1Findings[1].authorReply).toBe('agree');
+  });
+});
+
+describe('sanitizeSuggestedFix', () => {
+  it('returns a short clean value unchanged (modulo trim)', () => {
+    expect(sanitizeSuggestedFix('const x = 1;')).toBe('const x = 1;');
+  });
+
+  it('caps length at 2000 chars and appends ellipsis', () => {
+    const long = 'x'.repeat(10000);
+    const result = sanitizeSuggestedFix(long);
+    expect(result.length).toBeLessThanOrEqual(2003);
+    expect(result.endsWith('...')).toBe(true);
+  });
+
+  it('strips backticks', () => {
+    const result = sanitizeSuggestedFix('use `Option<T>` here');
+    expect(result).not.toContain('`');
+  });
+
+  it('collapses runs of 3+ newlines to two newlines', () => {
+    const result = sanitizeSuggestedFix('a\n\n\n\nb');
+    expect(result).toBe('a\n\nb');
+  });
+
+  it('sanitizes a 10000-char value with newlines and backticks', () => {
+    const value = ('`fix`\n\n\n' + 'a'.repeat(50) + '\n').repeat(100);
+    const result = sanitizeSuggestedFix(value);
+    expect(result.length).toBeLessThanOrEqual(2003);
+    expect(result).not.toContain('`');
+    expect(result).not.toMatch(/\n{3,}/);
+  });
+});
+
+describe('appendHandoverRound suggestedFix sanitization', () => {
+  it('caps and sanitizes a long suggestedFix before persisting to handover', async () => {
+    const octokit = mockJsonOctokit({});
+    const longFix = '`injection`\n\n\n' + 'x'.repeat(9990);
+    const finding = makeFinding({ title: 'Long fix finding', file: 'src/a.ts', line: 1, suggestedFix: longFix });
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 200,
+      'sha1', [finding], [],
+      'Summary', noopFingerprint, noopClassify,
+    );
+
+    const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 200);
+    const stored = loaded!.rounds[0].findings[0].suggestedFix!;
+    expect(stored.length).toBeLessThanOrEqual(2003);
+    expect(stored).not.toContain('`');
+    expect(stored).not.toMatch(/\n{3,}/);
   });
 });
 
