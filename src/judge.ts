@@ -10,13 +10,16 @@ import {
   Suppression,
   RepoMemory,
 } from './memory';
-import { LinkedIssue } from './github';
-import { sanitize, titlesOverlap } from './recap';
+import { LinkedIssue, titleToSlug } from './github';
+import { InPrSuppression, sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverRound, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverRound, IN_PR_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
+
+/** Line drift tolerance when matching a current finding against an in-PR thread fingerprint. */
+const IN_PR_SUPPRESSION_LINE_TOLERANCE = 5;
 
 export interface JudgeInput {
   findings: Finding[];
@@ -30,6 +33,7 @@ export interface JudgeInput {
   isFollowUp?: boolean;
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>;
   priorRounds?: HandoverRound[];
+  inPrSuppressions?: InPrSuppression[];
   effort?: 'low' | 'medium' | 'high';
 }
 
@@ -518,8 +522,8 @@ export async function runJudgeAgent(
   client: ClaudeClient,
   config: ReviewConfig,
   input: JudgeInput,
-): Promise<{ findings: Finding[]; summary: string; resolveThreads?: ResolveThread[] }> {
-  const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds } = input;
+): Promise<{ findings: Finding[]; summary: string; resolveThreads?: ResolveThread[]; inPrSuppressedCount?: number }> {
+  const { findings, diff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, inPrSuppressions } = input;
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
 
@@ -547,14 +551,65 @@ export async function runJudgeAgent(
     if (findings.length > 0) {
       core.warning('Judge returned no findings — returning originals unchanged');
     }
-    return { findings, summary: judgeResult.summary, resolveThreads: judgeResult.resolveThreads };
+    const { findings: suppressed, count } = applyInPrSuppression(findings, inPrSuppressions);
+    return {
+      findings: suppressed,
+      summary: judgeResult.summary,
+      resolveThreads: judgeResult.resolveThreads,
+      ...(count > 0 && { inPrSuppressedCount: count }),
+    };
   }
 
+  const mapped = deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings));
+  const { findings: suppressed, count } = applyInPrSuppression(mapped, inPrSuppressions);
   return {
-    findings: deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings)),
+    findings: suppressed,
     summary: judgeResult.summary,
     resolveThreads: judgeResult.resolveThreads,
+    ...(count > 0 && { inPrSuppressedCount: count }),
   };
+}
+
+/**
+ * Flip findings whose fingerprint matches an in-PR suppression to `ignore` and
+ * tag them with `IN_PR_SUPPRESSED_TAG`. Returns the new findings array and the
+ * number of findings that were suppressed on this pass (idempotent: a finding
+ * already tagged with `IN_PR_SUPPRESSED_TAG` is not double-counted).
+ */
+export function applyInPrSuppression(
+  findings: Finding[],
+  suppressions: InPrSuppression[] | undefined,
+): { findings: Finding[]; count: number } {
+  if (!suppressions || suppressions.length === 0) {
+    return { findings, count: 0 };
+  }
+
+  let count = 0;
+  const result = findings.map(finding => {
+    if (finding.tags?.includes(IN_PR_SUPPRESSED_TAG)) return finding;
+    const match = suppressions.find(s => matchesInPrSuppression(finding, s));
+    if (!match) return finding;
+    count++;
+    core.info(`In-PR suppression (${match.reason}): "${finding.title}" at ${finding.file}:${finding.line}`);
+    const next: Finding = { ...finding };
+    if (finding.severity !== 'ignore') {
+      next.originalSeverity = next.originalSeverity ?? finding.severity;
+      next.severity = 'ignore';
+    }
+    next.tags = addTag(next.tags, IN_PR_SUPPRESSED_TAG);
+    return next;
+  });
+
+  return { findings: result, count };
+}
+
+function matchesInPrSuppression(finding: Finding, suppression: InPrSuppression): boolean {
+  const fp = suppression.fingerprint;
+  if (finding.file !== fp.file) return false;
+  if (titleToSlug(finding.title) !== fp.slug) return false;
+  const lo = fp.lineStart - IN_PR_SUPPRESSION_LINE_TOLERANCE;
+  const hi = fp.lineEnd + IN_PR_SUPPRESSION_LINE_TOLERANCE;
+  return finding.line >= lo && finding.line <= hi;
 }
 
 export function mapJudgedToFindings(original: Finding[], judged: JudgedFinding[]): Finding[] {
