@@ -6,6 +6,8 @@ export type FindingReachability = 'reachable' | 'hypothetical' | 'unknown';
 
 export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
 
+export const IN_PR_SUPPRESSED_TAG = 'suppressed-in-pr' as const;
+
 export interface Finding {
   severity: FindingSeverity;
   title: string;
@@ -226,6 +228,7 @@ export interface ReviewStats {
     severityChanges: number;
     mergedDuplicates: number;
     defensiveHardeningCount?: number;
+    inPrSuppressedCount?: number;
     verdictReason?: VerdictReason;
   };
 
