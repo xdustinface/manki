@@ -11,9 +11,9 @@ import {
   RepoMemory,
 } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
-import { InPrSuppression, sanitize, titlesOverlap } from './recap';
+import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverRound, IN_PR_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverRound, IN_PR_SUPPRESSED_TAG, InPrSuppression, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
