@@ -1226,8 +1226,9 @@ describe('runJudgeAgent', () => {
   });
 
   it('non-matching findings in mixed priorRounds array pass through unchanged', async () => {
-    // Finding A matches a prior agree; finding B does not. Both should come back
-    // from the judge — B with its original severity intact.
+    // Prior has authorReply: 'none' — no ratchet suppression fires for any finding.
+    // Both findings pass through unchanged from the judge.
+    // Finding B (no prior entry at all) must return with its original severity intact.
     const judgedResponse = JSON.stringify({
       summary: 'Two findings, one prior match.',
       findings: [
