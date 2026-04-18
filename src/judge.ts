@@ -524,7 +524,7 @@ export function buildJudgeUserMessage(
     const f = findings[i];
     const ctx = codeContextMap.get(findingKey(f)) || '';
 
-    parts.push(`### Finding ${i + 1}: ${f.title}`);
+    parts.push(`### Finding ${i + 1}: ${sanitizeForPromptEmbed(f.title)}`);
     parts.push(`- **Original severity**: ${f.severity}`);
     parts.push(`- **File**: ${f.file}:${f.line}`);
     parts.push(`- **Reviewers**: ${f.reviewers.join(', ')}`);
