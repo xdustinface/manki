@@ -741,12 +741,12 @@ export async function runJudgeAgent(
     if (findings.length > 0) {
       core.warning('Judge returned no findings — returning originals unchanged');
     }
-    const earlySuppress = applyCrossRoundSuppression(findings, priorRounds);
-    const earlyMapped = provenanceMap.length > 0
-      ? earlySuppress.findings.map(f => { const copy = { ...f }; applyOwnProposal(copy, provenanceMap); return copy; })
-      : earlySuppress.findings;
+    const earlyWithProvenance = provenanceMap.length > 0
+      ? findings.map(f => { const copy = { ...f }; applyOwnProposal(copy, provenanceMap); return copy; })
+      : findings;
+    const earlySuppress = applyCrossRoundSuppression(earlyWithProvenance, priorRounds);
     return {
-      findings: earlyMapped,
+      findings: earlySuppress.findings,
       summary: judgeResult.summary,
       resolveThreads: judgeResult.resolveThreads,
       ...(earlySuppress.suppressedCount > 0 && { crossRoundSuppressed: earlySuppress.suppressedCount }),
