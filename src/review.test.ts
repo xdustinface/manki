@@ -2257,6 +2257,64 @@ describe('runReview', () => {
     }
   });
 
+  it('applyEffortDowngrade uses last hint by array position, not by round number', async () => {
+    // When hints are out of order by round number, the guard reads hints[hints.length - 1]
+    // (the last element by position). This test documents that coupling so future changes
+    // to sort hints before reading are caught.
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    // Hints supplied in non-chronological order: round 3 first, round 1 last.
+    // The guard reads hints[hints.length - 1] = round 1 (100% dismiss, sample >= 2).
+    // Round 3 has non-zero keeps but is at index 0 so is ignored by the guard.
+    const hintsOutOfOrder = [
+      {
+        round: 3,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 1 },
+        ],
+      },
+      {
+        round: 1,
+        specialistOutcomes: [
+          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        ],
+      },
+    ];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        hintsOutOfOrder,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      // Guard fires on the last array element (round 1, 100% dismiss) even though
+      // the numerically most-recent round (3) has non-zero keeps.
+      expect(secPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it('derives planner hints from priorRounds and forwards them to the planner prompt', async () => {
     const plannerResponse = JSON.stringify({
       teamSize: 3,
