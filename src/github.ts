@@ -739,8 +739,11 @@ function formatFindingComment(finding: Finding): string {
     comment += `\n<sub>[defensive hardening — capped from ${finding.originalSeverity}]</sub>`;
   }
   if (finding.tags?.includes(OWN_PROPOSAL_TAG)) {
-    const cappedFrom = finding.originalSeverity ?? finding.severity;
-    comment += `\n<sub>[own-proposal followup — capped from ${cappedFrom}]</sub>`;
+    if (finding.originalSeverity && finding.originalSeverity !== finding.severity) {
+      comment += `\n<sub>[own-proposal followup — capped from ${finding.originalSeverity}]</sub>`;
+    } else {
+      comment += `\n<sub>[own-proposal followup]</sub>`;
+    }
   }
   comment += `\n\n${safeDescription}`;
 

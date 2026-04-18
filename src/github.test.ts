@@ -198,14 +198,27 @@ describe('formatFindingComment', () => {
     expect(parsed.originalSeverity).toBe('required');
   });
 
-  it('renders own-proposal-followup tag with current severity when originalSeverity is absent', () => {
+  it('renders own-proposal-followup without "capped from" when originalSeverity is absent', () => {
     const finding: Finding = {
       ...baseFinding,
       severity: 'nit',
       tags: ['own-proposal-followup'],
     };
     const comment = formatFindingComment(finding);
-    expect(comment).toContain('[own-proposal followup — capped from nit]');
+    expect(comment).toContain('[own-proposal followup]');
+    expect(comment).not.toContain('capped from');
+  });
+
+  it('renders own-proposal-followup without "capped from" when originalSeverity equals severity', () => {
+    const finding: Finding = {
+      ...baseFinding,
+      severity: 'nit',
+      originalSeverity: 'nit',
+      tags: ['own-proposal-followup'],
+    };
+    const comment = formatFindingComment(finding);
+    expect(comment).toContain('[own-proposal followup]');
+    expect(comment).not.toContain('capped from');
   });
 
   it('renders both defensive-hardening and own-proposal-followup tags when both are present', () => {
