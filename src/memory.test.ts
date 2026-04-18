@@ -1212,6 +1212,7 @@ describe('appendHandoverRound', () => {
     );
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
     expect(reloaded!.rounds[0].findings[0].threadId).toBe('t1');
+    expect(reloaded!.rounds[0].findings[0].authorReply).toBe('agree');
   });
 });
 
