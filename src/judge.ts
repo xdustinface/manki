@@ -723,9 +723,9 @@ export function applyCrossRoundSuppression(
 
     const slug = titleToSlug(current.title);
 
-    // Contradiction has a more specific predicate (line proximity + reversal word) so it
-    // runs first. This ensures a suggestion that contradicts prior guidance gets a visible
-    // demotion note rather than being silently suppressed by ratchet.
+    // Contradiction is checked before ratchet for `suggestion` findings only.
+    // `required` and `nit` skip this branch: required is protected from any
+    // silent demotion (prompt-injection guard); nit falls through to ratchet.
     const contradictionMatch = acceptedPriors.find(({ finding: prior }) =>
       prior.fingerprint.file === current.file
       && prior.fingerprint.slug === slug
