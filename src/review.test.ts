@@ -2357,10 +2357,13 @@ describe('runReview', () => {
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
     // Exactly 2 dismissed, 0 kept → 100% dismiss rate at EFFORT_DOWNGRADE_MIN_SAMPLE boundary.
-    const hints = [{
+    const priorRounds: HandoverRound[] = [{
       round: 1,
-      specialistOutcomes: [
-        { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 2 },
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'suggestion', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
       ],
     }];
 
@@ -2368,8 +2371,8 @@ describe('runReview', () => {
     try {
       const result = await runReview(
         clients, config, diff, 'raw diff', 'repo context',
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        hints,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRounds,
       );
       const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
       expect(secPick?.effort).toBe('low');
@@ -2400,17 +2403,19 @@ describe('runReview', () => {
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
     // Only 1 dismissed — below the minimum sample threshold, guard must not fire.
-    const hints = [{
+    const priorRounds: HandoverRound[] = [{
       round: 1,
-      specialistOutcomes: [
-        { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 1 },
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
       ],
     }];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      hints,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
     );
     const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
     expect(secPick?.effort).toBe('high');
@@ -2440,20 +2445,28 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
-    // Hints supplied in non-chronological order: round 3 first, round 1 last.
-    // The guard reads hints[hints.length - 1] = round 1 (100% dismiss, sample >= 2).
-    // Round 3 has non-zero keeps but is at index 0 so is ignored by the guard.
-    const hintsOutOfOrder = [
+    // priorRounds in non-chronological order: round 3 first in the array, round 1 last.
+    // buildPlannerHints preserves array order, so hints[hints.length - 1] = round 1 (100%
+    // dismiss, sample >= 2). Round 3 has non-zero keeps but is at index 0 so the guard ignores it.
+    const priorRoundsOutOfOrder: HandoverRound[] = [
       {
         round: 3,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 1 },
+        commitSha: 'abc3',
+        timestamp: 't3',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'suggestion', title: 't2', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'suggestion', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        commitSha: 'abc1',
+        timestamp: 't1',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'suggestion', title: 't4', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'suggestion', title: 't5', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'suggestion', title: 't6', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
     ];
@@ -2462,8 +2475,8 @@ describe('runReview', () => {
     try {
       const result = await runReview(
         clients, config, diff, 'raw diff', 'repo context',
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        hintsOutOfOrder,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRoundsOutOfOrder,
       );
       const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
       // Guard fires on the last array element (round 1, 100% dismiss) even though
