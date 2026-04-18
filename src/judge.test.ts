@@ -1297,7 +1297,7 @@ describe('runJudgeAgent', () => {
         fingerprint: { file: 'src/handler.ts', lineStart: 20, lineEnd: 20, slug: 'Null-check-missing' },
         severity: 'suggestion',
         title: 'Null check missing',
-        authorReply: 'agree',
+        authorReply: 'none',
         threadId: 'PRRT_prior',
       }],
     }];
@@ -1316,7 +1316,7 @@ describe('runJudgeAgent', () => {
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
     const [, userMessage] = mockSendMessage.mock.calls[0];
     expect(userMessage).toContain('Prior Round Findings');
-    expect(userMessage).toContain('"authorReply": "agree"');
+    expect(userMessage).toContain('"authorReply": "none"');
     expect(userMessage).toContain('"slug": "Null-check-missing"');
 
     expect(result.findings).toHaveLength(1);
