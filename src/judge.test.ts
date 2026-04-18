@@ -1783,6 +1783,19 @@ describe('computeProvenanceMap', () => {
     expect(entries[0].originatingTitle).toBe('Clamp future time');
   });
 
+  it('dedup keeps highest originatingRound when two rounds match the same region', () => {
+    const rounds = [
+      makeRound(1, [makeHandoverFinding({ suggestedFix: longFix, title: 'Round-1 fix' })]),
+      makeRound(2, [makeHandoverFinding({ suggestedFix: longFix, title: 'Round-2 fix' })]),
+    ];
+    const diff = buildDiff('src/a.ts', 7, [longFix]);
+
+    const entries = computeProvenanceMap(rounds, diff);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].originatingRound).toBe(2);
+    expect(entries[0].originatingTitle).toBe('Round-2 fix');
+  });
+
   it('does not match text that only appears in context or removed lines', () => {
     const contextDiff = `diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10,3 +10,1 @@\n ${longFix}\n-${longFix}\n+unrelated;\n`;
     const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: longFix })])];
