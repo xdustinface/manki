@@ -1245,7 +1245,7 @@ describe('runJudgeAgent', () => {
         fingerprint: { file: 'src/index.ts', lineStart: 10, lineEnd: 10, slug: 'Null-check' },
         severity: 'suggestion',
         title: 'Null check',
-        authorReply: 'agree',
+        authorReply: 'none',
       }],
     }];
 
@@ -1303,7 +1303,7 @@ describe('runJudgeAgent', () => {
     }];
 
     const input: JudgeInput = {
-      findings: [makeFinding({ title: 'Null check missing', file: 'src/handler.ts', line: 20 })],
+      findings: [makeFinding({ title: 'Null check missing', line: 20 })],
       diff: makeDiff(),
       rawDiff: '',
       repoContext: '',
