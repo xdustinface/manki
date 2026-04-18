@@ -1925,12 +1925,18 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
-    const hints = [
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
-          { specialist: 'Correctness & Logic', findingsKept: 1, findingsDismissed: 2 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'required', title: 't4', authorReply: 'none', specialist: 'Correctness & Logic' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'required', title: 't5', authorReply: 'agree', specialist: 'Correctness & Logic' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'required', title: 't6', authorReply: 'agree', specialist: 'Correctness & Logic' },
         ],
       },
     ];
@@ -1939,8 +1945,8 @@ describe('runReview', () => {
     try {
       const result = await runReview(
         clients, config, diff, 'raw diff', 'repo context',
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        hints,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRounds,
       );
       expect(result.plannerResult?.agents).toBeDefined();
       const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
@@ -1986,19 +1992,21 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
-    const hints = [
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 1 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
     ];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      hints,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
     );
     const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
     expect(secPick?.effort).toBe('high');
@@ -2026,25 +2034,34 @@ describe('runReview', () => {
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
     // Round 1: 100% dismiss rate (would trigger downgrade). Round 2 (most recent): 50% keep rate (guard must NOT fire).
-    const hints = [
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
       {
         round: 2,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 2 },
+        commitSha: 'sha2',
+        timestamp: '2024-01-02T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'required', title: 't4', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'required', title: 't5', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'required', title: 't6', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 7, lineEnd: 7, slug: 's7' }, severity: 'required', title: 't7', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
     ];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      hints,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
     );
     const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
     // Most recent round has kept findings — guard must not fire even though round 1 had 100% dismissals.
@@ -2073,17 +2090,25 @@ describe('runReview', () => {
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
     // Round 1: non-zero keeps (guard would not fire). Round 2 (most recent): 100% dismissals (guard SHOULD fire).
-    const hints = [
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 2, findingsDismissed: 1 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
       {
         round: 2,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
+        commitSha: 'sha2',
+        timestamp: '2024-01-02T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'required', title: 't4', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'required', title: 't5', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'required', title: 't6', authorReply: 'agree', specialist: 'Security & Safety' },
         ],
       },
     ];
@@ -2092,8 +2117,8 @@ describe('runReview', () => {
     try {
       const result = await runReview(
         clients, config, diff, 'raw diff', 'repo context',
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        hints,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRounds,
       );
       const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
       // Most recent round dismissed all findings — guard fires based on last hint.
@@ -2128,14 +2153,23 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
-    // Single round hint with three specialists: two should downgrade, one should not.
-    const hints = [
+    // Single round with three specialists: two should downgrade, one should not.
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 3 },
-          { specialist: 'Correctness & Logic', findingsKept: 1, findingsDismissed: 2 },
-          { specialist: 'Architecture & Design', findingsKept: 0, findingsDismissed: 4 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'required', title: 't4', authorReply: 'none', specialist: 'Correctness & Logic' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'required', title: 't5', authorReply: 'agree', specialist: 'Correctness & Logic' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'required', title: 't6', authorReply: 'agree', specialist: 'Correctness & Logic' },
+          { fingerprint: { file: 'a.ts', lineStart: 7, lineEnd: 7, slug: 's7' }, severity: 'required', title: 't7', authorReply: 'agree', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 8, lineEnd: 8, slug: 's8' }, severity: 'required', title: 't8', authorReply: 'agree', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 9, lineEnd: 9, slug: 's9' }, severity: 'required', title: 't9', authorReply: 'agree', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 10, lineEnd: 10, slug: 's10' }, severity: 'required', title: 't10', authorReply: 'agree', specialist: 'Architecture & Design' },
         ],
       },
     ];
@@ -2144,8 +2178,8 @@ describe('runReview', () => {
     try {
       const result = await runReview(
         clients, config, diff, 'raw diff', 'repo context',
-        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-        hints,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRounds,
       );
       const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
       const corPick = result.plannerResult!.agents!.find(a => a.name === 'Correctness & Logic');
@@ -2161,7 +2195,7 @@ describe('runReview', () => {
     }
   });
 
-  it('forwards priorRoundHints to the planner prompt', async () => {
+  it('derives planner hints from priorRounds and forwards them to the planner prompt', async () => {
     const plannerResponse = JSON.stringify({
       teamSize: 3,
       reviewerEffort: 'medium',
@@ -2182,24 +2216,57 @@ describe('runReview', () => {
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
 
-    const hints = [
+    const priorRounds: HandoverRound[] = [
       {
         round: 1,
-        specialistOutcomes: [
-          { specialist: 'Architecture & Design', findingsKept: 3, findingsDismissed: 2 },
+        commitSha: 'sha1',
+        timestamp: '2024-01-01T00:00:00Z',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'required', title: 't1', authorReply: 'none', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'required', title: 't2', authorReply: 'none', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'required', title: 't3', authorReply: 'none', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'required', title: 't4', authorReply: 'agree', specialist: 'Architecture & Design' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'required', title: 't5', authorReply: 'agree', specialist: 'Architecture & Design' },
         ],
       },
     ];
 
     await runReview(
       clients, config, diff, 'raw diff', 'repo context',
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-      hints,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
     );
 
     const systemPrompt = plannerSpy.mock.calls[0][0] as string;
     expect(systemPrompt).toContain('Prior Round Outcomes');
     expect(systemPrompt).toContain('"Architecture & Design" — 3 kept, 2 dismissed');
+  });
+
+  it('passes empty hints to planner when priorRounds is undefined', async () => {
+    const plannerResponse = JSON.stringify({
+      teamSize: 3,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+    });
+    const plannerSpy = jest.fn().mockResolvedValue({ content: plannerResponse });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn(),
+      } as unknown as import('./claude').ClaudeClient,
+      planner: { sendMessage: plannerSpy } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+
+    await runReview(clients, config, diff, 'raw diff', 'repo context');
+
+    const systemPrompt = plannerSpy.mock.calls[0][0] as string;
+    expect(systemPrompt).not.toContain('Prior Round Outcomes');
   });
 
   it('falls back to selectTeam when planner returns error', async () => {

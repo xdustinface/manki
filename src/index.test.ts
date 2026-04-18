@@ -1940,15 +1940,6 @@ describe('runFullReview orchestration', () => {
 
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
     expect(runReviewCall[13]).toEqual(priorRounds);
-    // priorRoundHints (index 14) should be derived from the loaded handover rounds.
-    expect(runReviewCall[14]).toEqual([
-      {
-        round: 1,
-        specialistOutcomes: [
-          { specialist: 'Security & Safety', findingsKept: 0, findingsDismissed: 2 },
-        ],
-      },
-    ]);
 
     // Write path: appendHandoverRound must be called once with the loaded handover
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
@@ -1975,8 +1966,6 @@ describe('runFullReview orchestration', () => {
     const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
     // priorRounds param (index 13) should be undefined when memory is disabled
     expect(runReviewCall[13]).toBeUndefined();
-    // priorRoundHints (index 14) falls back to [] when no handover is loaded
-    expect(runReviewCall[14]).toEqual([]);
   });
 
   it('applies memory escalations when patterns exist', async () => {

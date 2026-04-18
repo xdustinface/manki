@@ -541,8 +541,8 @@ export async function runReview(
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>,
   previousFindings?: PreviousFinding[],
   priorRounds?: HandoverRound[],
-  priorRoundHints?: PlannerRoundHint[],
 ): Promise<ReviewResult> {
+  const priorRoundHints = buildPlannerHints(priorRounds);
   let team: TeamRoster;
   let plannerResult: PlannerResult | null = null;
 
@@ -554,7 +554,7 @@ export async function runReview(
     plannerResult = await runPlanner(clients.planner, diff, prContext, config.reviewers, priorRoundHints);
     const plannerDurationMs = Date.now() - plannerStart;
     if (plannerResult) {
-      if (plannerResult.agents && priorRoundHints && priorRoundHints.length > 0) {
+      if (plannerResult.agents && priorRoundHints.length > 0) {
         applyEffortDowngrade(plannerResult.agents, priorRoundHints);
       }
       team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize, plannerResult.agents);
