@@ -188,6 +188,36 @@ export function sanitizeMemoryField(value: string): string {
   return sanitized;
 }
 
+const MAX_SUGGESTED_FIX_LENGTH = 2000;
+
+/**
+ * Sanitize a `suggestedFix` value before persisting it to handover storage.
+ * Caps length and collapses excessive newline runs. Content is preserved
+ * faithfully so provenance matching against the raw diff continues to work.
+ * Prompt-injection concerns are handled at the embedding boundary instead.
+ */
+export function sanitizeSuggestedFix(value: string): string {
+  let sanitized = value.trim();
+  // Collapse runs of more than two consecutive newlines.
+  sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
+  if (sanitized.length > MAX_SUGGESTED_FIX_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_SUGGESTED_FIX_LENGTH) + '...';
+  }
+  return sanitized;
+}
+
+/**
+ * Sanitize text before embedding it into a prompt context.
+ * Replaces angle brackets with fullwidth equivalents to prevent XML-style tag
+ * injection, and strips backticks to avoid breaking fenced code block delimiters.
+ */
+export function sanitizeForPromptEmbed(text: string): string {
+  return text
+    .replace(/`/g, "'")
+    .replace(/</g, '\uFF1C')
+    .replace(/>/g, '\uFF1E');
+}
+
 /**
  * Build a context string from memory to inject into reviewer prompts.
  */
@@ -652,6 +682,7 @@ export async function appendHandoverRound(
     };
     const specialist = f.reviewers?.[0];
     if (specialist) entry.specialist = specialist;
+    if (f.suggestedFix) entry.suggestedFix = sanitizeSuggestedFix(f.suggestedFix);
     return entry;
   });
 

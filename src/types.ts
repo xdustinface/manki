@@ -8,6 +8,21 @@ export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
 export const RATCHET_SUPPRESSED_TAG = 'suppressed-by-ratchet' as const;
 export const CONTRADICTION_TAG = 'contradicts-prior-round' as const;
 
+export const OWN_PROPOSAL_TAG = 'own-proposal-followup' as const;
+
+/**
+ * A region of the current diff that implements code manki itself suggested in a
+ * prior review round. Produced by matching prior-round `suggestedFix` text
+ * against the raw diff's added lines.
+ */
+export interface ProvenanceEntry {
+  file: string;
+  lineStart: number;
+  lineEnd: number;
+  originatingRound: number;
+  originatingTitle: string;
+}
+
 export interface Finding {
   severity: FindingSeverity;
   title: string;
@@ -48,6 +63,12 @@ export interface HandoverFinding {
   threadId?: string;
   /** Originating specialist name (from `Finding.reviewers[0]`). Absent in handover files written before this field was added. */
   specialist?: string;
+  /**
+   * Text of the reviewer's proposed fix at the time the finding was raised.
+   * Stored so later rounds can detect code that implements a prior-round
+   * proposal (own-proposal caveat rule).
+   */
+  suggestedFix?: string;
 }
 
 /** A single completed review round recorded in the per-PR handover. */
