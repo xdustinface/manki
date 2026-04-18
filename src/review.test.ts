@@ -1677,6 +1677,46 @@ describe('runReview', () => {
     expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
   });
 
+  it('returns COMMENT when priorRounds agreed suggestion matches current finding (verdict ceiling)', async () => {
+    const findingTitle = 'Missing null check';
+    const findingFile = 'src/handler.ts';
+    const findingLine = 10;
+
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // Judge returns the suggestion (it has no visibility into priorRounds for suppression)
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [
+        { severity: 'suggestion', title: findingTitle, file: findingFile, line: findingLine, description: 'desc', reviewers: ['Security & Safety'] },
+      ],
+      summary: 'One prior-dismissed suggestion surviving judge.',
+    });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'sha1',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: findingFile, lineStart: findingLine, lineEnd: findingLine, slug: titleToSlug(findingTitle) },
+        severity: 'suggestion',
+        title: findingTitle,
+        authorReply: 'agree',
+      }],
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.verdictReason).toBe('only_dismissed_or_nit');
+    expect(result.reviewComplete).toBe(true);
+  });
+
   it('uses planner result to set team size and effort when planner client is provided', async () => {
     const plannerResponse = JSON.stringify({
       teamSize: 5,
