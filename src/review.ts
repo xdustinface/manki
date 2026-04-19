@@ -981,6 +981,7 @@ export async function runReview(
       openThreads,
       priorRounds,
       effort: judgeEffort as 'low' | 'medium' | 'high',
+      provenanceMap,
     };
     const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
     judgeSummary = judgeResult.summary;

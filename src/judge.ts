@@ -216,6 +216,7 @@ export interface JudgeInput {
   openThreads?: Array<{ threadId: string; title: string; file: string; line: number; severity: string }>;
   priorRounds?: HandoverRound[];
   effort?: 'low' | 'medium' | 'high';
+  provenanceMap?: ProvenanceEntry[];
 }
 
 export interface JudgedFinding {
@@ -715,7 +716,7 @@ export async function runJudgeAgent(
   crossRoundDemoted?: number;
 }> {
   const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds } = input;
-  const provenanceMap = rawDiff ? computeProvenanceMap(priorRounds, rawDiff) : [];
+  const provenanceMap = input.provenanceMap ?? (rawDiff ? computeProvenanceMap(priorRounds, rawDiff) : []);
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
 
