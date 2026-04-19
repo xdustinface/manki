@@ -673,7 +673,7 @@ describe('parseJudgeResponse', () => {
   });
 
   it('parses JSON wrapped in markdown code fences', () => {
-    const json = '```json\n[{"title":"Bug","severity":"required","reasoning":"Real bug.","confidence":"high"}]\n```';
+    const json = '```json\n[{"title":"Bug","severity":"blocker","reasoning":"Real bug.","confidence":"high"}]\n```';
 
     const result = parseJudgeResponse(json);
     expect(result.findings).toHaveLength(1);
@@ -1380,7 +1380,7 @@ describe('runJudgeAgent', () => {
     expect(result.findings[0].judgeNotes).toContain('Own-proposal follow-up: implements round 1 finding "Clamp value to safe integer"');
   });
 
-  it('does not demote a required finding when priorRounds contain matching suggestedFix in rawDiff', async () => {
+  it('does not demote a blocker finding when priorRounds contain matching suggestedFix in rawDiff', async () => {
     const suggestedFix = 'const clamped = Math.min(value, Number.MAX_SAFE_INTEGER);';
     const diffFile = 'src/utils.ts';
     const diffStartLine = 10;
@@ -1396,7 +1396,7 @@ describe('runJudgeAgent', () => {
         findings: [
           {
             fingerprint: { file: diffFile, lineStart: 10, lineEnd: 10, slug: 'clamp-value' },
-            severity: 'required',
+            severity: 'blocker',
             title: 'Clamp value to safe integer',
             authorReply: 'none',
             suggestedFix,
@@ -1408,13 +1408,13 @@ describe('runJudgeAgent', () => {
     const judgedResponse = JSON.stringify({
       summary: 'One finding.',
       findings: [
-        { title: 'Clamp value to safe integer', severity: 'required', reasoning: 'Real bug.', confidence: 'high' },
+        { title: 'Clamp value to safe integer', severity: 'blocker', reasoning: 'Real bug.', confidence: 'high' },
       ],
     });
     mockSendMessage.mockResolvedValue({ content: judgedResponse });
 
     const parsedDiff = makeDiff([makeDiffFile({ path: diffFile })]);
-    const finding = makeFinding({ title: 'Clamp value to safe integer', file: diffFile, line: diffStartLine, severity: 'required' });
+    const finding = makeFinding({ title: 'Clamp value to safe integer', file: diffFile, line: diffStartLine, severity: 'blocker' });
 
     const input: JudgeInput = {
       findings: [finding],
@@ -1427,7 +1427,7 @@ describe('runJudgeAgent', () => {
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].severity).toBe('required');
+    expect(result.findings[0].severity).toBe('blocker');
     expect(result.findings[0].originalSeverity).toBeUndefined();
     expect(result.findings[0].tags ?? []).not.toContain('own-proposal-followup');
     expect(result.findings[0].judgeNotes ?? '').not.toContain('Own-proposal follow-up');
