@@ -24,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent } from './judge';
 import { applySuppressions } from './memory';
 
@@ -889,6 +889,100 @@ describe('buildReviewerUserMessage with linked issues', () => {
   });
 });
 
+describe('buildReviewerUserMessage with provenance map', () => {
+  const makeEntry = (overrides: Partial<ProvenanceEntry> = {}): ProvenanceEntry => ({
+    file: 'src/foo.ts',
+    lineStart: 2,
+    lineEnd: 3,
+    originatingRound: 1,
+    originatingTitle: 'Prior finding',
+    ...overrides,
+  });
+
+  it('annotates matched file regions with a factual round note', () => {
+    const fileContents = new Map([
+      ['src/foo.ts', 'const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;'],
+    ]);
+    const provenance = [makeEntry({ lineStart: 2, lineEnd: 3, originatingRound: 2 })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    expect(message).toContain('// [manki: added in round 2]');
+    const annotationIdx = message.indexOf('// [manki: added in round 2]');
+    const bIdx = message.indexOf('const b = 2;');
+    expect(annotationIdx).toBeLessThan(bIdx);
+    expect(message).toContain('const a = 1;');
+    expect(message).toContain('const d = 4;');
+  });
+
+  it('does not inject finding text, severity, or resolution', () => {
+    const fileContents = new Map([['src/foo.ts', 'line1\nline2\nline3']]);
+    const provenance = [makeEntry({
+      lineStart: 2,
+      lineEnd: 2,
+      originatingRound: 3,
+      originatingTitle: 'Missing null check could crash the app',
+    })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    expect(message).toContain('// [manki: added in round 3]');
+    expect(message).not.toContain('Missing null check');
+    expect(message).not.toContain('required');
+    expect(message).not.toContain('suggestion');
+    expect(message).not.toContain('agree');
+    expect(message).not.toContain('disagree');
+  });
+
+  it('skips annotation when provenance map is empty', () => {
+    const fileContents = new Map([['src/foo.ts', 'const a = 1;\nconst b = 2;']]);
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, []);
+    expect(message).not.toContain('// [manki:');
+    expect(message).not.toContain('added by manki');
+  });
+
+  it('skips annotation when provenance map is undefined', () => {
+    const fileContents = new Map([['src/foo.ts', 'const a = 1;\nconst b = 2;']]);
+    const message = buildReviewerUserMessage('diff', '', fileContents);
+    expect(message).not.toContain('// [manki:');
+  });
+
+  it('only annotates the matching file', () => {
+    const fileContents = new Map([
+      ['src/foo.ts', 'foo1\nfoo2\nfoo3'],
+      ['src/bar.ts', 'bar1\nbar2\nbar3'],
+    ]);
+    const provenance = [makeEntry({ file: 'src/foo.ts', lineStart: 2, lineEnd: 2, originatingRound: 1 })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    const fooSection = message.slice(message.indexOf('### File: src/foo.ts'), message.indexOf('### File: src/bar.ts'));
+    const barSection = message.slice(message.indexOf('### File: src/bar.ts'));
+    expect(fooSection).toContain('// [manki: added in round 1]');
+    expect(barSection).not.toContain('// [manki:');
+  });
+
+  it('handles multiple annotations in one file in original order', () => {
+    const fileContents = new Map([
+      ['src/foo.ts', 'a\nb\nc\nd\ne\nf'],
+    ]);
+    const provenance = [
+      makeEntry({ lineStart: 2, lineEnd: 2, originatingRound: 1 }),
+      makeEntry({ lineStart: 5, lineEnd: 5, originatingRound: 2 }),
+    ];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    const firstIdx = message.indexOf('// [manki: added in round 1]');
+    const secondIdx = message.indexOf('// [manki: added in round 2]');
+    const lineBIdx = message.indexOf('\nb\n');
+    const lineEIdx = message.indexOf('\ne\n');
+    expect(firstIdx).toBeLessThan(lineBIdx);
+    expect(lineBIdx).toBeLessThan(secondIdx);
+    expect(secondIdx).toBeLessThan(lineEIdx);
+  });
+
+  it('includes a short explanation of the annotation when provenance is present', () => {
+    const fileContents = new Map([['src/foo.ts', 'a\nb']]);
+    const provenance = [makeEntry({ lineStart: 2, lineEnd: 2 })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    expect(message).toMatch(/\[manki: added in round N\]/);
+    expect(message).toContain('factual note');
+  });
+});
+
 describe('shuffleDiffFiles', () => {
   const makeFiles = (count: number): DiffFile[] =>
     Array.from({ length: count }, (_, i) => ({
@@ -1097,6 +1191,7 @@ describe('selectTeam maintainability scoring', () => {
 jest.mock('./judge', () => ({
   runJudgeAgent: jest.fn(),
   JudgeInput: {},
+  computeProvenanceMap: jest.fn().mockReturnValue([]),
 }));
 
 jest.mock('./memory', () => ({
