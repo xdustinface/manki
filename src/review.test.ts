@@ -984,6 +984,21 @@ describe('buildReviewerUserMessage with provenance map', () => {
     expect(message).toContain('[manki: added in round N]');
     expect(message).toContain('factual note');
   });
+
+  it('skips annotation when lineStart is out of bounds', () => {
+    const fileContents = new Map([['src/foo.ts', 'line1\nline2']]);
+    const provenance = [makeEntry({ lineStart: 10, lineEnd: 10, originatingRound: 1 })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    expect(message).not.toContain('[manki: added in round 1]');
+  });
+
+  it('uses # comment prefix for Python files', () => {
+    const fileContents = new Map([['src/script.py', 'x = 1\ny = 2\nz = 3']]);
+    const provenance = [makeEntry({ file: 'src/script.py', lineStart: 2, lineEnd: 2, originatingRound: 1 })];
+    const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
+    expect(message).toContain('# [manki: added in round 1]');
+    expect(message).not.toContain('// [manki: added in round 1]');
+  });
 });
 
 describe('shuffleDiffFiles', () => {
@@ -2847,6 +2862,9 @@ describe('runReview', () => {
       const userMessage = call[1] as string;
       expect(userMessage).toContain('// [manki: added in round 2]');
     }
+
+    // computeProvenanceMap must be called exactly once per review cycle
+    expect(mockedComputeProvenanceMap).toHaveBeenCalledTimes(1);
 
     // Judge should receive the same computed map through JudgeInput, not recompute it
     expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
