@@ -976,9 +976,12 @@ describe('buildReviewerUserMessage with provenance map', () => {
 
   it('includes a short explanation of the annotation when provenance is present', () => {
     const fileContents = new Map([['src/foo.ts', 'a\nb']]);
-    const provenance = [makeEntry({ lineStart: 2, lineEnd: 2 })];
+    const provenance = [makeEntry({ lineStart: 2, lineEnd: 2, originatingRound: 1 })];
     const message = buildReviewerUserMessage('diff', '', fileContents, undefined, undefined, undefined, provenance);
-    expect(message).toMatch(/\[manki: added in round N\]/);
+    // Annotation uses the numeric round
+    expect(message).toContain('// [manki: added in round 1]');
+    // Explanation text uses the literal `N` placeholder and the `factual note` phrase
+    expect(message).toContain('[manki: added in round N]');
     expect(message).toContain('factual note');
   });
 });
