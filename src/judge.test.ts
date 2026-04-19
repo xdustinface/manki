@@ -1430,6 +1430,7 @@ describe('runJudgeAgent', () => {
     expect(result.findings[0].severity).toBe('required');
     expect(result.findings[0].originalSeverity).toBeUndefined();
     expect(result.findings[0].tags ?? []).not.toContain('own-proposal-followup');
+    expect(result.findings[0].judgeNotes ?? '').not.toContain('Own-proposal follow-up');
   });
 
   it('does not throw and applies no provenance demotions when rawDiff is undefined', async () => {
