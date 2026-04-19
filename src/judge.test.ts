@@ -1380,6 +1380,59 @@ describe('runJudgeAgent', () => {
     expect(result.findings[0].judgeNotes).toContain('Own-proposal follow-up: implements round 1 finding "Clamp value to safe integer"');
   });
 
+  it('does not demote a required finding when priorRounds contain matching suggestedFix in rawDiff', async () => {
+    const suggestedFix = 'const clamped = Math.min(value, Number.MAX_SAFE_INTEGER);';
+    const diffFile = 'src/utils.ts';
+    const diffStartLine = 10;
+    const diffHeader = `diff --git a/${diffFile} b/${diffFile}\n--- a/${diffFile}\n+++ b/${diffFile}`;
+    const hunkHeader = `@@ -${diffStartLine},0 +${diffStartLine},1 @@`;
+    const rawDiff = `${diffHeader}\n${hunkHeader}\n+${suggestedFix}\n`;
+
+    const priorRounds: HandoverRound[] = [
+      {
+        round: 1,
+        commitSha: 'abc123',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [
+          {
+            fingerprint: { file: diffFile, lineStart: 10, lineEnd: 10, slug: 'clamp-value' },
+            severity: 'required',
+            title: 'Clamp value to safe integer',
+            authorReply: 'none',
+            suggestedFix,
+          },
+        ],
+      },
+    ];
+
+    const judgedResponse = JSON.stringify({
+      summary: 'One finding.',
+      findings: [
+        { title: 'Clamp value to safe integer', severity: 'required', reasoning: 'Real bug.', confidence: 'high' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const parsedDiff = makeDiff([makeDiffFile({ path: diffFile })]);
+    const finding = makeFinding({ title: 'Clamp value to safe integer', file: diffFile, line: diffStartLine, severity: 'required' });
+
+    const input: JudgeInput = {
+      findings: [finding],
+      diff: parsedDiff,
+      rawDiff,
+      repoContext: '',
+      agentCount: 3,
+      priorRounds,
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].severity).toBe('required');
+    expect(result.findings[0].originalSeverity).toBeUndefined();
+    expect(result.findings[0].tags ?? []).not.toContain('own-proposal-followup');
+    expect(result.findings[0].judgeNotes ?? '').not.toContain('Own-proposal follow-up');
+  });
+
   it('does not throw and applies no provenance demotions when rawDiff is undefined', async () => {
     const judgedResponse = JSON.stringify({
       summary: 'One suggestion.',
