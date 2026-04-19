@@ -372,6 +372,96 @@ describe('determineVerdict', () => {
     expect(determineVerdict(findings, priors).verdict).toBe('REQUEST_CHANGES');
   });
 
+  it('matches when finding.line equals lineStart + 5 (exact tolerance boundary)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const atBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 15, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v1, verdictReason: vr1 } = determineVerdict(atBoundary, [prior]);
+    expect(v1).toBe('COMMENT');
+    expect(vr1).toBe('only_dismissed_or_nit');
+  });
+
+  it('does not match when finding.line equals lineStart + 6 (one outside tolerance)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const outsideBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 16, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v4, verdictReason: vr4 } = determineVerdict(outsideBoundary, [prior]);
+    expect(v4).toBe('REQUEST_CHANGES');
+    expect(vr4).toBe('novel_suggestion');
+  });
+
+  it('matches when finding.line equals lineEnd + 5 (exact tolerance on lineEnd endpoint)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 20, slug: 'Boundary2' },
+      severity: 'suggestion',
+      title: 'Boundary2',
+      authorReply: 'agree',
+    };
+    const atEndBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary2', file: 'f.ts', line: 25, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v2, verdictReason: vr2 } = determineVerdict(atEndBoundary, [prior]);
+    expect(v2).toBe('COMMENT');
+    expect(vr2).toBe('only_dismissed_or_nit');
+  });
+
+  it('does not match when finding.line equals lineEnd + 6 (one outside lineEnd tolerance)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 20, slug: 'Boundary2' },
+      severity: 'suggestion',
+      title: 'Boundary2',
+      authorReply: 'agree',
+    };
+    const outsideEndBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary2', file: 'f.ts', line: 26, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v5, verdictReason: vr5 } = determineVerdict(outsideEndBoundary, [prior]);
+    expect(v5).toBe('REQUEST_CHANGES');
+    expect(vr5).toBe('novel_suggestion');
+  });
+
+  it('matches when finding.line equals lineStart - 5 (exact tolerance below lineStart)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const atLowerBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 5, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v3, verdictReason: vr3 } = determineVerdict(atLowerBoundary, [prior]);
+    expect(v3).toBe('COMMENT');
+    expect(vr3).toBe('only_dismissed_or_nit');
+  });
+
+  it('does not match when finding.line equals lineStart - 6 (one outside tolerance below lineStart)', () => {
+    const prior: HandoverFinding = {
+      fingerprint: { file: 'f.ts', lineStart: 10, lineEnd: 10, slug: 'Boundary' },
+      severity: 'suggestion',
+      title: 'Boundary',
+      authorReply: 'agree',
+    };
+    const outsideLowerBoundary: Finding[] = [
+      { severity: 'suggestion', title: 'Boundary', file: 'f.ts', line: 4, description: 'd', reviewers: ['r'] },
+    ];
+    const { verdict: v6, verdictReason: vr6 } = determineVerdict(outsideLowerBoundary, [prior]);
+    expect(v6).toBe('REQUEST_CHANGES');
+    expect(vr6).toBe('novel_suggestion');
+  });
+
   it('returns COMMENT for a PR #106 R7 replay (4 suggestions all dismissed)', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'F1', file: 'src/a.ts', line: 10, description: 'd', reviewers: ['r'] },
@@ -1677,6 +1767,46 @@ describe('runReview', () => {
     expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
   });
 
+  it('returns COMMENT when priorRounds agreed suggestion matches current finding (verdict ceiling)', async () => {
+    const findingTitle = 'Missing null check';
+    const findingFile = 'src/handler.ts';
+    const findingLine = 10;
+
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // Judge returns the suggestion (it has no visibility into priorRounds for suppression)
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [
+        { severity: 'suggestion', title: findingTitle, file: findingFile, line: findingLine, description: 'desc', reviewers: ['Security & Safety'] },
+      ],
+      summary: 'One prior-dismissed suggestion surviving judge.',
+    });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'sha1',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: findingFile, lineStart: findingLine, lineEnd: findingLine, slug: titleToSlug(findingTitle) },
+        severity: 'suggestion',
+        title: findingTitle,
+        authorReply: 'agree',
+      }],
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('COMMENT');
+    expect(result.verdictReason).toBe('only_dismissed_or_nit');
+    expect(result.reviewComplete).toBe(true);
+  });
+
   it('uses planner result to set team size and effort when planner client is provided', async () => {
     const plannerResponse = JSON.stringify({
       teamSize: 5,
@@ -2212,6 +2342,127 @@ describe('runReview', () => {
       expect(corPick?.effort).toBe('high');
       // 100% dismiss, sample >= 2 -> downgrade
       expect(archPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  function makeEffortDowngradeFixture() {
+    const plannerResponse = JSON.stringify({
+      teamSize: 1,
+      reviewerEffort: 'medium',
+      judgeEffort: 'medium',
+      prType: 'feature',
+      agents: [{ name: 'Security & Safety', effort: 'high' }],
+    });
+    const clients: ReviewClients = {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: { sendMessage: jest.fn() } as unknown as import('./claude').ClaudeClient,
+      planner: {
+        sendMessage: jest.fn().mockResolvedValue({ content: plannerResponse }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig({ review_level: 'auto' });
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'ok' });
+    return { clients, config, diff };
+  }
+
+  it('fires effort downgrade when findingsDismissed equals EFFORT_DOWNGRADE_MIN_SAMPLE (2)', async () => {
+    const { clients, config, diff } = makeEffortDowngradeFixture();
+
+    // Exactly 2 dismissed, 0 kept → 100% dismiss rate at EFFORT_DOWNGRADE_MIN_SAMPLE boundary.
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+        { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'suggestion', title: 't2', authorReply: 'agree', specialist: 'Security & Safety' },
+      ],
+    }];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRounds,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      expect(secPick?.effort).toBe('low');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('does not fire effort downgrade when findingsDismissed is below EFFORT_DOWNGRADE_MIN_SAMPLE (1 < 2)', async () => {
+    const { clients, config, diff } = makeEffortDowngradeFixture();
+
+    // Only 1 dismissed — below the minimum sample threshold, guard must not fire.
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [
+        { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'agree', specialist: 'Security & Safety' },
+      ],
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      priorRounds,
+    );
+    const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+    expect(secPick?.effort).toBe('high');
+  });
+
+  it('applyEffortDowngrade uses last hint by array position, not by round number', async () => {
+    // When hints are out of order by round number, the guard reads hints[hints.length - 1]
+    // (the last element by position). This test documents that coupling so future changes
+    // to sort hints before reading are caught.
+    const { clients, config, diff } = makeEffortDowngradeFixture();
+
+    // priorRounds in non-chronological order: round 3 first in the array, round 1 last.
+    // buildPlannerHints preserves array order, so hints[hints.length - 1] = round 1 (100%
+    // dismiss, sample >= 2). Round 3 has non-zero keeps but is at index 0 so the guard ignores it.
+    const priorRoundsOutOfOrder: HandoverRound[] = [
+      {
+        round: 3,
+        commitSha: 'abc3',
+        timestamp: 't3',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 1, lineEnd: 1, slug: 's1' }, severity: 'suggestion', title: 't1', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 2, lineEnd: 2, slug: 's2' }, severity: 'suggestion', title: 't2', authorReply: 'none', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 3, lineEnd: 3, slug: 's3' }, severity: 'suggestion', title: 't3', authorReply: 'agree', specialist: 'Security & Safety' },
+        ],
+      },
+      {
+        round: 1,
+        commitSha: 'abc1',
+        timestamp: 't1',
+        findings: [
+          { fingerprint: { file: 'a.ts', lineStart: 4, lineEnd: 4, slug: 's4' }, severity: 'suggestion', title: 't4', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 5, lineEnd: 5, slug: 's5' }, severity: 'suggestion', title: 't5', authorReply: 'agree', specialist: 'Security & Safety' },
+          { fingerprint: { file: 'a.ts', lineStart: 6, lineEnd: 6, slug: 's6' }, severity: 'suggestion', title: 't6', authorReply: 'agree', specialist: 'Security & Safety' },
+        ],
+      },
+    ];
+
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const result = await runReview(
+        clients, config, diff, 'raw diff', 'repo context',
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        priorRoundsOutOfOrder,
+      );
+      const secPick = result.plannerResult!.agents!.find(a => a.name === 'Security & Safety');
+      // Guard fires on the last array element (round 1, 100% dismiss) even though
+      // the numerically most-recent round (3) has non-zero keeps.
+      expect(secPick?.effort).toBe('low');
     } finally {
       infoSpy.mockRestore();
     }

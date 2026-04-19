@@ -1181,6 +1181,152 @@ describe('runJudgeAgent', () => {
     expect(result.resolveThreads![0].threadId).toBe('PRRT_xyz');
   });
 
+  it('priorRounds with partial authorReply does not suppress the finding', async () => {
+    // Only 'agree' triggers dismissal; 'partial' leaves the finding in play.
+    const judgedResponse = JSON.stringify({
+      summary: 'Finding still live.',
+      findings: [
+        { title: 'Unused variable', severity: 'suggestion', reasoning: 'Still relevant.', confidence: 'medium' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [{
+        fingerprint: { file: 'src/index.ts', lineStart: 10, lineEnd: 10, slug: 'Unused-variable' },
+        severity: 'suggestion',
+        title: 'Unused variable',
+        authorReply: 'partial',
+      }],
+    }];
+
+    const input: JudgeInput = {
+      findings: [makeFinding({ title: 'Unused variable', severity: 'suggestion' })],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      priorRounds,
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+
+    // Finding should not be suppressed — partial reply does not trigger dismissal.
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].severity).toBe('suggestion');
+    expect(result.findings[0].title).toBe('Unused variable');
+    expect(result.findings[0].tags).toBeUndefined();
+
+    // Prompt must include the prior round so the model has context.
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('"authorReply": "partial"');
+    expect(userMessage).toContain('Prior Round Findings');
+  });
+
+  it('non-matching findings in mixed priorRounds array pass through unchanged', async () => {
+    // Prior has authorReply: 'none' — no ratchet suppression fires for any finding.
+    // Both findings pass through unchanged from the judge.
+    // Finding B (no prior entry at all) must return with its original severity intact.
+    const judgedResponse = JSON.stringify({
+      summary: 'Two findings, one prior match.',
+      findings: [
+        { title: 'Null check', severity: 'suggestion', reasoning: 'Prior agreed.', confidence: 'high' },
+        { title: 'Missing error handler', severity: 'required', reasoning: 'Real bug.', confidence: 'high' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [{
+        fingerprint: { file: 'src/index.ts', lineStart: 10, lineEnd: 10, slug: 'Null-check' },
+        severity: 'suggestion',
+        title: 'Null check',
+        authorReply: 'none',
+      }],
+    }];
+
+    const input: JudgeInput = {
+      findings: [
+        makeFinding({ title: 'Null check', severity: 'suggestion', line: 10 }),
+        makeFinding({ title: 'Missing error handler', severity: 'required', line: 50, file: 'src/other.ts' }),
+      ],
+      diff: makeDiff([
+        makeDiffFile(),
+        makeDiffFile({ path: 'src/other.ts', hunks: [makeHunk({ newStart: 45, newLines: 10, oldStart: 45, oldLines: 10, content: Array.from({ length: 10 }, (_, i) => `+line ${i + 45}`).join('\n') })] }),
+      ]),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      priorRounds,
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+
+    expect(result.findings).toHaveLength(2);
+    const nullCheck = result.findings.find(f => f.title === 'Null check');
+    const errorHandler = result.findings.find(f => f.title === 'Missing error handler');
+
+    expect(nullCheck).toBeDefined();
+    expect(nullCheck!.severity).toBe('suggestion');
+    expect(nullCheck!.tags).toBeUndefined();
+
+    // Non-matching finding must be returned with judge-assigned severity unchanged.
+    expect(errorHandler).toBeDefined();
+    expect(errorHandler!.severity).toBe('required');
+    expect(errorHandler!.tags).toBeUndefined();
+  });
+
+  it('passes priorRounds end-to-end: prompt includes prior round data and findings flow through', async () => {
+    const judgedResponse = JSON.stringify({
+      summary: 'One surviving finding.',
+      findings: [
+        { title: 'Null check missing', severity: 'suggestion', reasoning: 'Still unaddressed.', confidence: 'high' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc123',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: 'src/handler.ts', lineStart: 20, lineEnd: 20, slug: 'Null-check-missing' },
+        severity: 'suggestion',
+        title: 'Null check missing',
+        authorReply: 'none',
+        threadId: 'PRRT_prior',
+      }],
+    }];
+
+    const input: JudgeInput = {
+      findings: [makeFinding({ title: 'Null check missing', file: 'src/handler.ts', line: 20 })],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      priorRounds,
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('Prior Round Findings');
+    expect(userMessage).toContain('"authorReply": "none"');
+    expect(userMessage).toContain('"slug": "Null-check-missing"');
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe('Null check missing');
+    expect(result.findings[0].severity).toBe('suggestion');
+    expect(result.summary).toBe('One surviving finding.');
+  });
+
   it('demotes and tags a finding when priorRounds contain matching suggestedFix in rawDiff', async () => {
     const suggestedFix = 'const clamped = Math.min(value, Number.MAX_SAFE_INTEGER);';
     const diffFile = 'src/utils.ts';
