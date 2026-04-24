@@ -654,6 +654,15 @@ describe('formatStatsOneLiner', () => {
     expect(result).toContain('(none)');
   });
 
+  it('includes non-zero warning count in output', () => {
+    const stats = { ...baseStats, severity: { blocker: 0, warning: 2, suggestion: 1, nitpick: 0 }, findingsKept: 3 };
+    const result = formatStatsOneLiner(stats);
+    expect(result).toContain('2 warning');
+    expect(result).toContain('1 suggestion');
+    expect(result).not.toContain('blocker');
+    expect(result).not.toContain('nitpick');
+  });
+
   it('rounds review time to nearest second', () => {
     const stats = { ...baseStats, reviewTimeMs: 1500 };
     const result = formatStatsOneLiner(stats);
@@ -1680,6 +1689,18 @@ describe('buildDashboard', () => {
     expect(md).toContain('**Judge** — 2 kept · 6 dropped');
     expect(md).toContain(`${INDENT}kept: 1 blocker · 1 suggestion`);
     expect(md).toContain(`${INDENT}dropped: 2 suggestion · 3 nitpick · 1 ignore`);
+  });
+
+  it('renders warning in severity breakdown when warning count is non-zero', () => {
+    const data: DashboardData = {
+      phase: 'complete', lineCount: 200, agentCount: 3,
+      rawFindingCount: 5, keptCount: 3, droppedCount: 2,
+      keptSeverities: { blocker: 1, warning: 2 },
+      droppedSeverities: { warning: 1, nitpick: 1 },
+    };
+    const md = buildDashboard(data);
+    expect(md).toContain(`${INDENT}kept: 1 blocker · 2 warning`);
+    expect(md).toContain(`${INDENT}dropped: 1 warning · 1 nitpick`);
   });
 
   it('renders plannerInfo in complete phase', () => {
