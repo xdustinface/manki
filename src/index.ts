@@ -263,6 +263,14 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
     return;
   }
 
+  if (!forceReview) {
+    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
+      await postReviewSkippedComment(octokit, owner, repo, prNumber);
+      core.info('Review already in progress — skipping');
+      return;
+    }
+  }
+
   const { data: pr } = await octokit.rest.pulls.get({
     owner,
     repo,
@@ -270,12 +278,6 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   });
 
   if (!forceReview) {
-    if (await isReviewInProgress(octokit, owner, repo, prNumber)) {
-      await postReviewSkippedComment(octokit, owner, repo, prNumber);
-      core.info('Review already in progress — skipping');
-      return;
-    }
-
     if (await isApprovedOnCommit(octokit, owner, repo, prNumber, pr.head.sha)) {
       core.info('Already approved on this commit — skipping review');
       return;

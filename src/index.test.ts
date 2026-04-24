@@ -745,6 +745,7 @@ describe('handleCommentTrigger', () => {
 
   it('posts skip comment and returns early when review is already in progress', async () => {
     jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
+    mockListComments.mockResolvedValueOnce({ data: [] });
 
     setContext({
       eventName: 'issue_comment',
