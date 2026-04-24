@@ -774,6 +774,38 @@ describe('handleCommentTrigger', () => {
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
   });
 
+  it('updates existing skip comment instead of creating a duplicate', async () => {
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
+    mockListComments.mockResolvedValueOnce({
+      data: [
+        {
+          id: 99,
+          body: `${ghUtils.BOT_MARKER}\n**Review skipped** — a review is currently in progress.`,
+          user: { login: ghUtils.BOT_LOGIN, type: 'Bot' },
+        },
+      ],
+    });
+
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
+        comment: { id: 42, body: '@manki review', author_association: 'COLLABORATOR' },
+      },
+    });
+
+    await handleCommentTrigger();
+
+    expect(mockOctokitInstance.rest.issues.updateComment).toHaveBeenCalledWith(
+      expect.objectContaining({ comment_id: 99, body: expect.stringContaining('Review skipped') }),
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).not.toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.stringContaining('Review skipped') }),
+    );
+    expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
+  });
+
   it('bypasses in-progress check when forceReview is true', async () => {
     jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true); // there IS an in-progress review
 
