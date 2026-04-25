@@ -235,7 +235,7 @@ function sanitizeEffort(v: string): string {
   return VALID_EFFORTS.has(v) ? v : 'unknown';
 }
 
-const SEVERITY_ORDER = ['blocker', 'warning', 'suggestion', 'nitpick', 'ignore'];
+const SEVERITY_ORDER: readonly FindingSeverity[] = ['blocker', 'warning', 'suggestion', 'nitpick', 'ignore'];
 
 function renderSeverityBreakdown(severities: Record<string, number>): string {
   return SEVERITY_ORDER
