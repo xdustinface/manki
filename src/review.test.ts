@@ -309,6 +309,22 @@ describe('determineVerdict', () => {
     expect(result.verdictReason).toBe('only_nit_or_suggestion');
   });
 
+  it('returns APPROVE for a mix of nitpicks and dismissed warnings (additional coverage)', () => {
+    const findings: Finding[] = [
+      makeFinding({ severity: 'nitpick' }),
+      { severity: 'warning', title: 'Missing null check', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
+    ];
+    const priors: HandoverFinding[] = [{
+      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: 'Missing-null-check' },
+      severity: 'warning',
+      title: 'Missing null check',
+      authorReply: 'agree',
+    }];
+    const result = determineVerdict(findings, priors);
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+  });
+
   it('returns REQUEST_CHANGES when mixing dismissed and novel suggestions', () => {
     const findings: Finding[] = [
       { severity: 'warning', title: 'Missing null check', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
