@@ -692,6 +692,8 @@ describe('handlePullRequest', () => {
       expect.objectContaining({ comment_id: 77, body: expect.stringContaining('Review skipped') }),
     );
     expect(mockOctokitInstance.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.isApprovedOnCommit)).not.toHaveBeenCalled();
   });
 
   it('skips review when already approved on this commit', async () => {
