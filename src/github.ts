@@ -679,6 +679,12 @@ const severityEmojis: Record<FindingSeverity, string> = {
   ignore: '⚪',
 };
 
+const confidenceDots: Record<'high' | 'medium' | 'low', string> = {
+  high: '🔴',
+  medium: '🟠',
+  low: '🟡',
+};
+
 function getSeverityLabel(severity: FindingSeverity): string {
   return severityLabels[severity];
 }
@@ -736,11 +742,6 @@ function formatFindingComment(finding: Finding): string {
   const safeTitle = sanitizeMarkdown(finding.title);
   const safeDescription = sanitizeMarkdown(finding.description);
 
-  const confidenceDots: Record<'high' | 'medium' | 'low', string> = {
-    high: '🔴',
-    medium: '🟠',
-    low: '🟡',
-  };
   const confidenceDot = finding.judgeConfidence ? `${confidenceDots[finding.judgeConfidence]} ` : '';
   let comment = `${confidenceDot}${severityEmoji} **${severityLabel}**: ${safeTitle}`;
   if (finding.tags?.includes(DEFENSIVE_HARDENING_TAG) && finding.originalSeverity) {
