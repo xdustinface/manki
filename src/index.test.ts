@@ -808,6 +808,30 @@ describe('handleCommentTrigger', () => {
     expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
   });
 
+  it('swallows errors from skip-comment helpers and emits a warning', async () => {
+    jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true);
+    mockListComments.mockRejectedValueOnce(new Error('boom'));
+
+    setContext({
+      eventName: 'issue_comment',
+      payload: {
+        action: 'created',
+        issue: { number: 1, pull_request: { url: 'https://api.github.com/repos/owner/repo/pulls/1' } },
+        comment: { id: 42, body: '@manki review', author_association: 'COLLABORATOR' },
+      },
+    });
+
+    await expect(handleCommentTrigger()).resolves.toBeUndefined();
+
+    expect(jest.mocked(core.warning)).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to post review-skipped comment'),
+    );
+    expect(mockOctokitInstance.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(mockOctokitInstance.rest.issues.updateComment).not.toHaveBeenCalled();
+    expect(jest.mocked(ghUtils.postProgressComment)).not.toHaveBeenCalled();
+    expect(mockOctokitInstance.rest.pulls.get).not.toHaveBeenCalled();
+  });
+
   it('bypasses in-progress check when forceReview is true', async () => {
     jest.mocked(ghUtils.isReviewInProgress).mockResolvedValueOnce(true); // there IS an in-progress review
 
