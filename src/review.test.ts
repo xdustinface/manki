@@ -2872,13 +2872,50 @@ describe('runReview', () => {
       expect(userMessage).toContain('// [manki: added in round 2]');
     }
 
-    // computeProvenanceMap must be called exactly once per review cycle
+    // computeProvenanceMap must be called exactly once per review cycle, with the
+    // priorRounds and rawDiff supplied to runReview (priorRounds is undefined here)
     expect(mockedComputeProvenanceMap).toHaveBeenCalledTimes(1);
+    expect(mockedComputeProvenanceMap).toHaveBeenCalledWith(undefined, 'raw diff');
 
     // Judge should receive the same computed map through JudgeInput, not recompute it
     expect(mockedRunJudgeAgent).toHaveBeenCalledTimes(1);
     const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
     expect(judgeInput.provenanceMap).toEqual(provenance);
+  });
+
+  it('does not inject annotations or explanation when provenance entries reference files absent from fileContents', async () => {
+    const mockedComputeProvenanceMap = jest.mocked(computeProvenanceMap);
+    // Provenance entry references a file that is NOT among the loaded fileContents.
+    const provenance: ProvenanceEntry[] = [{
+      file: 'src/other.ts',
+      lineStart: 2,
+      lineEnd: 3,
+      originatingRound: 2,
+      originatingTitle: 'Prior finding',
+    }];
+    mockedComputeProvenanceMap.mockReturnValueOnce(provenance);
+
+    const reviewerSendMessage = jest.fn().mockResolvedValue({ content: '[]' });
+    const clients: ReviewClients = {
+      reviewer: { sendMessage: reviewerSendMessage } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '{"summary":"ok","findings":[]}' }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const fileContents = new Map([
+      ['src/foo.ts', 'const a = 1;\nconst b = 2;\nconst c = 3;'],
+    ]);
+
+    await runReview(clients, config, diff, 'raw diff', 'repo context', undefined, fileContents);
+
+    expect(reviewerSendMessage).toHaveBeenCalled();
+    for (const call of reviewerSendMessage.mock.calls) {
+      const userMessage = call[1] as string;
+      expect(userMessage).not.toContain('[manki:');
+      expect(userMessage).not.toContain('factual note');
+    }
   });
 
   it('does not inject annotations or explanation when provenance is empty', async () => {
