@@ -3,7 +3,7 @@ import * as github from '@actions/github';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { minimatch } from 'minimatch';
 
-import { AuthorReplyClass, Finding, FindingSeverity, HandoverFinding, HandoverRound, PrHandover } from './types';
+import { AuthorReplyClass, Finding, FindingSeverity, HandoverFinding, HandoverRound, PrHandover, migrateLegacySeverity } from './types';
 import { titleToSlug } from './github';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
@@ -575,6 +575,10 @@ async function fetchJsonFile<T>(
 
 /**
  * Load the per-PR handover file, or null if it does not yet exist.
+ *
+ * Legacy severity values written by older versions (`'required'`, `'nit'`)
+ * are migrated to the current vocabulary on read so downstream code only ever
+ * sees `FindingSeverity` values it recognizes.
  */
 export async function loadHandover(
   octokit: Octokit,
@@ -583,7 +587,22 @@ export async function loadHandover(
   prNumber: number,
 ): Promise<PrHandover | null> {
   const [owner, repo] = memoryRepo.split('/');
-  return fetchJsonFile<PrHandover>(octokit, owner, repo, handoverPath(targetRepo, prNumber));
+  const loaded = await fetchJsonFile<PrHandover>(octokit, owner, repo, handoverPath(targetRepo, prNumber));
+  return loaded ? migrateHandover(loaded) : null;
+}
+
+/** Apply `migrateLegacySeverity` to every finding's severity in a loaded handover. */
+function migrateHandover(handover: PrHandover): PrHandover {
+  return {
+    ...handover,
+    rounds: handover.rounds.map(round => ({
+      ...round,
+      findings: round.findings.map(f => ({
+        ...f,
+        severity: migrateLegacySeverity(f.severity) as HandoverFinding['severity'],
+      })),
+    })),
+  };
 }
 
 /**

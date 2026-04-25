@@ -307,6 +307,22 @@ describe('fetchBotReviewThreads', () => {
     expect(threads[1]).toEqual({ id: 't2', isResolved: false, isRequired: false, findingTitle: 'false positive' });
   });
 
+  it('migrates legacy severity markers (`required`, `nit`) on read', async () => {
+    const graphqlMock = jest.fn().mockResolvedValueOnce(
+      makeGraphqlFetchResponse([
+        makeGraphqlFetchThreadNode({ id: 't1', body: '<!-- manki:required:legacy-blocker --> old' }),
+        makeGraphqlFetchThreadNode({ id: 't2', body: '<!-- manki:nit:legacy-nit --> old' }),
+      ]),
+    );
+
+    const octokit = { graphql: graphqlMock } as unknown as Octokit;
+    const threads = await fetchBotReviewThreads(octokit, 'owner', 'repo', 1);
+
+    expect(threads).toHaveLength(2);
+    expect(threads[0].isRequired).toBe(true);
+    expect(threads[1].isRequired).toBe(false);
+  });
+
   it('returns empty array when no threads exist', async () => {
     const graphqlMock = jest.fn().mockResolvedValueOnce(
       makeGraphqlFetchResponse([]),

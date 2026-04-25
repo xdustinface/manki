@@ -2,6 +2,7 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 
 import { dismissPreviousReviews, isReviewInProgress } from './github';
+import { migrateLegacySeverity, SEVERITY_TOKEN_PATTERN } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -76,8 +77,10 @@ async function fetchBotReviewThreads(
     })
     .map(thread => {
       const body = thread.comments.nodes[0]?.body ?? '';
-      const severityMatch = body.match(/<!-- manki:(blocker|warning|suggestion|nitpick|ignore):/);
-      const isRequired = severityMatch?.[1] === 'blocker';
+      const severityMatch = body.match(new RegExp(`<!-- manki:(${SEVERITY_TOKEN_PATTERN}):`));
+      const isRequired = severityMatch?.[1]
+        ? migrateLegacySeverity(severityMatch[1]) === 'blocker'
+        : false;
       const titleMatch = body.match(/<!-- manki:\w+:(.+?) -->/);
       const findingTitle = titleMatch?.[1]?.replace(/-/g, ' ') ?? 'Unknown';
 

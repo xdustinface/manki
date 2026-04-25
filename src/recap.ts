@@ -3,7 +3,7 @@ import * as github from '@actions/github';
 import { ClaudeClient } from './claude';
 import { titleToSlug } from './github';
 import { matchesSuppression, Suppression } from './memory';
-import { AuthorReplyClass, Finding, FindingFingerprint, FindingSeverity } from './types';
+import { AuthorReplyClass, Finding, FindingFingerprint, FindingSeverity, migrateLegacySeverity, SEVERITY_TOKEN_PATTERN } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -248,8 +248,10 @@ async function fetchReviewThreads(
       const hasHumanReply = firstNonBotReply !== undefined;
       const authorReplyText = firstNonBotReply?.body;
 
-      const severityMatch = firstComment?.body?.match(/manki:(blocker|warning|suggestion|nitpick|ignore):/);
-      const severity = (severityMatch?.[1] ?? 'unknown') as FindingSeverity | 'unknown';
+      const severityMatch = firstComment?.body?.match(new RegExp(`manki:(${SEVERITY_TOKEN_PATTERN}):`));
+      const severity = (severityMatch?.[1]
+        ? migrateLegacySeverity(severityMatch[1])
+        : 'unknown') as FindingSeverity | 'unknown';
 
       const titleMatch = firstComment?.body?.match(/\*\*(?:Blocker|Warning|Suggestion|Nitpick|Ignore)\*\*(?:\s*<sub>\[[^\]]*\]<\/sub>)?\s*:\s*(.+?)(?:\n|$)/);
       const findingTitle = titleMatch?.[1]?.trim() ?? '';

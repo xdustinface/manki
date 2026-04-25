@@ -902,6 +902,46 @@ describe('loadHandover', () => {
     const result = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
     expect(result).toEqual(handover);
   });
+
+  it('migrates legacy severity values (`required` -> `blocker`, `nit` -> `nitpick`)', async () => {
+    const persisted = {
+      prNumber: 106,
+      repo: 'rust-dashcore',
+      rounds: [
+        {
+          round: 1,
+          commitSha: 'abc123',
+          timestamp: '2025-01-01T00:00:00Z',
+          findings: [
+            {
+              fingerprint: { file: 'src/a.rs', lineStart: 10, lineEnd: 10, slug: 'Old-blocker' },
+              severity: 'required',
+              title: 'Old blocker',
+              authorReply: 'agree',
+            },
+            {
+              fingerprint: { file: 'src/b.rs', lineStart: 20, lineEnd: 20, slug: 'Old-nit' },
+              severity: 'nit',
+              title: 'Old nit',
+              authorReply: 'none',
+            },
+            {
+              fingerprint: { file: 'src/c.rs', lineStart: 30, lineEnd: 30, slug: 'Current' },
+              severity: 'suggestion',
+              title: 'Current suggestion',
+              authorReply: 'none',
+            },
+          ],
+        },
+      ],
+    };
+    const octokit = mockJsonOctokit({ 'rust-dashcore/prs/106/handover.json': persisted });
+
+    const result = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(result!.rounds[0].findings[0].severity).toBe('blocker');
+    expect(result!.rounds[0].findings[1].severity).toBe('nitpick');
+    expect(result!.rounds[0].findings[2].severity).toBe('suggestion');
+  });
 });
 
 describe('writeHandover', () => {

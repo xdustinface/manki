@@ -2,6 +2,22 @@ export const MAX_AGENT_RETRIES = 1;
 
 export type FindingSeverity = 'blocker' | 'warning' | 'suggestion' | 'nitpick' | 'ignore';
 
+/**
+ * Maps legacy severity values written by older versions of manki to the
+ * current `FindingSeverity` set. `'required'` was renamed to `'blocker'` and
+ * `'nit'` to `'nitpick'`; `'suggestion'` and `'ignore'` are unchanged. Used
+ * when reading persisted data (handover JSON, posted review comment markers)
+ * so old artifacts continue to round-trip correctly.
+ */
+export function migrateLegacySeverity(severity: string): FindingSeverity | string {
+  if (severity === 'required') return 'blocker';
+  if (severity === 'nit') return 'nitpick';
+  return severity;
+}
+
+/** Regex source matching all current and legacy severity tokens. */
+export const SEVERITY_TOKEN_PATTERN = 'blocker|warning|suggestion|nitpick|ignore|required|nit';
+
 export type FindingReachability = 'reachable' | 'hypothetical' | 'unknown';
 
 export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
