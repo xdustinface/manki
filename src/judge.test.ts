@@ -2359,33 +2359,41 @@ describe('applyCrossRoundSuppression', () => {
   });
 
   it('cites the most-recent agreeing round when multiple prior rounds match', () => {
-    const findings = [makeFinding({
+    const makeMatchingPriorRound = (round: number) => makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }], round);
+    const makeContradictingFinding = () => makeFinding({
       title: 'Naming convention',
       file: 'src/a.ts',
       line: 12,
       severity: 'suggestion',
       description: 'Replace the old helper and avoid the previous pattern instead.',
-    })];
-    const prior = [
-      makePriorRound([{
-        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
-        severity: 'suggestion',
-        title: 'Naming convention',
-        authorReply: 'agree',
-      }], 1),
-      makePriorRound([{
-        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
-        severity: 'suggestion',
-        title: 'Naming convention',
-        authorReply: 'agree',
-      }], 3),
-    ];
+    });
 
-    const result = applyCrossRoundSuppression(findings, prior);
-    expect(result.demotedCount).toBe(1);
-    expect(result.findings[0].severity).toBe('nitpick');
-    expect(result.findings[0].tags).toContain('contradicts-prior-round');
-    expect(result.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+    // Ascending input order: [round 1, round 3]. Round 3 must still be cited.
+    const ascending = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      [makeMatchingPriorRound(1), makeMatchingPriorRound(3)],
+    );
+    expect(ascending.demotedCount).toBe(1);
+    expect(ascending.findings[0].severity).toBe('nitpick');
+    expect(ascending.findings[0].tags).toContain('contradicts-prior-round');
+    expect(ascending.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+
+    // Descending input order: [round 3, round 1]. Without the descending sort, `find()` would
+    // still happen to land on round 3 above; supplying the rounds reversed proves the citation
+    // tracks recency rather than input position.
+    const descending = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      [makeMatchingPriorRound(3), makeMatchingPriorRound(1)],
+    );
+    expect(descending.demotedCount).toBe(1);
+    expect(descending.findings[0].severity).toBe('nitpick');
+    expect(descending.findings[0].tags).toContain('contradicts-prior-round');
+    expect(descending.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
   });
 
   it('preserves required severity with reversal word and prior agree (prompt injection guard)', () => {
