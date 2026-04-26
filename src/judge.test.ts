@@ -2173,6 +2173,30 @@ describe('computeProvenanceMap', () => {
     const entries = computeProvenanceMap(rounds, diff);
     expect(entries).toHaveLength(0);
   });
+
+  it('returns no entry when a multi-line suggestedFix is split across two separate hunks', () => {
+    const multiLineFix = [
+      'const clamped = Math.min(value, SYSTEM_TIME_MAX);',
+      'if (clamped !== value) logger.warn("time clamped", { value, clamped });',
+      'return clamped;',
+    ].join('\n');
+    const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: multiLineFix })])];
+    // All three fix lines appear as added lines, but the third is in a separate
+    // hunk. Block-level matching flushes at each `@@` header, so neither block
+    // contains the full multi-line fix and no entry should be produced.
+    const diff =
+      'diff --git a/src/a.ts b/src/a.ts\n' +
+      '--- a/src/a.ts\n' +
+      '+++ b/src/a.ts\n' +
+      '@@ -10,0 +10,2 @@\n' +
+      '+const clamped = Math.min(value, SYSTEM_TIME_MAX);\n' +
+      '+if (clamped !== value) logger.warn("time clamped", { value, clamped });\n' +
+      '@@ -20,0 +22,1 @@\n' +
+      '+return clamped;\n';
+
+    const entries = computeProvenanceMap(rounds, diff);
+    expect(entries).toHaveLength(0);
+  });
 });
 
 describe('buildJudgeUserMessage with linked issues', () => {
