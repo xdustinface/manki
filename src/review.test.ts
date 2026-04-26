@@ -1844,6 +1844,48 @@ describe('runReview', () => {
     ]);
   });
 
+  it('propagates agree-reply inPrSuppression when prAuthorLogin matches reply author', async () => {
+    const clients = makeClients();
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const previousFindings = [
+      {
+        title: 'Unused variable',
+        file: 'src/a.ts',
+        line: 10,
+        severity: 'suggestion' as const,
+        status: 'replied' as const,
+        authorReplyText: 'Fixed, thanks!',
+        authorReplyLogin: 'pr-author',
+      },
+    ];
+
+    mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'All clear.', inPrSuppressedCount: 1 });
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      previousFindings,
+      undefined,
+      'pr-author',
+    );
+
+    expect(result.inPrSuppressedCount).toBe(1);
+    const judgeInput = mockedRunJudgeAgent.mock.calls[0][2];
+    expect(judgeInput.inPrSuppressions).toEqual([
+      {
+        fingerprint: {
+          file: 'src/a.ts',
+          lineStart: 10,
+          lineEnd: 10,
+          slug: 'Unused-variable',
+        },
+        reason: 'agree-reply',
+        authorLogin: 'pr-author',
+      },
+    ]);
+  });
+
   it('leaves dedup counts at zero when no previous findings are supplied', async () => {
     const findingJson = JSON.stringify([
       { severity: 'blocker', title: 'A bug', file: 'src/a.ts', line: 10, description: 'Bug.' },
