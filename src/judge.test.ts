@@ -2155,6 +2155,24 @@ describe('computeProvenanceMap', () => {
       originatingTitle: 'Clamp future time',
     });
   });
+
+  it('returns no entry when a multi-line suggestedFix does not appear in the diff', () => {
+    const multiLineFix = [
+      'const clamped = Math.min(value, SYSTEM_TIME_MAX);',
+      'if (clamped !== value) logger.warn("time clamped", { value, clamped });',
+      'return clamped;',
+    ].join('\n');
+    const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: multiLineFix })])];
+    // The diff adds an unrelated block that contains none of the fix lines.
+    const diff = buildDiff('src/a.ts', 10, [
+      'function unrelated(value: number): number {',
+      'return value * 2;',
+      '}',
+    ]);
+
+    const entries = computeProvenanceMap(rounds, diff);
+    expect(entries).toHaveLength(0);
+  });
 });
 
 describe('buildJudgeUserMessage with linked issues', () => {
