@@ -860,16 +860,14 @@ async function runFullReview(
     core.setOutput('findings_count', result.findings.length.toString());
     core.setOutput('findings_json', JSON.stringify(result.findings));
 
-    const severityCounts = { blocker: 0, warning: 0, suggestion: 0, nitpick: 0, ignore: 0 };
-    for (const f of result.findings) {
-      severityCounts[f.severity]++;
-    }
-    core.setOutput('severity_counts', JSON.stringify(severityCounts));
+    // `result.findings` excludes 'ignore' severity (filtered in review.ts), so
+    // the counts here mirror `severityMap` above and the `stats.severity` output.
+    core.setOutput('severity_counts', JSON.stringify(severityMap));
 
     core.setOutput('judge_model', judgeModel);
 
     core.info(`Review complete: ${result.verdict} with ${result.findings.length} findings`);
-    core.info(`Severity breakdown: ${severityCounts.blocker} blocker, ${severityCounts.warning} warning, ${severityCounts.suggestion} suggestion, ${severityCounts.nitpick} nitpick, ${severityCounts.ignore} ignore`);
+    core.info(`Severity breakdown: ${severityMap.blocker} blocker, ${severityMap.warning} warning, ${severityMap.suggestion} suggestion, ${severityMap.nitpick} nitpick`);
   } catch (error) {
     if (dashboardFlushTimer) {
       clearTimeout(dashboardFlushTimer);
