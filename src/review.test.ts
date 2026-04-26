@@ -309,15 +309,15 @@ describe('determineVerdict', () => {
     expect(result.verdictReason).toBe('only_nit_or_suggestion');
   });
 
-  it('returns APPROVE for a mix of nitpicks and dismissed warnings (additional coverage)', () => {
+  it('returns APPROVE for a mix of nitpicks and dismissed suggestions', () => {
     const findings: Finding[] = [
       makeFinding({ severity: 'nitpick' }),
-      { severity: 'warning', title: 'Missing null check', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
+      { severity: 'suggestion', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
     ];
     const priors: HandoverFinding[] = [{
-      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: 'Missing-null-check' },
-      severity: 'warning',
-      title: 'Missing null check',
+      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: 'Extract-helper' },
+      severity: 'suggestion',
+      title: 'Extract helper',
       authorReply: 'agree',
     }];
     const result = determineVerdict(findings, priors);
