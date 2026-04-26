@@ -14,7 +14,7 @@ import {
 import { LinkedIssue, titleToSlug } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, OpenThread, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
@@ -213,7 +213,7 @@ export interface JudgeInput {
   linkedIssues?: LinkedIssue[];
   agentCount: number;
   isFollowUp?: boolean;
-  openThreads?: Array<{ threadId: string; threadUrl?: string; title: string; file: string; line: number; severity: string }>;
+  openThreads?: OpenThread[];
   priorRounds?: HandoverRound[];
   effort?: 'low' | 'medium' | 'high';
   provenanceMap?: ProvenanceEntry[];
@@ -457,7 +457,7 @@ export function buildJudgeUserMessage(
   prContext?: PrContext,
   linkedIssues?: LinkedIssue[],
   changedFiles?: DiffFile[],
-  openThreads?: Array<{ threadId: string; threadUrl?: string; title: string; file: string; line: number; severity: string }>,
+  openThreads?: OpenThread[],
   priorRounds?: HandoverRound[],
 ): string {
   const parts: string[] = [];
