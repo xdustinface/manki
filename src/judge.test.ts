@@ -2384,6 +2384,7 @@ describe('applyCrossRoundSuppression', () => {
     const result = applyCrossRoundSuppression(findings, prior);
     expect(result.demotedCount).toBe(1);
     expect(result.findings[0].severity).toBe('nitpick');
+    expect(result.findings[0].tags).toContain('contradicts-prior-round');
     expect(result.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
   });
 
