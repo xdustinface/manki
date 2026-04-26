@@ -472,8 +472,8 @@ export function buildJudgeUserMessage(
     parts.push(`## Open Review Threads\n`);
     parts.push('These are unresolved review threads from the previous review. If the new changes address any of them, include them in `resolveThreads`.\n');
     for (const t of openThreads) {
-      const ref = t.threadUrl ? `[${t.threadId}](${t.threadUrl})` : t.threadId;
-      parts.push(`- **${ref}**: [${t.severity}] "${sanitize(t.title)}" at ${sanitize(t.file)}:${t.line}`);
+      const linkSuffix = t.threadUrl ? ` ([view](${t.threadUrl}))` : '';
+      parts.push(`- **${t.threadId}**${linkSuffix}: [${t.severity}] "${sanitize(t.title)}" at ${sanitize(t.file)}:${t.line}`);
     }
     parts.push('');
   }
