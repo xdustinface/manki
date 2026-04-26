@@ -907,6 +907,32 @@ describe('fetchRecapState', () => {
     expect(state.recapContext).not.toContain('### Resolved');
   });
 
+  // Locks in the invariant that replied+disagree (and replied+partial) findings
+  // appear in neither the Resolved nor the Still Open section of recapContext.
+  // They remain pending human resolution; surfacing them again would re-bias agents.
+  it('omits replied+disagree findings from both Resolved and Still Open sections of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'I disagree, keeping as-is.', author: { login: 'developer' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
   it('captures authorReplyLogin from the latest non-bot reply', async () => {
     const octokit = mockOctokit([
       makeThread({
