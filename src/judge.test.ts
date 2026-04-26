@@ -2394,6 +2394,26 @@ describe('applyCrossRoundSuppression', () => {
     expect(descending.findings[0].severity).toBe('nitpick');
     expect(descending.findings[0].tags).toContain('contradicts-prior-round');
     expect(descending.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+
+    // Out-of-window round: round 3 has lineStart 100 (outside LINE_WINDOW from line 12),
+    // round 1 has lineStart 10 (within window). After sorting descending, find() visits
+    // round 3 first, but it falls through because of the window check, leaving round 1 as
+    // the correct citation.
+    const outOfWindowRound3 = (round: number, lineStart: number) =>
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart, lineEnd: lineStart, slug: titleToSlug('Naming convention') },
+        severity: 'suggestion',
+        title: 'Naming convention',
+        authorReply: 'agree',
+      }], round);
+
+    const mixedWindow = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      // Round 3 is outside LINE_WINDOW (line 100), round 1 is within (line 10).
+      [outOfWindowRound3(3, 100), outOfWindowRound3(1, 10)],
+    );
+    expect(mixedWindow.demotedCount).toBe(1);
+    expect(mixedWindow.findings[0].judgeNotes).toBe('Contradicts round 1 guidance accepted by author');
   });
 
   it('preserves required severity with reversal word and prior agree (prompt injection guard)', () => {
