@@ -2319,6 +2319,35 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].judgeNotes).toBe('Prior note Contradicts round 2 guidance accepted by author');
   });
 
+  it('cites the most-recent agreeing round when multiple prior rounds match', () => {
+    const findings = [makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 12,
+      severity: 'suggestion',
+      description: 'Replace the old helper and avoid the previous pattern instead.',
+    })];
+    const prior = [
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+        severity: 'suggestion',
+        title: 'Naming convention',
+        authorReply: 'agree',
+      }], 1),
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+        severity: 'suggestion',
+        title: 'Naming convention',
+        authorReply: 'agree',
+      }], 3),
+    ];
+
+    const result = applyCrossRoundSuppression(findings, prior);
+    expect(result.demotedCount).toBe(1);
+    expect(result.findings[0].severity).toBe('nitpick');
+    expect(result.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+  });
+
   it('preserves required severity with reversal word and prior agree (prompt injection guard)', () => {
     // Adversary injects reversal word into a round-2 required finding whose slug matches
     // a round-1 agreed finding. The contradiction path must never fire for required findings.
