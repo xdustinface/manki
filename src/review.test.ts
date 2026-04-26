@@ -324,6 +324,21 @@ describe('determineVerdict', () => {
     expect(result.verdictReason).toBe('only_nit_or_suggestion');
   });
 
+  it('returns REQUEST_CHANGES when the matching prior warning has authorReply "disagree"', () => {
+    const findings: Finding[] = [
+      { severity: 'warning', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
+    ];
+    const priors: HandoverFinding[] = [{
+      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Extract helper') },
+      severity: 'warning',
+      title: 'Extract helper',
+      authorReply: 'disagree',
+    }];
+    const result = determineVerdict(findings, priors);
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('novel_suggestion');
+  });
+
   it('returns APPROVE for suggestion-severity findings regardless of priors', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
