@@ -314,7 +314,7 @@ describe('determineVerdict', () => {
       { severity: 'warning', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
     ];
     const priors: HandoverFinding[] = [{
-      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: 'Extract-helper' },
+      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Extract helper') },
       severity: 'warning',
       title: 'Extract helper',
       authorReply: 'agree',
@@ -328,9 +328,28 @@ describe('determineVerdict', () => {
     const findings: Finding[] = [
       { severity: 'suggestion', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
     ];
-    expect(determineVerdict(findings).verdict).toBe('APPROVE');
-    expect(determineVerdict(findings).verdictReason).toBe('only_nit_or_suggestion');
-    expect(determineVerdict(findings, []).verdict).toBe('APPROVE');
+    const resultNoPriors = determineVerdict(findings);
+    expect(resultNoPriors.verdict).toBe('APPROVE');
+    expect(resultNoPriors.verdictReason).toBe('only_nit_or_suggestion');
+    const resultEmptyPriors = determineVerdict(findings, []);
+    expect(resultEmptyPriors.verdict).toBe('APPROVE');
+    expect(resultEmptyPriors.verdictReason).toBe('only_nit_or_suggestion');
+  });
+
+  it('returns APPROVE for a mix of nitpick and dismissed suggestion', () => {
+    const findings: Finding[] = [
+      { severity: 'nitpick', title: 'Minor naming', file: 'src/handler.ts', line: 5, description: 'desc', reviewers: ['reviewer-1'] },
+      { severity: 'suggestion', title: 'Extract helper', file: 'src/handler.ts', line: 10, description: 'desc', reviewers: ['reviewer-1'] },
+    ];
+    const priors: HandoverFinding[] = [{
+      fingerprint: { file: 'src/handler.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Extract helper') },
+      severity: 'suggestion',
+      title: 'Extract helper',
+      authorReply: 'agree',
+    }];
+    const result = determineVerdict(findings, priors);
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
   });
 
   it('returns REQUEST_CHANGES when mixing dismissed and novel suggestions', () => {
