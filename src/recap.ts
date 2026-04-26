@@ -108,6 +108,8 @@ interface PreviousFinding {
   threadId?: string;
   threadUrl?: string;
   authorReplyText?: string;
+  /** Login of the latest non-bot replier on this thread, if any. */
+  authorReplyLogin?: string;
 }
 
 /**
@@ -115,27 +117,50 @@ interface PreviousFinding {
  * entry per manki-authored thread that is either resolved or whose latest
  * author reply is classified `agree`. Threads without a parseable title
  * (missing severity marker) are skipped.
+ *
+ * `agree-reply` suppressions only fire when the reply author matches
+ * `prAuthorLogin`. This prevents an arbitrary third-party commenter from
+ * silently dropping findings by posting "Fixed!" on a manki thread on a
+ * public repo. `resolved-thread` suppressions are unaffected because
+ * resolving a thread already requires repository write access.
  */
-function collectInPrSuppressions(previousFindings: PreviousFinding[]): InPrSuppression[] {
+function collectInPrSuppressions(
+  previousFindings: PreviousFinding[],
+  prAuthorLogin?: string,
+): InPrSuppression[] {
   const suppressions: InPrSuppression[] = [];
   for (const pf of previousFindings) {
     if (!pf.title || pf.title.length < 3) continue;
     if (!pf.line) continue;
-    const reason = inPrSuppressionReasonFor(pf);
+    const reason = inPrSuppressionReasonFor(pf, prAuthorLogin);
     if (!reason) continue;
     const lineStart = pf.lineStart ?? pf.line;
     const lineEnd = pf.line;
-    suppressions.push({
+    const entry: InPrSuppression = {
       fingerprint: fingerprintFinding(pf.title, pf.file, lineStart, lineEnd),
       reason,
-    });
+    };
+    if (reason === 'agree-reply' && pf.authorReplyLogin) {
+      entry.authorLogin = pf.authorReplyLogin;
+    }
+    suppressions.push(entry);
   }
   return suppressions;
 }
 
-function inPrSuppressionReasonFor(pf: PreviousFinding): InPrSuppressionReason | undefined {
+function inPrSuppressionReasonFor(
+  pf: PreviousFinding,
+  prAuthorLogin?: string,
+): InPrSuppressionReason | undefined {
   if (pf.status === 'resolved') return 'resolved-thread';
-  if (classifyAuthorReply(pf.authorReplyText) === 'agree') return 'agree-reply';
+  // Only honour agree-replies from the PR author. Without this gate, any
+  // third-party commenter on a public repo could suppress lower-severity
+  // findings by posting "Fixed!" on a manki thread.
+  if (
+    prAuthorLogin &&
+    pf.authorReplyLogin === prAuthorLogin &&
+    classifyAuthorReply(pf.authorReplyText) === 'agree'
+  ) return 'agree-reply';
   return undefined;
 }
 
@@ -167,6 +192,7 @@ async function fetchRecapState(
       threadId: t.threadId,
       threadUrl: t.threadUrl,
       authorReplyText: t.authorReplyText,
+      authorReplyLogin: t.authorReplyLogin,
     }));
 
   const resolved = previousFindings.filter(
@@ -216,6 +242,7 @@ interface ReviewThread {
   lineStart: number;
   severity: FindingSeverity | 'unknown';
   authorReplyText?: string;
+  authorReplyLogin?: string;
 }
 
 async function fetchReviewThreads(
@@ -292,6 +319,7 @@ async function fetchReviewThreads(
       const lastNonBotReply = nonBotReplies[nonBotReplies.length - 1];
       const hasHumanReply = lastNonBotReply !== undefined;
       const authorReplyText = lastNonBotReply?.body;
+      const authorReplyLogin = lastNonBotReply?.author?.login;
 
       const severityMatch = firstComment?.body?.match(new RegExp(`manki:(${SEVERITY_TOKEN_PATTERN}):`));
       const severity = (severityMatch?.[1]
@@ -316,6 +344,7 @@ async function fetchReviewThreads(
         lineStart,
         severity,
         authorReplyText,
+        authorReplyLogin,
       };
     });
   } catch (error) {
