@@ -233,7 +233,7 @@ async function fetchReviewThreads(
               comments: {
                 nodes: Array<{
                   body: string;
-                  url: string;
+                  url?: string;
                   author: { login: string } | null;
                 }>;
               };
