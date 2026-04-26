@@ -603,7 +603,7 @@ export async function runReview(
         Array.from({ length: passes }, () => {
           const shuffledDiff = shuffleDiffFiles(diff);
           const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
-          return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, agentEffort, plannerResult?.language, plannerResult?.context, provenanceMap);
+          return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, { effort: agentEffort, language: plannerResult?.language, context: plannerResult?.context, provenanceMap });
         })
       );
 
@@ -693,7 +693,7 @@ export async function runReview(
             const shuffledDiff = shuffleDiffFiles(diff);
             const shuffledRawDiff = rebuildRawDiff(shuffledDiff);
             const retryEffort = agentEffortMap.get(agent.name) ?? defaultReviewerEffort;
-            return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, retryEffort, plannerResult?.language, plannerResult?.context, provenanceMap);
+            return runReviewerAgent(clients.reviewer, config, agent, shuffledRawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, { effort: retryEffort, language: plannerResult?.language, context: plannerResult?.context, provenanceMap });
           })
         );
 
@@ -755,7 +755,7 @@ export async function runReview(
     const agentPromises = team.agents.map(agent => {
       const startTime = Date.now();
       const agentEffort = agentEffortMap.get(agent.name) ?? defaultReviewerEffort;
-      return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, agentEffort, plannerResult?.language, plannerResult?.context, provenanceMap)
+      return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, { effort: agentEffort, language: plannerResult?.language, context: plannerResult?.context, provenanceMap })
         .then(agentResult => {
           completedCount++;
           agentResponseLengths.set(agent.name, agentResult.responseLength);
@@ -836,7 +836,7 @@ export async function runReview(
       const retryPromises = agentsToRetry.map(agent => {
         const startTime = Date.now();
         const retryEffort = agentEffortMap.get(agent.name) ?? defaultReviewerEffort;
-        return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, retryEffort, plannerResult?.language, plannerResult?.context, provenanceMap)
+        return runReviewerAgent(clients.reviewer, config, agent, rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, { effort: retryEffort, language: plannerResult?.language, context: plannerResult?.context, provenanceMap })
           .then(agentResult => ({ agent, agentResult, durationMs: Date.now() - startTime }))
           .catch(() => ({ agent, agentResult: null as AgentResult | null, durationMs: Date.now() - startTime }));
       });
@@ -1049,6 +1049,13 @@ interface AgentResult {
   responseLength: number;
 }
 
+interface RunReviewerAgentOptions {
+  effort?: EffortLevel;
+  language?: string;
+  context?: string;
+  provenanceMap?: ProvenanceEntry[];
+}
+
 async function runReviewerAgent(
   client: ClaudeClient,
   config: ReviewConfig,
@@ -1059,16 +1066,14 @@ async function runReviewerAgent(
   prContext?: PrContext,
   memoryContext?: string,
   linkedIssues?: LinkedIssue[],
-  effort?: EffortLevel,
-  language?: string,
-  context?: string,
-  provenanceMap?: ProvenanceEntry[],
+  options: RunReviewerAgentOptions = {},
 ): Promise<AgentResult> {
+  const { effort, language, context, provenanceMap } = options;
   const systemPrompt = buildReviewerSystemPrompt(reviewer, config, language, context);
   const userMessage = buildReviewerUserMessage(rawDiff, repoContext, fileContents, prContext, memoryContext, linkedIssues, provenanceMap);
 
-  const options = effort ? { effort } : undefined;
-  const response = await client.sendMessage(systemPrompt, userMessage, options);
+  const sendOptions = effort ? { effort } : undefined;
+  const response = await client.sendMessage(systemPrompt, userMessage, sendOptions);
   const findings = parseFindings(response.content, reviewer.name);
   return { findings, responseLength: response.content.length };
 }
