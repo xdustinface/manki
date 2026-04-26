@@ -2427,6 +2427,64 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].judgeNotes).toBe('Prior note Contradicts round 2 guidance accepted by author');
   });
 
+  it('cites the most-recent agreeing round when multiple prior rounds match', () => {
+    const makeMatchingPriorRound = (round: number) => makePriorRound([{
+      fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Naming convention') },
+      severity: 'suggestion',
+      title: 'Naming convention',
+      authorReply: 'agree',
+    }], round);
+    const makeContradictingFinding = () => makeFinding({
+      title: 'Naming convention',
+      file: 'src/a.ts',
+      line: 12,
+      severity: 'suggestion',
+      description: 'Replace the old helper and avoid the previous pattern instead.',
+    });
+
+    // Ascending input order: [round 1, round 3]. Round 3 must still be cited.
+    const ascending = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      [makeMatchingPriorRound(1), makeMatchingPriorRound(3)],
+    );
+    expect(ascending.demotedCount).toBe(1);
+    expect(ascending.findings[0].severity).toBe('nitpick');
+    expect(ascending.findings[0].tags).toContain('contradicts-prior-round');
+    expect(ascending.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+
+    // Descending input order: [round 3, round 1]. Without the descending sort, `find()` would
+    // still happen to land on round 3 above; supplying the rounds reversed proves the citation
+    // tracks recency rather than input position.
+    const descending = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      [makeMatchingPriorRound(3), makeMatchingPriorRound(1)],
+    );
+    expect(descending.demotedCount).toBe(1);
+    expect(descending.findings[0].severity).toBe('nitpick');
+    expect(descending.findings[0].tags).toContain('contradicts-prior-round');
+    expect(descending.findings[0].judgeNotes).toBe('Contradicts round 3 guidance accepted by author');
+
+    // Out-of-window round: round 3 has lineStart 100 (outside LINE_WINDOW from line 12),
+    // round 1 has lineStart 10 (within window). After sorting descending, find() visits
+    // round 3 first, but it falls through because of the window check, leaving round 1 as
+    // the correct citation.
+    const outOfWindowRound3 = (round: number, lineStart: number) =>
+      makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart, lineEnd: lineStart, slug: titleToSlug('Naming convention') },
+        severity: 'suggestion',
+        title: 'Naming convention',
+        authorReply: 'agree',
+      }], round);
+
+    const mixedWindow = applyCrossRoundSuppression(
+      [makeContradictingFinding()],
+      // Round 3 is outside LINE_WINDOW (line 100), round 1 is within (line 10).
+      [outOfWindowRound3(3, 100), outOfWindowRound3(1, 10)],
+    );
+    expect(mixedWindow.demotedCount).toBe(1);
+    expect(mixedWindow.findings[0].judgeNotes).toBe('Contradicts round 1 guidance accepted by author');
+  });
+
   it('preserves required severity with reversal word and prior agree (prompt injection guard)', () => {
     // Adversary injects reversal word into a round-2 required finding whose slug matches
     // a round-1 agreed finding. The contradiction path must never fire for required findings.

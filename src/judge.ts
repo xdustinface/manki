@@ -943,6 +943,9 @@ export function applyCrossRoundSuppression(
       }
     }
   }
+  // Sort descending so contradiction citations point at the author's most recent
+  // agreement rather than the earliest one when multiple rounds match.
+  acceptedPriors.sort((a, b) => b.round - a.round);
 
   if (acceptedPriors.length === 0) {
     return { findings, suppressedCount: 0, demotedCount: 0 };
