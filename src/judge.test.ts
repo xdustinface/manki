@@ -2089,6 +2089,33 @@ describe('computeProvenanceMap', () => {
     expect(entries[0].lineStart).toBe(20);
     expect(entries[0].lineEnd).toBe(20);
   });
+
+  it('matches a 3-line suggestedFix against contiguous added lines in the same hunk', () => {
+    const multiLineFix = [
+      'const clamped = Math.min(value, SYSTEM_TIME_MAX);',
+      'if (clamped !== value) logger.warn("time clamped", { value, clamped });',
+      'return clamped;',
+    ].join('\n');
+    const rounds = [makeRound(1, [makeHandoverFinding({ suggestedFix: multiLineFix })])];
+    // The diff adds 5 lines: a preamble, then the 3-line fix, then a closing brace.
+    const diff = buildDiff('src/a.ts', 10, [
+      'function clampTime(value: number): number {',
+      'const clamped = Math.min(value, SYSTEM_TIME_MAX);',
+      'if (clamped !== value) logger.warn("time clamped", { value, clamped });',
+      'return clamped;',
+      '}',
+    ]);
+
+    const entries = computeProvenanceMap(rounds, diff);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      file: 'src/a.ts',
+      lineStart: 10,
+      lineEnd: 14,
+      originatingRound: 1,
+      originatingTitle: 'Clamp future time',
+    });
+  });
 });
 
 describe('buildJudgeUserMessage with linked issues', () => {
