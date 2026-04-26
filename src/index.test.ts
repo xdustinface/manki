@@ -1509,6 +1509,14 @@ describe('runFullReview orchestration', () => {
     // Outputs set
     expect(jest.mocked(core.setOutput)).toHaveBeenCalledWith('verdict', 'REQUEST_CHANGES');
     expect(jest.mocked(core.setOutput)).toHaveBeenCalledWith('findings_count', '1');
+    // `severity_counts` uses the new key shape (#593): blocker/warning/suggestion/nitpick.
+    const setOutputCalls = jest.mocked(core.setOutput).mock.calls;
+    const severityCountsCall = setOutputCalls.find(c => c[0] === 'severity_counts');
+    expect(severityCountsCall).toBeTruthy();
+    const counts = JSON.parse(severityCountsCall![1] as string);
+    expect(counts).toEqual({ blocker: 1, warning: 0, suggestion: 0, nitpick: 0 });
+    expect(counts).not.toHaveProperty('required');
+    expect(counts).not.toHaveProperty('nit');
   });
 
   it('populates enriched stats fields (agentMetrics, judgeMetrics, fileMetrics, model split)', async () => {
