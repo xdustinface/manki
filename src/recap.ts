@@ -199,8 +199,9 @@ async function fetchRecapState(
     f => f.status === 'resolved' ||
     (f.status === 'replied' && classifyAuthorReply(f.authorReplyText) === 'agree'),
   );
-  // open+agree findings deliberately stay in 'Still Open' so agents remain unbiased;
-  // applyInPrSuppression removes them post-LLM.
+  // open-status findings (no human reply yet) stay in 'Still Open'. Only
+  // replied+agree threads are promoted to Resolved above; applyInPrSuppression
+  // handles post-LLM suppression for resolved-thread and agreed replied-thread fingerprints.
   const open = previousFindings.filter(f => f.status === 'open');
 
   let recapContext = '';

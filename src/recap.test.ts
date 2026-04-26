@@ -879,11 +879,10 @@ describe('fetchRecapState', () => {
     expect(state.recapContext).not.toContain('### Still Open');
   });
 
-  // Locks in the bias-prevention invariant documented at recap.ts:174-176:
-  // open+agree findings must remain in 'Still Open' (not promoted to Resolved
-  // alongside replied+agree). Post-LLM `applyInPrSuppression` removes them so
-  // agents see them as still-open context but they are not surfaced again.
-  it('keeps open+agree findings in Still Open section of recapContext (not Resolved)', async () => {
+  // Locks in the invariant that open-status findings (no human reply yet) stay in
+  // 'Still Open' and are not promoted to Resolved. Only replied+agree threads are
+  // promoted; `applyInPrSuppression` handles any post-LLM suppression separately.
+  it('keeps open findings (no human reply) in Still Open section of recapContext (not Resolved)', async () => {
     const octokit = mockOctokit([
       makeThread({
         id: 't1',
