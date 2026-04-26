@@ -189,9 +189,9 @@ The action exposes outputs you can chain into later workflow steps: `review_id`,
 ```
 
 ```yaml
-# Label PRs that have any required-severity findings
+# Label PRs that have any blocker-severity findings
 - name: Label blocking PRs
-  if: fromJSON(steps.manki.outputs.severity_counts).required > 0
+  if: fromJSON(steps.manki.outputs.severity_counts).blocker > 0
   run: gh pr edit ${{ github.event.number }} --add-label blocking-findings
   env:
     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
