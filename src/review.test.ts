@@ -1639,6 +1639,37 @@ describe('runReview', () => {
     };
   }
 
+  function buildPriorRound(round: number, findings: HandoverFinding[]): HandoverRound {
+    return {
+      round,
+      commitSha: `sha${round}`,
+      timestamp: `2025-01-0${round}T00:00:00Z`,
+      findings,
+    };
+  }
+
+  function makePriorWarningFinding(overrides: Partial<HandoverFinding> = {}): HandoverFinding {
+    return {
+      fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+      severity: 'warning',
+      title: 'Old issue',
+      authorReply: 'none',
+      threadId: 'T1',
+      ...overrides,
+    };
+  }
+
+  function makePriorOpenThread(overrides: Partial<OpenThread> = {}): OpenThread {
+    return {
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'All clear.' });
@@ -2344,25 +2375,8 @@ describe('runReview', () => {
       threadEvaluations: [],
     });
 
-    const priorRounds: HandoverRound[] = [{
-      round: 1,
-      commitSha: 'sha1',
-      timestamp: '2025-01-01T00:00:00Z',
-      findings: [{
-        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
-        severity: 'warning',
-        title: 'Old issue',
-        authorReply: 'none',
-        threadId: 'T1',
-      }],
-    }];
-    const openThreads: OpenThread[] = [{
-      threadId: 'T1',
-      title: 'Old issue',
-      file: 'src/x.ts',
-      line: 10,
-      severity: 'warning',
-    }];
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
@@ -2396,18 +2410,7 @@ describe('runReview', () => {
       threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
     });
 
-    const priorRounds: HandoverRound[] = [{
-      round: 1,
-      commitSha: 'sha1',
-      timestamp: '2025-01-01T00:00:00Z',
-      findings: [{
-        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
-        severity: 'warning',
-        title: 'Old issue',
-        authorReply: 'none',
-        threadId: 'T1',
-      }],
-    }];
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
     const openThreads: OpenThread[] = [];
 
     const result = await runReview(
@@ -2442,25 +2445,48 @@ describe('runReview', () => {
       threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
     });
 
-    const priorRounds: HandoverRound[] = [{
-      round: 1,
-      commitSha: 'sha1',
-      timestamp: '2025-01-01T00:00:00Z',
-      findings: [{
-        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
-        severity: 'warning',
-        title: 'Old issue',
-        authorReply: 'none',
-        threadId: 'T1',
-      }],
-    }];
-    const openThreads: OpenThread[] = [{
-      threadId: 'T1',
-      title: 'Old issue',
-      file: 'src/x.ts',
-      line: 10,
-      severity: 'warning',
-    }];
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('sorts `priorRounds` by `round` before flattening, so an out-of-order array still picks the latest round', async () => {
+    // The caller may pass `priorRounds` out of order (e.g. round 2 first,
+    // round 1 second). `dedupePriorFindings` keeps the last entry per
+    // fingerprint, so chronological order matters: without the sort, the
+    // stale round 1 `agree` would overwrite the round 2 reopen and falsely
+    // approve the PR.
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const round1 = buildPriorRound(1, [makePriorWarningFinding({ authorReply: 'agree' })]);
+    const round2 = buildPriorRound(2, [makePriorWarningFinding({ authorReply: 'none' })]);
+    // Pass rounds out of chronological order on purpose.
+    const priorRounds: HandoverRound[] = [round2, round1];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
