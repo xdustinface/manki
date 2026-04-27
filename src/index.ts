@@ -10,7 +10,7 @@ import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, 
 import { isEmptyInterRoundDiff } from './judge';
 import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
-import { runReview, determineVerdict, selectTeam } from './review';
+import { collectPriorRoundAgents, runReview, determineVerdict, selectTeam } from './review';
 import { DEFENSIVE_HARDENING_TAG, DashboardData, PrContext, PrHandover, ReviewMetadata, ReviewStats } from './types';
 import {
   fetchPRDiff,
@@ -543,9 +543,7 @@ async function runFullReview(
     // Names of every agent that participated in any prior round of this PR.
     // Used to pin the team across rounds so the roster grows monotonically:
     // an agent that flagged something earlier always reviews later rounds.
-    const priorRoundAgents: string[] = handover
-      ? Array.from(new Set(handover.rounds.flatMap(r => r.agents ?? [])))
-      : [];
+    const priorRoundAgents = collectPriorRoundAgents(handover?.rounds);
 
     function scheduleDashboardFlush(): void {
       if (dashboardFlushTimer) clearTimeout(dashboardFlushTimer);

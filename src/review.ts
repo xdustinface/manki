@@ -591,7 +591,7 @@ function heuristicFallback(
 // Collects the union of agent names that participated in any prior round of
 // this PR. Used to pin the team across rounds so the roster grows
 // monotonically: an agent that flagged something earlier reviews later rounds.
-function collectPriorRoundAgents(priorRounds?: HandoverRound[]): string[] {
+export function collectPriorRoundAgents(priorRounds?: HandoverRound[]): string[] {
   if (!priorRounds || priorRounds.length === 0) return [];
   const seen = new Set<string>();
   const out: string[] = [];
