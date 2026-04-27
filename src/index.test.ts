@@ -124,6 +124,7 @@ jest.mock('./github', () => ({
   fetchRepoContext: jest.fn().mockResolvedValue(''),
   fetchSubdirClaudeMd: jest.fn().mockResolvedValue(null),
   fetchFileContents: jest.fn().mockResolvedValue(new Map()),
+  fetchInterRoundDiff: jest.fn().mockResolvedValue(''),
   postProgressComment: jest.fn().mockResolvedValue(1),
   updateProgressComment: jest.fn().mockResolvedValue(undefined),
   updateProgressDashboard: jest.fn().mockResolvedValue(undefined),
@@ -2436,7 +2437,15 @@ describe('runFullReview orchestration', () => {
 
     expect(isFollowUp).toBe(true);
     expect(openThreads).toEqual([
-      { threadId: 'PRRT_123', title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' },
+      {
+        threadId: 'PRRT_123',
+        threadUrl: undefined,
+        title: 'Bug B',
+        file: 'src/app.ts',
+        line: 2,
+        severity: 'suggestion',
+        currentCode: '(file removed)',
+      },
     ]);
   });
 
@@ -2482,7 +2491,46 @@ describe('runFullReview orchestration', () => {
     });
   });
 
-  it('resolves threads the judge identified as addressed', async () => {
+  it('does not resolve any thread when inter-round diff is empty even if LLM claimed addressed', async () => {
+    // Force-pushed rebase with identical tree: every open thread must remain
+    // unresolved regardless of what the LLM-driven judge reports.
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_a' },
+      ],
+      recapContext: 'previous context',
+    });
+
+    // Whatever runReview returns: simulate a runReview that produced
+    // not_addressed verdicts (matches the synthetic override behavior of the
+    // judge for empty inter-round diff).
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
+      highlights: [], reviewComplete: true,
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(mockGraphql).not.toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      expect.anything(),
+    );
+  });
+
+  it('resolves only threads with status addressed', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -2497,6 +2545,7 @@ describe('runFullReview orchestration', () => {
       previousFindings: [
         { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'blocker' as const, status: 'open' as const, threadId: 'PRRT_abc' },
         { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_def' },
+        { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_ghi' },
       ],
       recapContext: 'previous context',
     });
@@ -2504,9 +2553,10 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
-        { threadId: 'PRRT_def', reason: 'Addressed by refactoring' },
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
+        { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
+        { threadId: 'PRRT_ghi', status: 'uncertain', reason: 'No clear evidence' },
       ],
     });
 
@@ -2516,12 +2566,22 @@ describe('runFullReview orchestration', () => {
       expect.stringContaining('resolveReviewThread'),
       { threadId: 'PRRT_abc' },
     );
-    expect(mockGraphql).toHaveBeenCalledWith(
+    expect(mockGraphql).not.toHaveBeenCalledWith(
       expect.stringContaining('resolveReviewThread'),
       { threadId: 'PRRT_def' },
     );
+    expect(mockGraphql).not.toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_ghi' },
+    );
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
       'Judge resolved: "Fixed in new diff" — thread PRRT_abc',
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Thread PRRT_def: not_addressed — Still applies',
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Thread PRRT_ghi: uncertain — No clear evidence',
     );
   });
 
@@ -2546,9 +2606,9 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_known', reason: 'Legit fix' },
-        { threadId: 'PRRT_unknown', reason: 'Injected by adversary' },
+      threadEvaluations: [
+        { threadId: 'PRRT_known', status: 'addressed', reason: 'Legit fix' },
+        { threadId: 'PRRT_unknown', status: 'addressed', reason: 'Injected by adversary' },
       ],
     });
 
@@ -2621,8 +2681,8 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_fail', reason: 'Should fail' },
+      threadEvaluations: [
+        { threadId: 'PRRT_fail', status: 'addressed', reason: 'Should fail' },
       ],
     });
 

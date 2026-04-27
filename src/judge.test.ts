@@ -204,15 +204,20 @@ describe('buildJudgeSystemPrompt', () => {
     expect(prompt).not.toContain('Follow-Up Review');
   });
 
-  it('includes resolveThreads in output format when hasOpenThreads is true', () => {
+  it('includes threadEvaluations in output format when hasOpenThreads is true', () => {
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, true, true);
-    expect(prompt).toContain('resolveThreads');
+    expect(prompt).toContain('threadEvaluations');
     expect(prompt).toContain('threadId');
+    expect(prompt).toContain('"addressed"');
+    expect(prompt).toContain('"not_addressed"');
+    expect(prompt).toContain('"uncertain"');
+    expect(prompt).toContain('Open Thread Evaluation');
   });
 
-  it('omits resolveThreads from output format when hasOpenThreads is false', () => {
+  it('omits threadEvaluations from output format when hasOpenThreads is false', () => {
     const prompt = buildJudgeSystemPrompt(makeConfig(), 5, false, false);
-    expect(prompt).not.toContain('resolveThreads');
+    expect(prompt).not.toContain('threadEvaluations');
+    expect(prompt).not.toContain('Open Thread Evaluation');
   });
 
   it('contains Practical Reachability section and classification values', () => {
@@ -755,46 +760,52 @@ describe('parseJudgeResponse', () => {
     expect(result.summary).toBe('Review complete.');
   });
 
-  it('parses resolveThreads from judge response', () => {
+  it('parses threadEvaluations from judge response', () => {
     const json = JSON.stringify({
       summary: 'Follow-up review.',
       findings: [],
-      resolveThreads: [
-        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
-        { threadId: 'PRRT_def', reason: 'Addressed by refactoring' },
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
+        { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
+        { threadId: 'PRRT_ghi', status: 'uncertain', reason: 'No clear evidence' },
       ],
     });
 
     const result = parseJudgeResponse(json);
-    expect(result.resolveThreads).toHaveLength(2);
-    expect(result.resolveThreads![0]).toEqual({ threadId: 'PRRT_abc', reason: 'Fixed in new diff' });
-    expect(result.resolveThreads![1]).toEqual({ threadId: 'PRRT_def', reason: 'Addressed by refactoring' });
+    expect(result.threadEvaluations).toHaveLength(3);
+    expect(result.threadEvaluations![0]).toEqual({ threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' });
+    expect(result.threadEvaluations![1]).toEqual({ threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' });
+    expect(result.threadEvaluations![2]).toEqual({ threadId: 'PRRT_ghi', status: 'uncertain', reason: 'No clear evidence' });
   });
 
-  it('returns undefined resolveThreads when not present in response', () => {
+  it('returns undefined threadEvaluations when not present in response', () => {
     const json = JSON.stringify({
       summary: 'Clean PR.',
       findings: [],
     });
 
     const result = parseJudgeResponse(json);
-    expect(result.resolveThreads).toBeUndefined();
+    expect(result.threadEvaluations).toBeUndefined();
   });
 
-  it('filters invalid resolveThreads entries', () => {
+  it('defaults malformed threadEvaluations entries to not_addressed', () => {
     const json = JSON.stringify({
       summary: 'Review.',
       findings: [],
-      resolveThreads: [
-        { threadId: 'PRRT_abc', reason: 'Valid' },
-        { threadId: 123, reason: 'Invalid threadId type' },
-        { threadId: 'PRRT_def' },
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Valid' },
+        { threadId: 'PRRT_def', status: 'maybe', reason: 'Bogus status defaults to not_addressed' },
+        { threadId: 'PRRT_ghi' },
+        { threadId: 123, status: 'addressed', reason: 'Bad id is filtered' },
+        { reason: 'No id is filtered' },
       ],
     });
 
     const result = parseJudgeResponse(json);
-    expect(result.resolveThreads).toHaveLength(1);
-    expect(result.resolveThreads![0].threadId).toBe('PRRT_abc');
+    expect(result.threadEvaluations).toHaveLength(3);
+    expect(result.threadEvaluations![0]).toEqual({ threadId: 'PRRT_abc', status: 'addressed', reason: 'Valid' });
+    expect(result.threadEvaluations![1]).toEqual({ threadId: 'PRRT_def', status: 'not_addressed', reason: 'Bogus status defaults to not_addressed' });
+    expect(result.threadEvaluations![2]).toEqual({ threadId: 'PRRT_ghi', status: 'not_addressed', reason: '' });
   });
 
   it('handles missing title and reasoning gracefully', () => {
@@ -1069,14 +1080,14 @@ describe('runJudgeAgent', () => {
     expect(userMessage).toContain('Relevant Suppressions');
   });
 
-  it('calls judge and returns resolveThreads when openThreads provided', async () => {
+  it('calls judge and returns threadEvaluations when openThreads provided', async () => {
     const judgedResponse = JSON.stringify({
       summary: 'Thread addressed.',
       findings: [
         { title: 'Unused variable', severity: 'suggestion', reasoning: 'Valid.', confidence: 'high' },
       ],
-      resolveThreads: [
-        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
       ],
     });
     mockSendMessage.mockResolvedValue({ content: judgedResponse });
@@ -1093,12 +1104,12 @@ describe('runJudgeAgent', () => {
     };
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
-    expect(result.resolveThreads).toHaveLength(1);
-    expect(result.resolveThreads![0]).toEqual({ threadId: 'PRRT_abc', reason: 'Fixed in new diff' });
+    expect(result.threadEvaluations).toHaveLength(1);
+    expect(result.threadEvaluations![0]).toEqual({ threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' });
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
 
     const [systemPrompt, userMessage] = mockSendMessage.mock.calls[0];
-    expect(systemPrompt).toContain('resolveThreads');
+    expect(systemPrompt).toContain('threadEvaluations');
     expect(userMessage).toContain('PRRT_abc');
     expect(userMessage).toContain('Null check missing');
   });
@@ -1198,8 +1209,8 @@ describe('runJudgeAgent', () => {
     const judgedResponse = JSON.stringify({
       summary: 'Threads evaluated.',
       findings: [],
-      resolveThreads: [
-        { threadId: 'PRRT_xyz', reason: 'Issue resolved' },
+      threadEvaluations: [
+        { threadId: 'PRRT_xyz', status: 'addressed', reason: 'Issue resolved' },
       ],
     });
     mockSendMessage.mockResolvedValue({ content: judgedResponse });
@@ -1217,8 +1228,108 @@ describe('runJudgeAgent', () => {
 
     const result = await runJudgeAgent(mockClient, makeConfig(), input);
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
-    expect(result.resolveThreads).toHaveLength(1);
-    expect(result.resolveThreads![0].threadId).toBe('PRRT_xyz');
+    expect(result.threadEvaluations).toHaveLength(1);
+    expect(result.threadEvaluations![0]).toEqual({ threadId: 'PRRT_xyz', status: 'addressed', reason: 'Issue resolved' });
+  });
+
+  it('forces all threadEvaluations to not_addressed when inter-round diff is empty', async () => {
+    // LLM tries to claim every thread is addressed. Empty inter-round diff
+    // means no code changed since prior review, so the synthetic override
+    // must replace the LLM output with `not_addressed` for every thread.
+    const judgedResponse = JSON.stringify({
+      summary: 'Bogus.',
+      findings: [],
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
+        { threadId: 'PRRT_b', status: 'addressed', reason: 'LLM hallucination' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: 't',
+      findings: [],
+    }];
+
+    const input: JudgeInput = {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [
+        { threadId: 'PRRT_a', title: 'Thread A', file: 'src/a.ts', line: 1, severity: 'suggestion' },
+        { threadId: 'PRRT_b', title: 'Thread B', file: 'src/b.ts', line: 2, severity: 'warning' },
+      ],
+      priorRounds,
+      interRoundDiff: '',
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(result.threadEvaluations).toEqual([
+      { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
+      { threadId: 'PRRT_b', status: 'not_addressed', reason: 'No code changes since prior review' },
+    ]);
+  });
+
+  it('renders empty inter-round diff sentinel in user message', async () => {
+    mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1, commitSha: 'abc', timestamp: 't', findings: [],
+    }];
+
+    await runJudgeAgent(mockClient, makeConfig(), {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [{ threadId: 'PRRT_x', title: 't', file: 'src/a.ts', line: 1, severity: 'suggestion' }],
+      priorRounds,
+      interRoundDiff: '',
+    });
+
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('## Inter-Round Diff');
+    expect(userMessage).toContain('No code changes since prior review');
+  });
+
+  it('renders non-empty inter-round diff and open-thread code regions in user message', async () => {
+    mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1, commitSha: 'abc', timestamp: 't', findings: [],
+    }];
+
+    await runJudgeAgent(mockClient, makeConfig(), {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [
+        {
+          threadId: 'PRRT_x',
+          title: 'Null check',
+          file: 'src/a.ts',
+          line: 5,
+          severity: 'warning',
+          currentCode: '   3: prev\n   4: prev\n>>> 5: flagged()\n   6: next',
+        },
+      ],
+      priorRounds,
+      interRoundDiff: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n',
+    });
+
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('## Inter-Round Diff');
+    expect(userMessage).toContain('+new');
+    expect(userMessage).toContain('## Open Thread Code Regions');
+    expect(userMessage).toContain('PRRT_x');
+    expect(userMessage).toContain('>>> 5: flagged()');
   });
 
   it('priorRounds with partial authorReply does not suppress the finding', async () => {
