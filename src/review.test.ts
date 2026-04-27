@@ -4470,12 +4470,20 @@ describe('selectTeam with teamSizeOverride', () => {
     // Heuristic on a tiny diff would not include Maintainability & Readability
     // (no test paths, no large file count). Pinning must keep it in.
     const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Maintainability & Readability'];
-    const roster = selectTeam(diff, config, undefined, undefined, undefined, prior);
-    expect(roster.agents.map(a => a.name)).toContain('Maintainability & Readability');
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, undefined, undefined, prior);
+      expect(roster.agents.map(a => a.name)).toContain('Maintainability & Readability');
+      expect(infoSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^pinned team: inherited \[.*\], added \[.*\]$/),
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
   });
 
   it('heuristic path places prior agents before heuristic fills', () => {
-    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const diff = makeDiff({ totalAdditions: 300, totalDeletions: 100 });
     const config = makeConfig();
     // Include Security & Safety (a core agent) alongside Maintainability & Readability
     // so we can confirm core agents appear before the non-core prior agent.
@@ -4490,9 +4498,8 @@ describe('selectTeam with teamSizeOverride', () => {
     // Heuristic fills (agents not in the prior list and not core) come after prior agents.
     const coreAndPrior = new Set(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Maintainability & Readability']);
     const firstHeuristicFill = names.findIndex(n => !coreAndPrior.has(n));
-    if (firstHeuristicFill !== -1) {
-      expect(maintIdx).toBeLessThan(firstHeuristicFill);
-    }
+    expect(firstHeuristicFill).toBeGreaterThan(-1);
+    expect(maintIdx).toBeLessThan(firstHeuristicFill);
   });
 
   it('skips unknown prior-round agent name and warns', () => {
