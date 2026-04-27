@@ -3850,10 +3850,15 @@ describe('runReview', () => {
       false, [], [], priorRounds,
     );
 
-    // collectPriorRoundAgents merges: Security, Testing, Maintainability
-    expect(result.agentNames).toEqual(
-      expect.arrayContaining(['Security & Safety', 'Testing & Coverage', 'Maintainability & Readability']),
-    );
+    // Core agents come first, then prior-round non-core agents in merge order.
+    // CORE_AGENTS = [Security, Architecture, Correctness]; prior non-core = [Testing, Maintainability].
+    expect(result.agentNames).toEqual([
+      'Security & Safety',
+      'Architecture & Design',
+      'Correctness & Logic',
+      'Testing & Coverage',
+      'Maintainability & Readability',
+    ]);
   });
 });
 

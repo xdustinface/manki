@@ -296,6 +296,14 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
   await runFullReview(owner, repo, prNumber, pr.head.sha, pr.base.ref, prContext, pr.user?.login);
 }
 
+function reconcileDashboardAgents(dashboard: DashboardData, names: string[]): void {
+  dashboard.agentCount = names.length;
+  dashboard.agentProgress = names.map(name => {
+    const existing = dashboard.agentProgress?.find(a => a.name === name);
+    return existing ?? { name, status: 'done' as const };
+  });
+}
+
 async function runFullReview(
   owner: string,
   repo: string,
@@ -846,20 +854,12 @@ async function runFullReview(
         judgeEffort: result.plannerResult.judgeEffort,
         prType: result.plannerResult.prType,
       };
-      dashboard.agentCount = result.agentNames.length;
-      dashboard.agentProgress = result.agentNames.map(name => {
-        const existing = dashboard.agentProgress?.find(a => a.name === name);
-        return existing ?? { name, status: 'done' as const };
-      });
+      reconcileDashboardAgents(dashboard, result.agentNames);
     } else if (priorRoundAgents.length > 0) {
       // Non-planner path: reconcile the dashboard with the actual resolved team.
       // The initial dashboard was built without priorRoundAgents (not yet loaded),
       // so on round 2+ it would show a stale, too-small agent list.
-      dashboard.agentCount = result.agentNames.length;
-      dashboard.agentProgress = result.agentNames.map(name => {
-        const existing = dashboard.agentProgress?.find(a => a.name === name);
-        return existing ?? { name, status: 'done' as const };
-      });
+      reconcileDashboardAgents(dashboard, result.agentNames);
     }
 
     const allJudgedForDashboard = result.allJudgedFindings || result.findings;
