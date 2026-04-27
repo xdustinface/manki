@@ -119,7 +119,7 @@ export interface PrHandover {
 
 export type ReviewVerdict = 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES';
 
-export type VerdictReason = 'required_present' | 'novel_suggestion' | 'only_nit_or_suggestion';
+export type VerdictReason = 'required_present' | 'novel_suggestion' | 'prior_unaddressed' | 'only_nit_or_suggestion';
 
 export interface ReviewResult {
   verdict: ReviewVerdict;

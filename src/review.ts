@@ -1016,7 +1016,7 @@ export async function runReview(
   }
 
   const priorFindingsFlat: HandoverFinding[] = (priorRounds ?? []).flatMap(r => r.findings);
-  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat);
+  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat, openThreads, judgeThreadEvaluations);
 
   const summary = judgeSummary;
 
@@ -1342,7 +1342,14 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
  * Decision order:
  *   1. any surviving `blocker` finding → REQUEST_CHANGES / required_present
  *   2. any `warning` that is NOT a prior-round dismissed match → REQUEST_CHANGES / novel_suggestion
- *   3. otherwise (only suggestions/nitpicks / previously-dismissed warnings / empty) → APPROVE / only_nit_or_suggestion
+ *   3. any prior-round `warning`/`blocker` still unresolved → REQUEST_CHANGES / prior_unaddressed
+ *   4. otherwise (only suggestions/nitpicks / previously-dismissed warnings / empty) → APPROVE / only_nit_or_suggestion
+ *
+ * A prior `warning`/`blocker` is "unresolved" when the author has not agreed to
+ * dismiss it (`authorReply !== 'agree'`), the underlying GitHub thread is still
+ * in `openThreads`, and the judge did not mark it `addressed` in the current
+ * round's `threadEvaluations`. A prior finding without a `threadId` is treated
+ * as unresolved, which conservatively blocks APPROVE for older handover formats.
  *
  * Nitpicks and suggestions are non-blocking, and prior-round dismissed warnings
  * have already been acknowledged by the author. All these cases approve the PR.
@@ -1350,6 +1357,8 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 export function determineVerdict(
   findings: Finding[],
   priorRounds?: HandoverFinding[],
+  openThreads?: OpenThread[],
+  threadEvaluations?: ThreadEvaluation[],
 ): { verdict: ReviewVerdict; verdictReason: VerdictReason } {
   if (findings.some(f => f.severity === 'blocker')) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'required_present' };
@@ -1361,6 +1370,22 @@ export function determineVerdict(
   );
   if (hasNovelWarning) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'novel_suggestion' };
+  }
+
+  const openThreadIds = new Set((openThreads ?? []).map(t => t.threadId));
+  const addressedThreadIds = new Set(
+    (threadEvaluations ?? []).filter(e => e.status === 'addressed').map(e => e.threadId),
+  );
+  const hasUnresolvedPrior = prior.some(p => {
+    if (p.severity !== 'warning' && p.severity !== 'blocker') return false;
+    if (p.authorReply === 'agree') return false;
+    if (!p.threadId) return true;
+    if (!openThreadIds.has(p.threadId)) return false;
+    if (addressedThreadIds.has(p.threadId)) return false;
+    return true;
+  });
+  if (hasUnresolvedPrior) {
+    return { verdict: 'REQUEST_CHANGES', verdictReason: 'prior_unaddressed' };
   }
 
   return { verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' };

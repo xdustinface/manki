@@ -24,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, OpenThread, ThreadEvaluation, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent, computeProvenanceMap } from './judge';
 import { applySuppressions } from './memory';
 
@@ -567,6 +567,110 @@ describe('determineVerdict', () => {
     }];
     expect(determineVerdict(findings, priors).verdict).toBe('REQUEST_CHANGES');
     expect(determineVerdict(findings, priors).verdictReason).toBe('novel_suggestion');
+  });
+
+  describe('unresolved prior findings', () => {
+    const makePriorWarning = (overrides: Partial<HandoverFinding> = {}): HandoverFinding => ({
+      fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+      severity: 'warning',
+      title: 'Old issue',
+      authorReply: 'none',
+      threadId: 'T1',
+      ...overrides,
+    });
+    const makeOpenThread = (overrides: Partial<OpenThread> = {}): OpenThread => ({
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+      ...overrides,
+    });
+    const nitpick: Finding = {
+      severity: 'nitpick', title: 'Tiny thing', file: 'src/y.ts', line: 1, description: 'd', reviewers: ['r'],
+    };
+
+    it('blocks APPROVE on a nit-only round when a prior warning is still open', () => {
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('approves when the prior warning was author-agreed', () => {
+      const priors = [makePriorWarning({ authorReply: 'agree' })];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open, []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('approves when the prior thread is no longer in openThreads (resolved on GitHub)', () => {
+      const priors = [makePriorWarning()];
+      const result = determineVerdict([nitpick], priors, [], []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('approves when the judge marked the prior thread addressed in this round', () => {
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const evals: ThreadEvaluation[] = [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }];
+      const result = determineVerdict([nitpick], priors, open, evals);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('still blocks when the judge marked the prior thread not_addressed or uncertain', () => {
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const notAddressed: ThreadEvaluation[] = [{ threadId: 'T1', status: 'not_addressed', reason: 'still missing' }];
+      expect(determineVerdict([nitpick], priors, open, notAddressed).verdictReason).toBe('prior_unaddressed');
+      const uncertain: ThreadEvaluation[] = [{ threadId: 'T1', status: 'uncertain', reason: 'cannot tell' }];
+      expect(determineVerdict([nitpick], priors, open, uncertain).verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('blocks APPROVE on an unresolved prior blocker', () => {
+      const priors = [makePriorWarning({ severity: 'blocker' })];
+      const open = [makeOpenThread({ severity: 'blocker' })];
+      const result = determineVerdict([nitpick], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('first review round (no priors) falls through to existing rules', () => {
+      const result = determineVerdict([nitpick], [], [], []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('treats a prior warning without threadId as unresolved (conservative default)', () => {
+      const priors = [makePriorWarning({ threadId: undefined })];
+      const open = [makeOpenThread({ threadId: 'OTHER' })];
+      const result = determineVerdict([nitpick], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('novel current-round warning takes precedence over an unresolved prior', () => {
+      const novelWarning: Finding = {
+        severity: 'warning', title: 'Brand new', file: 'src/z.ts', line: 5, description: 'd', reviewers: ['r'],
+      };
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([novelWarning], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('novel_suggestion');
+    });
+
+    it('ignores prior findings that are not warning or blocker (e.g. suggestion)', () => {
+      const priorSuggestion = makePriorWarning({ severity: 'suggestion' });
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [priorSuggestion], open, []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
   });
 });
 
