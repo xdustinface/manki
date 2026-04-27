@@ -1338,8 +1338,12 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 
 /**
  * Collapse multi-round prior findings to one entry per logical issue, keeping
- * the most recent round's view. Identity is `threadId` when present, otherwise
- * the fingerprint tuple. Callers must pass `priorRounds` in chronological order
+ * the most recent round's view. Identity is the fingerprint tuple, which is
+ * always present and stable across rounds. `threadId` is intentionally not
+ * used as the key because older handover rounds may have recorded the same
+ * finding without a `threadId` (the field was added later), and a mixed
+ * presence across rounds would otherwise split one logical finding into two
+ * surviving entries. Callers must pass `priorRounds` in chronological order
  * (round 1 first, latest last). A finding raised in round 1 with
  * `authorReply: 'none'` and re-raised in round 2 with `authorReply: 'agree'`
  * collapses to the round 2 entry, so the agreement is honored rather than the
@@ -1348,9 +1352,7 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 function dedupePriorFindings(priorRounds: HandoverFinding[]): HandoverFinding[] {
   const byKey = new Map<string, HandoverFinding>();
   for (const p of priorRounds) {
-    const key = p.threadId
-      ? `t:${p.threadId}`
-      : `f:${p.fingerprint.file}:${p.fingerprint.lineStart}:${p.fingerprint.lineEnd}:${p.fingerprint.slug}`;
+    const key = `f:${p.fingerprint.file}:${p.fingerprint.lineStart}:${p.fingerprint.lineEnd}:${p.fingerprint.slug}`;
     byKey.set(key, p);
   }
   return Array.from(byKey.values());
@@ -1377,12 +1379,11 @@ function dedupePriorFindings(priorRounds: HandoverFinding[]): HandoverFinding[] 
  * GitHub thread state (`openThreads`) or from an explicit author agreement
  * captured in `authorReply`.
  *
- * Multi-round priors are collapsed to one entry per `threadId` (or per
- * fingerprint when no `threadId` is recorded), keeping the most recent
- * round's `authorReply`. Callers must pass `priorRounds` in chronological
- * order. Without this dedup, a stale round 1 `authorReply: 'none'` would
- * still match `.some(...)` even if round 2 captured an `agree` for the same
- * thread.
+ * Multi-round priors are collapsed to one entry per fingerprint, keeping the
+ * most recent round's `authorReply` and `threadId`. Callers must pass
+ * `priorRounds` in chronological order. Without this dedup, a stale round 1
+ * `authorReply: 'none'` would still match `.some(...)` even if round 2
+ * captured an `agree` for the same thread.
  *
  * Contract for `openThreads`: callers must pass the result of a successful
  * GitHub thread fetch. Both `undefined` and `[]` are interpreted the same way
