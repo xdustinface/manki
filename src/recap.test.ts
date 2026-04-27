@@ -856,7 +856,62 @@ describe('fetchRecapState', () => {
     expect(state.recapContext).toContain('Still Open (1 findings');
   });
 
-  it('includes replied+agree findings in the resolved section of recapContext', async () => {
+  it('includes replied+agree findings from the PR author in the resolved section of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Fixed, done.', author: { login: 'developer' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1, 'developer');
+    expect(state.recapContext).toContain('### Resolved');
+    expect(state.recapContext).toContain('Unused variable');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  // Mirrors the prAuthorLogin gate in inPrSuppressionReasonFor: a third-party
+  // commenter replying "Fixed!" must not be able to promote a finding to the
+  // Resolved section of recapContext. Without this gate, agents would stop
+  // re-flagging the issue even though applyInPrSuppression would (correctly)
+  // refuse to suppress it. replied threads land in neither section by design,
+  // matching the existing replied+disagree behaviour.
+  it('omits replied+agree findings from a third-party commenter from the Resolved section of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Fixed!', author: { login: 'random-user' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1, 'pr-author');
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  // When prAuthorLogin is undefined (e.g. PR author cannot be determined),
+  // replied+agree findings are not promoted to Resolved. This matches the
+  // conservative posture of inPrSuppressionReasonFor.
+  it('omits replied+agree findings from the Resolved section when prAuthorLogin is undefined', async () => {
     const octokit = mockOctokit([
       makeThread({
         id: 't1',
@@ -874,8 +929,8 @@ describe('fetchRecapState', () => {
     ]);
 
     const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
-    expect(state.recapContext).toContain('### Resolved');
-    expect(state.recapContext).toContain('Unused variable');
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
     expect(state.recapContext).not.toContain('### Still Open');
   });
 

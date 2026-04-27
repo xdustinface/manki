@@ -331,7 +331,7 @@ async function runFullReview(
   try {
     // Capture recap state before resolving stale threads so dedup sees
     // the original open/resolved status of each previous finding.
-    const recap = await fetchRecapState(octokit, owner, repo, prNumber);
+    const recap = await fetchRecapState(octokit, owner, repo, prNumber, prAuthorLogin);
 
     const staleCount = await resolveStaleThreads(octokit, owner, repo, prNumber, commitSha);
     if (staleCount > 0) {

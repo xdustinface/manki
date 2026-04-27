@@ -177,6 +177,7 @@ async function fetchRecapState(
   owner: string,
   repo: string,
   prNumber: number,
+  prAuthorLogin?: string,
 ): Promise<RecapState> {
   const threads = await fetchReviewThreads(octokit, owner, repo, prNumber);
 
@@ -195,9 +196,19 @@ async function fetchRecapState(
       authorReplyLogin: t.authorReplyLogin,
     }));
 
+  // Mirror the `prAuthorLogin` gate from inPrSuppressionReasonFor: only the
+  // PR author's "agree" replies promote a thread to Resolved. Without this,
+  // any third-party commenter on a public repo could move a finding out of
+  // 'Still Open' in the LLM context by replying "Fixed!", even though
+  // applyInPrSuppression would correctly refuse to suppress it.
   const resolved = previousFindings.filter(
     f => f.status === 'resolved' ||
-    (f.status === 'replied' && classifyAuthorReply(f.authorReplyText) === 'agree'),
+    (
+      f.status === 'replied' &&
+      prAuthorLogin !== undefined &&
+      f.authorReplyLogin === prAuthorLogin &&
+      classifyAuthorReply(f.authorReplyText) === 'agree'
+    ),
   );
   // open-status findings (no human reply yet) stay in 'Still Open'. Only
   // replied+agree threads are promoted to Resolved above; applyInPrSuppression
