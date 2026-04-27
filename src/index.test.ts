@@ -2449,6 +2449,37 @@ describe('runFullReview orchestration', () => {
     ]);
   });
 
+  it('populates openThreads[].currentCode with a windowed snippet when file contents are available', async () => {
+    const threadFile = 'src/app.ts';
+    const fileText = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n');
+    const changedFile = {
+      path: threadFile, changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 20, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [changedFile], totalAdditions: 20, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([changedFile]);
+    jest.mocked(ghUtils.fetchFileContents).mockResolvedValue(new Map([[threadFile, fileText]]));
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: threadFile, line: 10, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_code' },
+      ],
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const openThreads = runReviewCall[11];
+    expect(openThreads).toHaveLength(1);
+    expect(openThreads![0].currentCode).toContain('>>> 10: line 10');
+    expect(openThreads![0].currentCode).toContain('   5: line 5');
+    expect(openThreads![0].currentCode).toContain('   15: line 15');
+  });
+
   it('deduplicates open-thread file paths against changed files when fetching contents', async () => {
     const changedFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
