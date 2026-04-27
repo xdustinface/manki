@@ -1337,6 +1337,26 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 }
 
 /**
+ * Collapse multi-round prior findings to one entry per logical issue, keeping
+ * the most recent round's view. Identity is `threadId` when present, otherwise
+ * the fingerprint tuple. Callers must pass `priorRounds` in chronological order
+ * (round 1 first, latest last). A finding raised in round 1 with
+ * `authorReply: 'none'` and re-raised in round 2 with `authorReply: 'agree'`
+ * collapses to the round 2 entry, so the agreement is honored rather than the
+ * stale round 1 state.
+ */
+function dedupePriorFindings(priorRounds: HandoverFinding[]): HandoverFinding[] {
+  const byKey = new Map<string, HandoverFinding>();
+  for (const p of priorRounds) {
+    const key = p.threadId
+      ? `t:${p.threadId}`
+      : `f:${p.fingerprint.file}:${p.fingerprint.lineStart}:${p.fingerprint.lineEnd}:${p.fingerprint.slug}`;
+    byKey.set(key, p);
+  }
+  return Array.from(byKey.values());
+}
+
+/**
  * Pick a verdict plus a machine-readable reason.
  *
  * Decision order:
@@ -1350,6 +1370,13 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
  * in `openThreads`, and the judge did not mark it `addressed` in the current
  * round's `threadEvaluations`. A prior finding without a `threadId` is treated
  * as unresolved, which conservatively blocks APPROVE for older handover formats.
+ *
+ * Multi-round priors are collapsed to one entry per `threadId` (or per
+ * fingerprint when no `threadId` is recorded), keeping the most recent
+ * round's `authorReply`. Callers must pass `priorRounds` in chronological
+ * order. Without this dedup, a stale round 1 `authorReply: 'none'` would
+ * still match `.some(...)` even if round 2 captured an `agree` for the same
+ * thread.
  *
  * Contract for `openThreads`: callers must pass the result of a successful
  * GitHub thread fetch. Both `undefined` and `[]` are interpreted the same way
@@ -1372,7 +1399,7 @@ export function determineVerdict(
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'required_present' };
   }
 
-  const prior = priorRounds ?? [];
+  const prior = dedupePriorFindings(priorRounds ?? []);
   const hasNovelWarning = findings.some(
     f => f.severity === 'warning' && !wasDismissedInPriorRound(f, prior),
   );

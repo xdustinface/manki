@@ -700,6 +700,50 @@ describe('determineVerdict', () => {
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
+
+    it('collapses multi-round priors by threadId, keeping the most recent round (round 2 agree wins over round 1 none)', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
+      const open = [makeOpenThread()];
+      // Flat priors come in chronological order (round 1 first, round 2 last).
+      const result = determineVerdict([nitpick], [round1, round2], open, []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('collapses multi-round priors by fingerprint when threadId is absent (latest round wins)', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
+      const result = determineVerdict([nitpick], [round1, round2], [], []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('keeps the round 2 unresolved state when round 1 had agree and round 2 reopened with none', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'agree',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'none' };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [round1, round2], open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
   });
 });
 
