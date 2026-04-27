@@ -1015,8 +1015,10 @@ export async function runReview(
     };
   }
 
-  const priorFindingsFlat: HandoverFinding[] = (priorRounds ?? []).flatMap(r => r.findings);
-  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat);
+  const priorFindingsFlat: HandoverFinding[] = [...(priorRounds ?? [])]
+    .sort((a, b) => a.round - b.round)
+    .flatMap(r => r.findings);
+  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat, openThreads);
 
   const summary = judgeSummary;
 
@@ -1337,12 +1339,61 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 }
 
 /**
+ * Collapse multi-round prior findings to one entry per logical issue, keeping
+ * the most recent round's view. Identity is the fingerprint tuple, which is
+ * always present and stable across rounds. `threadId` is intentionally not
+ * used as the key because older handover rounds may have recorded the same
+ * finding without a `threadId` (the field was added later), and a mixed
+ * presence across rounds would otherwise split one logical finding into two
+ * surviving entries. Callers must pass `priorRounds` in chronological order
+ * (round 1 first, latest last). A finding raised in round 1 with
+ * `authorReply: 'none'` and re-raised in round 2 with `authorReply: 'agree'`
+ * collapses to the round 2 entry, so the agreement is honored rather than the
+ * stale round 1 state.
+ */
+function dedupePriorFindings(priorRounds: HandoverFinding[]): HandoverFinding[] {
+  const byKey = new Map<string, HandoverFinding>();
+  for (const p of priorRounds) {
+    const key = `f:${p.fingerprint.file}:${p.fingerprint.lineStart}:${p.fingerprint.lineEnd}:${p.fingerprint.slug}`;
+    byKey.set(key, p);
+  }
+  return Array.from(byKey.values());
+}
+
+/**
  * Pick a verdict plus a machine-readable reason.
  *
  * Decision order:
  *   1. any surviving `blocker` finding → REQUEST_CHANGES / required_present
  *   2. any `warning` that is NOT a prior-round dismissed match → REQUEST_CHANGES / novel_suggestion
- *   3. otherwise (only suggestions/nitpicks / previously-dismissed warnings / empty) → APPROVE / only_nit_or_suggestion
+ *   3. any prior-round `warning`/`blocker` still unresolved → REQUEST_CHANGES / prior_unaddressed
+ *   4. otherwise (only suggestions/nitpicks / previously-dismissed warnings / empty) → APPROVE / only_nit_or_suggestion
+ *
+ * A prior `warning`/`blocker` is "unresolved" when the author has not agreed to
+ * dismiss it (`authorReply !== 'agree'`) and the underlying GitHub thread is
+ * still in `openThreads`. A prior finding without a `threadId` is treated as
+ * unresolved, which conservatively blocks APPROVE for older handover formats.
+ *
+ * The judge's `threadEvaluations.status === 'addressed'` is intentionally not
+ * consulted here. That signal is LLM-derived and could be flipped by prompt
+ * injection in prior-round source or comments, allowing an attacker to
+ * unblock APPROVE on an unaddressed warning. Resolution must come from the
+ * GitHub thread state (`openThreads`) or from an explicit author agreement
+ * captured in `authorReply`.
+ *
+ * Multi-round priors are collapsed to one entry per fingerprint, keeping the
+ * most recent round's `authorReply` and `threadId`. Callers must pass
+ * `priorRounds` in chronological order. Without this dedup, a stale round 1
+ * `authorReply: 'none'` would still match `.some(...)` even if round 2
+ * captured an `agree` for the same thread.
+ *
+ * Contract for `openThreads`: callers must pass the result of a successful
+ * GitHub thread fetch. Both `undefined` and `[]` are interpreted the same way
+ * (no thread is open on GitHub), so any prior finding with a `threadId` that
+ * does not appear in the set is treated as resolved. Callers that fail to
+ * fetch thread state must abort before reaching this function rather than
+ * pass a partial or empty list, otherwise unaddressed warnings could be
+ * silently approved.
  *
  * Nitpicks and suggestions are non-blocking, and prior-round dismissed warnings
  * have already been acknowledged by the author. All these cases approve the PR.
@@ -1350,17 +1401,29 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
 export function determineVerdict(
   findings: Finding[],
   priorRounds?: HandoverFinding[],
+  openThreads?: OpenThread[],
 ): { verdict: ReviewVerdict; verdictReason: VerdictReason } {
   if (findings.some(f => f.severity === 'blocker')) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'required_present' };
   }
 
-  const prior = priorRounds ?? [];
+  const prior = dedupePriorFindings(priorRounds ?? []);
   const hasNovelWarning = findings.some(
     f => f.severity === 'warning' && !wasDismissedInPriorRound(f, prior),
   );
   if (hasNovelWarning) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'novel_suggestion' };
+  }
+
+  const openThreadIds = new Set((openThreads ?? []).map(t => t.threadId));
+  const hasUnresolvedPrior = prior.some(p => {
+    if (p.severity !== 'warning' && p.severity !== 'blocker') return false;
+    if (p.authorReply === 'agree') return false;
+    if (!p.threadId) return true;
+    return openThreadIds.has(p.threadId);
+  });
+  if (hasUnresolvedPrior) {
+    return { verdict: 'REQUEST_CHANGES', verdictReason: 'prior_unaddressed' };
   }
 
   return { verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' };

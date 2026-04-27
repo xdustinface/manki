@@ -24,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, HandoverRound, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, OpenThread, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent, computeProvenanceMap } from './judge';
 import { applySuppressions } from './memory';
 
@@ -567,6 +567,247 @@ describe('determineVerdict', () => {
     }];
     expect(determineVerdict(findings, priors).verdict).toBe('REQUEST_CHANGES');
     expect(determineVerdict(findings, priors).verdictReason).toBe('novel_suggestion');
+  });
+
+  describe('unresolved prior findings', () => {
+    const makePriorWarning = (overrides: Partial<HandoverFinding> = {}): HandoverFinding => ({
+      fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+      severity: 'warning',
+      title: 'Old issue',
+      authorReply: 'none',
+      threadId: 'T1',
+      ...overrides,
+    });
+    const makeOpenThread = (overrides: Partial<OpenThread> = {}): OpenThread => ({
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+      ...overrides,
+    });
+    const nitpick: Finding = {
+      severity: 'nitpick', title: 'Tiny thing', file: 'src/y.ts', line: 1, description: 'd', reviewers: ['r'],
+    };
+
+    it('blocks APPROVE on a nit-only round when a prior warning is still open', () => {
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('approves when the prior warning was author-agreed', () => {
+      const priors = [makePriorWarning({ authorReply: 'agree' })];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('approves when `openThreads` is undefined and a prior has a `threadId` (legacy two-arg callers)', () => {
+      // Pre-`openThreads` callers omit the third argument. The `?? []`
+      // fallback treats every prior as resolved on GitHub, which lets the
+      // verdict fall through to the existing `only_nit_or_suggestion` rule.
+      const priors = [makePriorWarning()];
+      const result = determineVerdict([nitpick], priors, undefined);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('approves when the prior thread is no longer in openThreads (resolved on GitHub)', () => {
+      const priors = [makePriorWarning()];
+      const result = determineVerdict([nitpick], priors, []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('blocks APPROVE on an unresolved prior blocker', () => {
+      const priors = [makePriorWarning({ severity: 'blocker' })];
+      const open = [makeOpenThread({ severity: 'blocker' })];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('first review round (no priors) falls through to existing rules', () => {
+      const result = determineVerdict([nitpick], [], []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('treats a prior warning without threadId as unresolved (conservative default)', () => {
+      const priors = [makePriorWarning({ threadId: undefined })];
+      const open = [makeOpenThread({ threadId: 'OTHER' })];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('novel current-round warning takes precedence over an unresolved prior', () => {
+      const novelWarning: Finding = {
+        severity: 'warning', title: 'Brand new', file: 'src/z.ts', line: 5, description: 'd', reviewers: ['r'],
+      };
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([novelWarning], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('novel_suggestion');
+    });
+
+    it('ignores prior findings that are not warning or blocker (e.g. suggestion)', () => {
+      const priorSuggestion = makePriorWarning({ severity: 'suggestion' });
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [priorSuggestion], open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('treats prior findings with severity "unknown" as non-blocking (falls through to APPROVE)', () => {
+      const priorUnknown = makePriorWarning({ severity: 'unknown' });
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [priorUnknown], open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('current-round blocker takes precedence over unresolved prior (required_present wins)', () => {
+      const blocker: Finding = {
+        severity: 'blocker', title: 'Critical', file: 'src/z.ts', line: 1, description: 'd', reviewers: ['r'],
+      };
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([blocker], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('required_present');
+    });
+
+    it.each(['disagree', 'partial'] as const)('blocks APPROVE when authorReply is %s', (reply) => {
+      const priors = [makePriorWarning({ authorReply: reply })];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('blocks when at least one of multiple priors is still unresolved', () => {
+      const resolved = makePriorWarning({ threadId: 'T_RESOLVED', authorReply: 'agree' });
+      const unresolved = makePriorWarning({ threadId: 'T_OPEN' });
+      const open = [makeOpenThread({ threadId: 'T_OPEN' })];
+      const result = determineVerdict([nitpick], [resolved, unresolved], open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('does not unblock APPROVE on a judge-addressed signal alone (resolution must come from `openThreads` or `authorReply`)', () => {
+      // The judge's `threadEvaluations` is LLM-derived and could be flipped by
+      // prompt injection in prior-round source or comments. `determineVerdict`
+      // intentionally only consults `openThreads` and `authorReply`, so a
+      // still-open thread with no author agreement remains `prior_unaddressed`
+      // even when the judge claims it is `addressed`.
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('collapses multi-round priors by threadId, keeping the most recent round (round 2 agree wins over round 1 none)', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
+      const open = [makeOpenThread()];
+      // Flat priors come in chronological order (round 1 first, round 2 last).
+      const result = determineVerdict([nitpick], [round1, round2], open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('collapses multi-round priors by fingerprint when threadId is absent (latest round wins)', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
+      const result = determineVerdict([nitpick], [round1, round2], []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('keeps the round 2 unresolved state when round 1 had agree and round 2 reopened with none', () => {
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'agree',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'none' };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [round1, round2], open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('collapses across rounds when only one round carries a threadId (older handover format on the other)', () => {
+      // Round 1 was written by an older handover format that did not record
+      // `threadId`, and authorReply was 'none'. Round 2 captured the same
+      // finding with a threadId and an 'agree' reply. The two must collapse
+      // to the round 2 entry so the agreement wins. If they did not collapse
+      // (e.g. when keyed by `threadId` vs fingerprint separately), the stale
+      // round 1 'none' entry would survive and falsely block APPROVE because
+      // its missing `threadId` is treated as unresolved.
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree', threadId: 'T1' };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [round1, round2], open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('dedup makes a current-round warning fire `novel_suggestion` when round 2 reopened a prior agree', () => {
+      // Round 1 captured an `agree` for the finding, round 2 re-raised it
+      // with `authorReply: 'none'`. Without dedup, the round 1 `agree`
+      // would still satisfy `wasDismissedInPriorRound` and the matching
+      // current-round warning would be treated as dismissed, suppressing
+      // `novel_suggestion`. With dedup keyed by fingerprint, the round 2
+      // `none` entry overwrites round 1, so the current-round warning is
+      // correctly reported as novel.
+      const title = 'Old issue';
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug(title) },
+        severity: 'warning',
+        title,
+        authorReply: 'agree',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'none' };
+      const currentWarning: Finding = {
+        severity: 'warning',
+        title,
+        file: 'src/x.ts',
+        line: 10,
+        description: 'd',
+        reviewers: ['r'],
+      };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([currentWarning], [round1, round2], open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('novel_suggestion');
+    });
   });
 });
 
@@ -1408,6 +1649,37 @@ describe('runReview', () => {
     };
   }
 
+  function buildPriorRound(round: number, findings: HandoverFinding[]): HandoverRound {
+    return {
+      round,
+      commitSha: `sha${round}`,
+      timestamp: `2025-01-0${round}T00:00:00Z`,
+      findings,
+    };
+  }
+
+  function makePriorWarningFinding(overrides: Partial<HandoverFinding> = {}): HandoverFinding {
+    return {
+      fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+      severity: 'warning',
+      title: 'Old issue',
+      authorReply: 'none',
+      threadId: 'T1',
+      ...overrides,
+    };
+  }
+
+  function makePriorOpenThread(overrides: Partial<OpenThread> = {}): OpenThread {
+    return {
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockedRunJudgeAgent.mockResolvedValue({ findings: [], summary: 'All clear.' });
@@ -2098,6 +2370,188 @@ describe('runReview', () => {
 
     expect(result.verdict).toBe('APPROVE');
     expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns REQUEST_CHANGES / prior_unaddressed when a prior warning thread is still open', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // Judge returns no current-round findings, but reports no per-thread evaluations.
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns APPROVE / only_nit_or_suggestion when the prior thread is no longer open on GitHub, ignoring the judge addressed signal', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // Judge claims the thread is addressed, but `determineVerdict` only trusts
+    // GitHub thread state. The empty `openThreads` below is what actually
+    // unblocks APPROVE.
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'Prior thread addressed.',
+      threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
+    });
+
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
+    const openThreads: OpenThread[] = [];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns APPROVE / only_nit_or_suggestion when `authorReply` is `agree` even with the prior thread still open', async () => {
+    // Covers the integration path where APPROVE is unblocked by `authorReply`
+    // rather than by the thread being absent from `openThreads`. Guards
+    // against the `authorReply` field being silently dropped or renamed
+    // somewhere in the `priorFindingsFlat` pipeline between `runReview` and
+    // `determineVerdict`.
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const priorRounds: HandoverRound[] = [
+      buildPriorRound(1, [makePriorWarningFinding({ authorReply: 'agree' })]),
+    ];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns REQUEST_CHANGES / prior_unaddressed when the GitHub thread is still open even if the judge says addressed', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // The judge's `addressed` signal is LLM-derived and could be flipped by
+    // prompt injection. `determineVerdict` no longer consults it, so an
+    // attacker who tricks the judge cannot bypass an open GitHub thread.
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'Prior thread addressed.',
+      threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
+    });
+
+    const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('sorts `priorRounds` by `round` before flattening, so an out-of-order array still picks the latest round', async () => {
+    // The caller may pass `priorRounds` out of order (e.g. round 2 first,
+    // round 1 second). `dedupePriorFindings` keeps the last entry per
+    // fingerprint, so chronological order matters: without the sort, the
+    // stale round 1 `agree` would overwrite the round 2 reopen and falsely
+    // approve the PR.
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const round1 = buildPriorRound(1, [makePriorWarningFinding({ authorReply: 'agree' })]);
+    const round2 = buildPriorRound(2, [makePriorWarningFinding({ authorReply: 'none' })]);
+    // Pass rounds out of chronological order on purpose.
+    const priorRounds: HandoverRound[] = [round2, round1];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
     expect(result.reviewComplete).toBe(true);
   });
 
