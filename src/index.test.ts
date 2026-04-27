@@ -2008,8 +2008,8 @@ describe('runFullReview orchestration', () => {
     // Write path: appendHandoverRound must be called once with the loaded handover
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
     const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
-    const { 8: agentsArg, 11: existingHandoverArg } = appendCall;
-    // agents param carries the resolved team; existingHandover param should be the already-loaded handover, not re-fetched
+    const { 11: existingHandoverArg } = appendCall;
+    // existingHandover param should be the already-loaded handover, not re-fetched
     expect(existingHandoverArg).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
   });
 
