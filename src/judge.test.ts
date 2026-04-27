@@ -1395,6 +1395,26 @@ describe('runJudgeAgent', () => {
     expect(userMessage).toMatch(/````+diff\n/);
   });
 
+  it('omits "inter-round diff above" cross-reference when no prior rounds are present', async () => {
+    mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
+
+    await runJudgeAgent(mockClient, makeConfig(), {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [{ threadId: 'PRRT_x', title: 't', file: 'src/a.ts', line: 1, severity: 'suggestion' }],
+      // priorRounds intentionally omitted -> no Inter-Round Diff section
+    });
+
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('## Open Thread Code Regions');
+    expect(userMessage).not.toContain('## Inter-Round Diff');
+    expect(userMessage).not.toContain('inter-round diff above');
+    expect(userMessage).toContain('Verify whether the concern still applies.');
+  });
+
   it('priorRounds with partial authorReply does not suppress the finding', async () => {
     // Only 'agree' triggers dismissal; 'partial' leaves the finding in play.
     const judgedResponse = JSON.stringify({
