@@ -99,7 +99,11 @@ function resolvePriorRoundAgents(
   for (const name of priorRoundAgents) {
     const agent = poolMap.get(name);
     if (!agent) {
-      if (!silent) core.warning(`prior-round agent "${name.replace(/[\r\n]/g, ' ')}" no longer exists in the pool; skipping`);
+      // Strip control characters and GitHub Actions workflow-command prefix (::)
+      // to prevent log injection from attacker-controlled handover file content.
+      // eslint-disable-next-line no-control-regex
+      const safeName = name.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/^::/, '');
+      if (!silent) core.warning(`prior-round agent "${safeName}" no longer exists in the pool; skipping`);
       continue;
     }
     if (!resolved.some(r => r.name === agent.name)) {
