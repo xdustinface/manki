@@ -3807,6 +3807,8 @@ describe('selectTeam with teamSizeOverride', () => {
         'Maintainability & Readability',
         'Performance & Efficiency',
       ]);
+      expect(roster.agents).toHaveLength(6);
+      expect(roster.level).toBe('large');
       expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Security & Safety"; injecting');
       expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Architecture & Design"; injecting');
       expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Correctness & Logic"; injecting');
@@ -3827,11 +3829,13 @@ describe('selectTeam with teamSizeOverride', () => {
       const roster = selectTeam(diff, config, undefined, 2, picks);
       const names = roster.agents.map(a => a.name);
       expect(names).toEqual([
+        'Security & Safety',
         'Architecture & Design',
         'Correctness & Logic',
-        'Security & Safety',
         'Testing & Coverage',
       ]);
+      expect(roster.agents).toHaveLength(4);
+      expect(roster.level).toBe('medium');
       expect(names.filter(n => n === 'Security & Safety')).toHaveLength(1);
       expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Architecture & Design"; injecting');
       expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Correctness & Logic"; injecting');
@@ -3857,6 +3861,8 @@ describe('selectTeam with teamSizeOverride', () => {
         'Architecture & Design',
         'Correctness & Logic',
       ]);
+      expect(roster.agents).toHaveLength(3);
+      expect(roster.level).toBe('small');
       expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('planner omitted core agent'));
     } finally {
       infoSpy.mockRestore();
@@ -4494,10 +4500,11 @@ describe('selectTeam planner-driven path', () => {
     ];
     const roster = selectTeam(diff, config, undefined, 3, picks);
     // Duplicate Security pick is dropped; Architecture is injected as missing core.
+    // Core agents appear in CORE_AGENTS order (Security, Architecture, Correctness).
     expect(roster.agents).toHaveLength(3);
     expect(roster.agents.map(a => a.name)).toEqual([
-      'Architecture & Design',
       'Security & Safety',
+      'Architecture & Design',
       'Correctness & Logic',
     ]);
   });

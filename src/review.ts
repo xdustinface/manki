@@ -95,17 +95,23 @@ export function selectTeam(
     }
 
     if (resolved.length > 0) {
-      const missingCore: ReviewerAgent[] = [];
+      // Reconstruct order: all CORE_AGENTS first (in CORE_AGENTS order, injecting any missing),
+      // then non-core planner picks in their original planner order.
+      const coreSet = new Set(CORE_AGENTS.map(i => pool[i].name));
+      const orderedCore: ReviewerAgent[] = [];
       for (const i of CORE_AGENTS) {
         const coreAgent = pool[i];
-        if (!resolved.some(r => r.name === coreAgent.name)) {
-          missingCore.push(coreAgent);
+        const plannerPicked = resolved.find(r => r.name === coreAgent.name);
+        if (plannerPicked) {
+          orderedCore.push(plannerPicked);
+        } else {
+          orderedCore.push(coreAgent);
           core.info(`planner omitted core agent "${coreAgent.name}"; injecting`);
         }
       }
-      if (missingCore.length > 0) {
-        resolved.unshift(...missingCore);
-      }
+      const nonCore = resolved.filter(r => !coreSet.has(r.name));
+      resolved.length = 0;
+      resolved.push(...orderedCore, ...nonCore);
 
       let level: 'trivial' | 'small' | 'medium' | 'large';
       if (resolved.length === 1) level = 'small';
