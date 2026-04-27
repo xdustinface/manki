@@ -10,7 +10,7 @@ import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, 
 import { isEmptyInterRoundDiff } from './judge';
 import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
-import { collectPriorRoundAgents, runReview, determineVerdict, selectTeam } from './review';
+import { buildAgentPool, collectPriorRoundAgents, runReview, determineVerdict, selectTeam, TRIVIAL_VERIFIER_AGENT } from './review';
 import { DEFENSIVE_HARDENING_TAG, DashboardData, PrContext, PrHandover, ReviewMetadata, ReviewStats } from './types';
 import {
   fetchPRDiff,
@@ -555,6 +555,20 @@ async function runFullReview(
     // an agent that flagged something earlier always reviews later rounds.
     const priorRoundAgents = collectPriorRoundAgents(handover?.rounds);
 
+    // On the non-planner path the dashboard was seeded with the heuristic team
+    // before prior-round agents were known. Pre-populate any pinned agents now
+    // so that agent-complete callbacks can record their metrics.
+    if (!plannerEnabled && priorRoundAgents.length > 0 && dashboard.agentProgress) {
+      const poolNames = new Set(buildAgentPool(config.reviewers).map(a => a.name));
+      const inDashboard = new Set(dashboard.agentProgress.map(a => a.name));
+      for (const name of priorRoundAgents) {
+        if (!inDashboard.has(name) && poolNames.has(name)) {
+          dashboard.agentProgress.push({ name, status: 'reviewing' as const });
+          dashboard.agentCount++;
+        }
+      }
+    }
+
     function scheduleDashboardFlush(): void {
       if (dashboardFlushTimer) clearTimeout(dashboardFlushTimer);
       dashboardFlushTimer = setTimeout(() => {
@@ -836,7 +850,7 @@ async function runFullReview(
             result.findings,
             recap.previousFindings,
             result.summary,
-            result.agentNames,
+            result.agentNames.filter(n => n !== TRIVIAL_VERIFIER_AGENT.name),
             fingerprintFinding,
             classifyAuthorReply,
             handover,
