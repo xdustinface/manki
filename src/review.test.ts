@@ -4101,10 +4101,11 @@ describe('selectTeam with teamSizeOverride', () => {
     const config = makeConfig();
     const picks: AgentPick[] = [
       { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
       { name: 'Correctness & Logic', effort: 'medium' },
     ];
     const roster = selectTeam(diff, config, undefined, 2, picks);
-    expect(roster.agents).toHaveLength(2);
+    expect(roster.agents).toHaveLength(3);
     expect(roster.level).toBe('small');
   });
 
@@ -4186,14 +4187,14 @@ describe('selectTeam with teamSizeOverride', () => {
     const config = makeConfig();
     const picks: AgentPick[] = [
       { name: 'Security & Safety', effort: 'high' },
-      { name: 'Testing & Coverage', effort: 'medium' },
+      { name: 'Architecture & Design', effort: 'medium' },
       { name: 'Correctness & Logic', effort: 'low' },
     ];
     const roster = selectTeam(diff, config, undefined, 3, picks);
     expect(roster.agents).toHaveLength(3);
     expect(roster.agents.map(a => a.name)).toEqual([
       'Security & Safety',
-      'Testing & Coverage',
+      'Architecture & Design',
       'Correctness & Logic',
     ]);
     expect(roster.level).toBe('small');
@@ -4219,11 +4220,12 @@ describe('selectTeam with teamSizeOverride', () => {
     const config = makeConfig();
     const picks: AgentPick[] = [
       { name: 'Security & Safety', effort: 'high' },
-      { name: 'Protocol Expert', effort: 'medium' },
+      { name: 'Architecture & Design', effort: 'medium' },
       { name: 'Correctness & Logic', effort: 'low' },
+      { name: 'Protocol Expert', effort: 'medium' },
     ];
-    const roster = selectTeam(diff, config, [custom], 3, picks);
-    expect(roster.agents).toHaveLength(3);
+    const roster = selectTeam(diff, config, [custom], 4, picks);
+    expect(roster.agents).toHaveLength(4);
     expect(roster.agents.map(a => a.name)).toContain('Protocol Expert');
   });
 
@@ -4238,6 +4240,111 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(roster.level).toBe('small');
     expect(roster.agents.map(a => a.name)).toContain('Security & Safety');
     expect(roster.agents.map(a => a.name)).toContain('Correctness & Logic');
+  });
+
+  it('injects all core agents when planner omits all of them', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Testing & Coverage', effort: 'high' },
+      { name: 'Maintainability & Readability', effort: 'medium' },
+      { name: 'Performance & Efficiency', effort: 'low' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks);
+      expect(roster.agents.map(a => a.name)).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+        'Testing & Coverage',
+        'Maintainability & Readability',
+        'Performance & Efficiency',
+      ]);
+      expect(roster.agents).toHaveLength(6);
+      expect(roster.level).toBe('large');
+      expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Security & Safety"; injecting');
+      expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Architecture & Design"; injecting');
+      expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Correctness & Logic"; injecting');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('injects only missing core agents when planner picks a subset', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Testing & Coverage', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 2, picks);
+      const names = roster.agents.map(a => a.name);
+      expect(names).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+        'Testing & Coverage',
+      ]);
+      expect(roster.agents).toHaveLength(4);
+      expect(roster.level).toBe('medium');
+      expect(names.filter(n => n === 'Security & Safety')).toHaveLength(1);
+      expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Architecture & Design"; injecting');
+      expect(infoSpy).toHaveBeenCalledWith('planner omitted core agent "Correctness & Logic"; injecting');
+      expect(infoSpy).not.toHaveBeenCalledWith('planner omitted core agent "Security & Safety"; injecting');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('does not inject when planner already picks all core agents', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'low' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks);
+      expect(roster.agents.map(a => a.name)).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+      ]);
+      expect(roster.agents).toHaveLength(3);
+      expect(roster.level).toBe('small');
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('planner omitted core agent'));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('reorders core agents to CORE_AGENTS sequence when planner picks them out of order', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Correctness & Logic', effort: 'low' },
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks);
+      expect(roster.agents.map(a => a.name)).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+      ]);
+      expect(roster.agents).toHaveLength(3);
+      expect(roster.level).toBe('small');
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('planner omitted core agent'));
+    } finally {
+      infoSpy.mockRestore();
+    }
   });
 });
 
@@ -4850,7 +4957,11 @@ describe('selectTeam planner-driven path', () => {
       { name: 'Maintainability & Readability', effort: 'low' },
     ];
     const roster = selectTeam(diff, config, undefined, 3, picks);
+    // Core agents are injected at the front, planner picks follow.
     expect(roster.agents.map(a => a.name)).toEqual([
+      'Security & Safety',
+      'Architecture & Design',
+      'Correctness & Logic',
       'Performance & Efficiency',
       'Dependencies & Integration',
       'Maintainability & Readability',
@@ -4866,9 +4977,12 @@ describe('selectTeam planner-driven path', () => {
       { name: 'Correctness & Logic', effort: 'low' },
     ];
     const roster = selectTeam(diff, config, undefined, 3, picks);
-    expect(roster.agents).toHaveLength(2);
+    // Duplicate Security pick is dropped. Architecture is injected as missing core.
+    // Core agents appear in CORE_AGENTS order (Security, Architecture, Correctness).
+    expect(roster.agents).toHaveLength(3);
     expect(roster.agents.map(a => a.name)).toEqual([
       'Security & Safety',
+      'Architecture & Design',
       'Correctness & Logic',
     ]);
   });
