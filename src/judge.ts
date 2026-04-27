@@ -524,9 +524,10 @@ export function buildJudgeUserMessage(
     for (const t of openThreads) {
       parts.push(`### ${t.threadId} — ${sanitize(t.file)}:${t.line}`);
       const snippet = t.currentCode && t.currentCode.length > 0 ? t.currentCode : '(no current code available)';
-      parts.push('```');
+      const snippetFence = dynamicFence(snippet);
+      parts.push(snippetFence);
       parts.push(snippet);
-      parts.push('```');
+      parts.push(snippetFence);
       parts.push('');
     }
   }

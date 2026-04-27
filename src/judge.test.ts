@@ -1395,6 +1395,36 @@ describe('runJudgeAgent', () => {
     expect(userMessage).toMatch(/````+diff\n/);
   });
 
+  it('uses a dynamic fence for open-thread code regions when snippet contains triple-backticks', async () => {
+    mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
+
+    const snippetWithBackticks = '   1: # Example\n>>> 2: ```js\n   3: console.log("x")\n   4: ```\n';
+
+    await runJudgeAgent(mockClient, makeConfig(), {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 3,
+      openThreads: [{
+        threadId: 'PRRT_md',
+        title: 'Markdown nit',
+        file: 'README.md',
+        line: 2,
+        severity: 'suggestion',
+        currentCode: snippetWithBackticks,
+      }],
+    });
+
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    const heading = '### PRRT_md — README.md:2\n';
+    const idx = userMessage.indexOf(heading);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const after = userMessage.slice(idx + heading.length);
+    // The fence must escape to 4+ backticks because the snippet contains ```.
+    expect(after).toMatch(/^````+\n/);
+  });
+
   it('omits "inter-round diff above" cross-reference when no prior rounds are present', async () => {
     mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
 
