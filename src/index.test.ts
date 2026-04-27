@@ -2602,6 +2602,27 @@ describe('runFullReview orchestration', () => {
       recapContext: 'previous context',
     });
 
+    // Enable memory so loadHandover runs and fetchInterRoundDiff is invoked
+    // with a prior-round SHA distinct from the current commit.
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 42, repo: 'test-repo', rounds: [{
+        round: 1, commitSha: 'prior-sha', timestamp: '2025-01-01T00:00:00Z', findings: [],
+      }],
+    });
+    // fetchInterRoundDiff returns '' to simulate a force-pushed rebase whose
+    // compare API yields no patch between prior and current head.
+    jest.mocked(ghUtils.fetchInterRoundDiff).mockResolvedValue('');
+
     // Whatever runReview returns: simulate a runReview that produced
     // not_addressed verdicts (matches the synthetic override behavior of the
     // judge for empty inter-round diff).
@@ -2614,6 +2635,11 @@ describe('runFullReview orchestration', () => {
     });
 
     await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchInterRoundDiff)).toHaveBeenCalledTimes(1);
+    const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const passedInterRoundDiff = runReviewArgs[runReviewArgs.length - 1];
+    expect(passedInterRoundDiff).toBe('');
 
     expect(mockGraphql).not.toHaveBeenCalledWith(
       expect.stringContaining('resolveReviewThread'),
