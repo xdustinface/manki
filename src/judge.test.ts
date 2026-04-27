@@ -1234,8 +1234,8 @@ describe('runJudgeAgent', () => {
 
   it('passes LLM thread evaluations through when interRoundDiff is undefined with prior rounds (API-failure path)', async () => {
     // Undefined interRoundDiff with hasPriorRounds is the "unknown" sentinel
-    // (e.g., compare-API failure upstream). It must NOT trigger the
-    // not_addressed override — let the LLM evaluate threads on whatever
+    // (e.g., compare-API failure upstream). It must not trigger the
+    // not_addressed override. The LLM should evaluate threads on whatever
     // evidence it has.
     const judgedResponse = JSON.stringify({
       summary: 'Evaluated.',

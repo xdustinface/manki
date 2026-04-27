@@ -2460,7 +2460,7 @@ describe('runFullReview orchestration', () => {
     });
     jest.mocked(diffModule.filterFiles).mockReturnValue([changedFile]);
 
-    // Two open threads: one in a changed file (must NOT duplicate) and one in
+    // Two open threads: one in a changed file (must not duplicate) and one in
     // an unchanged file (must be added to the fetch list).
     const previousFindings = [
       { title: 'Issue in changed', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_dup' },
