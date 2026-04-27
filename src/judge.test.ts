@@ -1232,6 +1232,43 @@ describe('runJudgeAgent', () => {
     expect(result.threadEvaluations![0]).toEqual({ threadId: 'PRRT_xyz', status: 'addressed', reason: 'Issue resolved' });
   });
 
+  it('passes LLM thread evaluations through when interRoundDiff is undefined with prior rounds (API-failure path)', async () => {
+    // Undefined interRoundDiff with hasPriorRounds is the "unknown" sentinel
+    // (e.g., compare-API failure upstream). It must NOT trigger the
+    // not_addressed override — let the LLM evaluate threads on whatever
+    // evidence it has.
+    const judgedResponse = JSON.stringify({
+      summary: 'Evaluated.',
+      findings: [],
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'addressed', reason: 'Fixed in latest push' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1, commitSha: 'abc', timestamp: 't', findings: [],
+    }];
+
+    const input: JudgeInput = {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 1,
+      openThreads: [
+        { threadId: 'PRRT_a', title: 'Thread A', file: 'src/a.ts', line: 1, severity: 'suggestion' },
+      ],
+      priorRounds,
+      // interRoundDiff intentionally omitted -> undefined
+    };
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), input);
+    expect(result.threadEvaluations).toEqual([
+      { threadId: 'PRRT_a', status: 'addressed', reason: 'Fixed in latest push' },
+    ]);
+  });
+
   it('forces all threadEvaluations to not_addressed when inter-round diff is empty', async () => {
     // LLM tries to claim every thread is addressed. Empty inter-round diff
     // means no code changed since prior review, so the synthetic override
