@@ -1,4 +1,6 @@
-import { buildDashboard, formatFindingComment, formatStatsJson, formatStatsOneLiner, mapVerdictToEvent, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, VERSION_MARKER_PREFIX, MANKI_VERSION, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd, updateProgressComment, postProgressComment, updateProgressDashboard, dismissPreviousReviews, reactToIssueComment, reactToReviewComment, createNitIssue, fetchPRDiff, fetchConfigFile, fetchRepoContext, getSeverityEmoji, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, cancelActiveReviewRun, extractRunIdFromBody, extractVersionFromBody, INDENT, APP_WARNING_MARKER, postAppWarningIfNeeded } from './github';
+import * as core from '@actions/core';
+
+import { buildDashboard, formatFindingComment, formatStatsJson, formatStatsOneLiner, mapVerdictToEvent, BOT_LOGIN, BOT_MARKER, REVIEW_COMPLETE_MARKER, FORCE_REVIEW_MARKER, CANCELLED_MARKER, VERSION_MARKER_PREFIX, MANKI_VERSION, buildNitIssueBody, getSeverityLabel, postReview, resolveReferences, sanitizeMarkdown, sanitizeFilePath, truncateBody, dynamicFence, safeTruncate, fetchFileContents, fetchLinkedIssues, fetchSubdirClaudeMd, updateProgressComment, postProgressComment, updateProgressDashboard, dismissPreviousReviews, reactToIssueComment, reactToReviewComment, createNitIssue, fetchPRDiff, fetchInterRoundDiff, fetchConfigFile, fetchRepoContext, getSeverityEmoji, isReviewInProgress, isApprovedOnCommit, markOwnProgressCommentCancelled, cancelActiveReviewRun, extractRunIdFromBody, extractVersionFromBody, INDENT, APP_WARNING_MARKER, postAppWarningIfNeeded } from './github';
 import { DashboardData, Finding, ParsedDiff, ReviewMetadata, ReviewResult, ReviewStats } from './types';
 
 describe('formatFindingComment', () => {
@@ -2018,6 +2020,56 @@ describe('fetchPRDiff', () => {
       pull_number: 1,
       mediaType: { format: 'diff' },
     });
+  });
+});
+
+describe('fetchInterRoundDiff', () => {
+  function makeOctokit(compareCommits: jest.Mock): Parameters<typeof fetchInterRoundDiff>[0] {
+    return {
+      rest: { repos: { compareCommits } },
+    } as unknown as Parameters<typeof fetchInterRoundDiff>[0];
+  }
+
+  it('returns empty string when base equals head and skips the API call', async () => {
+    const compareCommits = jest.fn();
+    const result = await fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', 'sha', 'sha');
+    expect(result).toBe('');
+    expect(compareCommits).not.toHaveBeenCalled();
+  });
+
+  it('returns empty string for missing base or head and skips the API call', async () => {
+    const compareCommits = jest.fn();
+    expect(await fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', '', 'head')).toBe('');
+    expect(await fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', 'base', '')).toBe('');
+    expect(compareCommits).not.toHaveBeenCalled();
+  });
+
+  it('returns the unified diff string on success', async () => {
+    const diffPayload = 'diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n';
+    const compareCommits = jest.fn().mockResolvedValue({ data: diffPayload });
+    const result = await fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', 'base', 'head');
+    expect(result).toBe(diffPayload);
+    expect(compareCommits).toHaveBeenCalledWith({
+      owner: 'owner', repo: 'repo', base: 'base', head: 'head',
+      mediaType: { format: 'diff' },
+    });
+  });
+
+  it('returns empty string when the compare API returns a non-string payload', async () => {
+    const compareCommits = jest.fn().mockResolvedValue({ data: { files: [] } });
+    const result = await fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', 'base', 'head');
+    expect(result).toBe('');
+  });
+
+  it('rethrows on API failure and logs a debug message', async () => {
+    const debugSpy = jest.spyOn(core, 'debug').mockImplementation(() => {});
+    const apiError = new Error('Not found');
+    const compareCommits = jest.fn().mockRejectedValue(apiError);
+    await expect(
+      fetchInterRoundDiff(makeOctokit(compareCommits), 'owner', 'repo', 'base', 'head'),
+    ).rejects.toBe(apiError);
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to fetch inter-round diff base..head'));
+    debugSpy.mockRestore();
   });
 });
 
