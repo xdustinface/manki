@@ -37,6 +37,14 @@ describe('extractCurrentCodeWindow', () => {
     expect(out).not.toContain('line 2');
   });
 
+  it('returns `(file content unavailable)` when `line` is past the file end but within window reach', () => {
+    // file has 8 lines, flagged line 11 is beyond EOF but within `line - WINDOW <= lines.length`
+    // (11 - 5 = 6 <= 8). Without the guard, the function would emit a window without a `>>>`
+    // marker because `i === line` is never true in `start..lines.length`.
+    const fileContents = new Map([['src/a.ts', makeFile(8)]]);
+    expect(extractCurrentCodeWindow(fileContents, 'src/a.ts', 11)).toBe('(file content unavailable)');
+  });
+
   it('returns `(file content unavailable)` when the file is missing from the map', () => {
     const fileContents = new Map<string, string>();
     expect(extractCurrentCodeWindow(fileContents, 'src/missing.ts', 5)).toBe('(file content unavailable)');

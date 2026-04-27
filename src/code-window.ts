@@ -19,6 +19,7 @@ export function extractCurrentCodeWindow(
   const content = fileContents?.get(file);
   if (content === undefined) return '(file content unavailable)';
   const lines = content.split('\n');
+  if (line > lines.length) return '(file content unavailable)';
   const start = Math.max(1, line - OPEN_THREAD_CODE_WINDOW);
   const end = Math.min(lines.length, line + OPEN_THREAD_CODE_WINDOW);
   const out: string[] = [];
