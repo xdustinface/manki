@@ -1351,6 +1351,14 @@ function wasDismissedInPriorRound(finding: Finding, priorRounds: HandoverFinding
  * round's `threadEvaluations`. A prior finding without a `threadId` is treated
  * as unresolved, which conservatively blocks APPROVE for older handover formats.
  *
+ * Contract for `openThreads`: callers must pass the result of a successful
+ * GitHub thread fetch. Both `undefined` and `[]` are interpreted the same way
+ * (no thread is open on GitHub), so any prior finding with a `threadId` that
+ * does not appear in the set is treated as resolved. Callers that fail to
+ * fetch thread state must abort before reaching this function rather than
+ * pass a partial or empty list, otherwise unaddressed warnings could be
+ * silently approved.
+ *
  * Nitpicks and suggestions are non-blocking, and prior-round dismissed warnings
  * have already been acknowledged by the author. All these cases approve the PR.
  */
