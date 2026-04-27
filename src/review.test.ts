@@ -2268,14 +2268,68 @@ describe('runReview', () => {
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
-      undefined, undefined, undefined, undefined, undefined, undefined,
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
       openThreads,
-      undefined,
+      /* previousFindings */ undefined,
       priorRounds,
     );
 
     expect(result.verdict).toBe('REQUEST_CHANGES');
     expect(result.verdictReason).toBe('prior_unaddressed');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns APPROVE / only_nit_or_suggestion when judge marks the prior thread addressed', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'Prior thread addressed.',
+      threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
+    });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'sha1',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'T1',
+      }],
+    }];
+    const openThreads: OpenThread[] = [{
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
     expect(result.reviewComplete).toBe(true);
   });
 
