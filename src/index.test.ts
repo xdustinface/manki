@@ -2008,8 +2008,114 @@ describe('runFullReview orchestration', () => {
     // Write path: appendHandoverRound must be called once with the loaded handover
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
     const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
-    // existingHandover param (index 10) should be the already-loaded handover, not re-fetched
-    expect(appendCall[10]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+    // existingHandover param (index 11) should be the already-loaded handover, not re-fetched
+    expect(appendCall[11]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+  });
+
+  it('persists the resolved team names on the new handover round', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue(null);
+
+    const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok',
+      findings: [], highlights: [], reviewComplete: true,
+      agentNames: resolvedNames,
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+    const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+    // agents param (index 8) carries the resolved team into the new round
+    expect(appendCall[8]).toEqual(resolvedNames);
+  });
+
+  it('forwards prior-round agents through to the dashboard selectTeam call', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+
+    const priorRounds = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [],
+      agents: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+    }];
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+    });
+
+    // Trigger the planning-phase progress callback so the dashboard selectTeam runs.
+    jest.mocked(reviewModule.runReview).mockImplementation(async (_clients, _config, _diff, _rawDiff, _ctx, _mem, _files, _pr, _issues, onProgress) => {
+      onProgress?.({
+        phase: 'planning',
+        rawFindingCount: 0,
+        plannerResult: {
+          teamSize: 3,
+          reviewerEffort: 'medium',
+          judgeEffort: 'medium',
+          prType: 'feature',
+          agents: [
+            { name: 'Security & Safety', effort: 'high' },
+            { name: 'Architecture & Design', effort: 'medium' },
+            { name: 'Correctness & Logic', effort: 'medium' },
+          ],
+        },
+        plannerDurationMs: 100,
+      });
+      return {
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+      };
+    });
+
+    await callRunFullReview();
+
+    // The dashboard selectTeam call inside the planning callback receives the
+    // prior-round agents as the 6th positional argument.
+    const calls = jest.mocked(reviewModule.selectTeam).mock.calls;
+    const planningCall = calls.find(c => c[3] === 3 && c[4]);
+    expect(planningCall).toBeDefined();
+    expect(planningCall![5]).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
   });
 
   it('does not load or write handover when memory is disabled', async () => {

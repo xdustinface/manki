@@ -377,6 +377,9 @@ async function runFullReview(
     const parseEndTime = Date.now();
     const plannerEnabled = !!plannerClient && config.review_level === 'auto';
     const team = selectTeam(diff, config, config.reviewers);
+    // `team` here is only used for the initial dashboard preview; the actual
+    // review team is resolved inside `runReview` once the handover and planner
+    // result are available, so prior-round pinning is applied there.
     const lineCount = diff.totalAdditions + diff.totalDeletions;
 
     const dashboard: DashboardData = plannerEnabled
@@ -537,6 +540,13 @@ async function runFullReview(
 
     let reviewEndTime = parseEndTime;
 
+    // Names of every agent that participated in any prior round of this PR.
+    // Used to pin the team across rounds so the roster grows monotonically:
+    // an agent that flagged something earlier always reviews later rounds.
+    const priorRoundAgents: string[] = handover
+      ? Array.from(new Set(handover.rounds.flatMap(r => r.agents ?? [])))
+      : [];
+
     function scheduleDashboardFlush(): void {
       if (dashboardFlushTimer) clearTimeout(dashboardFlushTimer);
       dashboardFlushTimer = setTimeout(() => {
@@ -559,7 +569,7 @@ async function runFullReview(
               judgeEffort: progress.plannerResult.judgeEffort,
               prType: progress.plannerResult.prType,
             };
-            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize, progress.plannerResult.agents);
+            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize, progress.plannerResult.agents, priorRoundAgents);
             dashboard.agentCount = plannerTeam.agents.length;
             dashboard.agentProgress = plannerTeam.agents.map(a => ({ name: a.name, status: 'reviewing' as const }));
             dashboard.plannerDurationMs = progress.plannerDurationMs;
@@ -818,6 +828,7 @@ async function runFullReview(
             result.findings,
             recap.previousFindings,
             result.summary,
+            result.agentNames ?? [],
             fingerprintFinding,
             classifyAuthorReply,
             handover,

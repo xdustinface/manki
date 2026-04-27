@@ -4346,6 +4346,167 @@ describe('selectTeam with teamSizeOverride', () => {
       infoSpy.mockRestore();
     }
   });
+
+  it('round 2 reuses round 1 team verbatim when planner adds nothing', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+      { name: 'Testing & Coverage', effort: 'low' },
+    ];
+    const roster = selectTeam(diff, config, undefined, 4, picks, prior);
+    expect(roster.agents.map(a => a.name)).toEqual(prior);
+    expect(roster.agents).toHaveLength(4);
+  });
+
+  it('round 2 adds a new agent on top of prior-round team', () => {
+    const diff = makeDiff({ totalAdditions: 100, totalDeletions: 50 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+      { name: 'Performance & Efficiency', effort: 'low' },
+    ];
+    const roster = selectTeam(diff, config, undefined, 4, picks, prior);
+    expect(roster.agents.map(a => a.name)).toEqual([
+      'Security & Safety',
+      'Architecture & Design',
+      'Correctness & Logic',
+      'Performance & Efficiency',
+    ]);
+  });
+
+  it('round 2 includes prior-round agent the planner omitted, with audit log', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'];
+    // Planner omits Testing & Coverage in round 2.
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks, prior);
+      expect(roster.agents.map(a => a.name)).toContain('Testing & Coverage');
+      expect(roster.agents.map(a => a.name)).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+        'Testing & Coverage',
+      ]);
+      expect(infoSpy).toHaveBeenCalledWith(
+        'pinned team: inherited [Security & Safety, Architecture & Design, Correctness & Logic, Testing & Coverage], added []',
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('round 2 audit log distinguishes inherited from newly added', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+      { name: 'Performance & Efficiency', effort: 'low' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      selectTeam(diff, config, undefined, 4, picks, prior);
+      expect(infoSpy).toHaveBeenCalledWith(
+        'pinned team: inherited [Security & Safety, Architecture & Design, Correctness & Logic], added [Performance & Efficiency]',
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('heuristic path also honors prior-round agents', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    // Heuristic on a tiny diff would not include Maintainability & Readability
+    // (no test paths, no large file count). Pinning must keep it in.
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Maintainability & Readability'];
+    const roster = selectTeam(diff, config, undefined, undefined, undefined, prior);
+    expect(roster.agents.map(a => a.name)).toContain('Maintainability & Readability');
+  });
+
+  it('skips unknown prior-round agent name and warns', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Bogus Agent', 'Security & Safety'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+    ];
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks, prior);
+      expect(roster.agents.map(a => a.name)).not.toContain('Bogus Agent');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('prior-round agent "Bogus Agent" no longer exists'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not log pin audit when priorRoundAgents is empty', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      selectTeam(diff, config, undefined, 3, picks);
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('pinned team:'));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('preserves planner team when prior agents are a subset of the picks', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+      { name: 'Performance & Efficiency', effort: 'low' },
+    ];
+    const roster = selectTeam(diff, config, undefined, 4, picks, prior);
+    // Prior agents lead, planner-new picks follow, core injection ensures Correctness.
+    expect(roster.agents.map(a => a.name)).toEqual([
+      'Security & Safety',
+      'Architecture & Design',
+      'Correctness & Logic',
+      'Performance & Efficiency',
+    ]);
+  });
+
+  it('does not pin prior agents on the trivial-verifier path', () => {
+    const diff = makeDiff({ totalAdditions: 2, totalDeletions: 0 });
+    const config = makeConfig();
+    const prior = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+    const roster = selectTeam(diff, config, undefined, 1, undefined, prior);
+    expect(roster.agents).toHaveLength(1);
+    expect(roster.agents[0]).toBe(TRIVIAL_VERIFIER_AGENT);
+    expect(roster.level).toBe('trivial');
+  });
 });
 
 describe('buildPlannerHints', () => {

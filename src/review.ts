@@ -86,12 +86,48 @@ function injectMissingCoreAgents(
   return [...orderedCore, ...nonCore];
 }
 
+// Resolves prior-round agent names against the current pool. Names that no
+// longer exist in the pool (e.g., a custom reviewer removed from config) are
+// dropped with a warning so reviews still make progress.
+function resolvePriorRoundAgents(
+  priorRoundAgents: string[],
+  pool: ReviewerAgent[],
+): ReviewerAgent[] {
+  const poolMap = new Map(pool.map(a => [a.name, a]));
+  const resolved: ReviewerAgent[] = [];
+  for (const name of priorRoundAgents) {
+    const agent = poolMap.get(name);
+    if (!agent) {
+      core.warning(`prior-round agent "${name}" no longer exists in the pool; skipping`);
+      continue;
+    }
+    if (!resolved.some(r => r.name === agent.name)) {
+      resolved.push(agent);
+    }
+  }
+  return resolved;
+}
+
+// Logs a one-line audit message distinguishing agents inherited from a prior
+// round from agents newly added in the current round.
+function logPinAudit(final: ReviewerAgent[], priorNames: Set<string>): void {
+  if (priorNames.size === 0) return;
+  const inherited: string[] = [];
+  const added: string[] = [];
+  for (const agent of final) {
+    if (priorNames.has(agent.name)) inherited.push(agent.name);
+    else added.push(agent.name);
+  }
+  core.info(`pinned team: inherited [${inherited.join(', ')}], added [${added.join(', ')}]`);
+}
+
 export function selectTeam(
   diff: ParsedDiff,
   config: ReviewConfig,
   customReviewers?: ReviewerAgent[],
   teamSizeOverride?: 1 | 2 | 3 | 4 | 5 | 6 | 7,
   agentPicks?: AgentPick[],
+  priorRoundAgents?: string[],
 ): TeamRoster {
   const lineCount = diff.totalAdditions + diff.totalDeletions;
 
@@ -102,12 +138,20 @@ export function selectTeam(
     if (customReviewers && customReviewers.length > 0) {
       core.info(`teamSize=1: skipping custom reviewers [${customReviewers.map(r => r.name).join(', ')}]`);
     }
+    // Trivial verifier path runs alone. Cross-round pinning does not apply:
+    // a PR does not flip from non-trivial to trivial in practice, and the
+    // verifier is intentionally a single-agent specialist.
     return { level: 'trivial', agents: [TRIVIAL_VERIFIER_AGENT], lineCount };
   }
 
+  const pool = buildAgentPool(customReviewers);
+  const priorAgents = priorRoundAgents && priorRoundAgents.length > 0
+    ? resolvePriorRoundAgents(priorRoundAgents, pool)
+    : [];
+  const priorNames = new Set(priorAgents.map(a => a.name));
+
   // Planner-driven agent selection: resolve each picked name from the pool
   if (agentPicks && agentPicks.length > 0 && teamSizeOverride) {
-    const pool = buildAgentPool(customReviewers);
     const poolMap = new Map(pool.map(a => [a.name, a]));
     const resolved: ReviewerAgent[] = [];
     for (const pick of agentPicks) {
@@ -118,9 +162,16 @@ export function selectTeam(
     }
 
     if (resolved.length > 0) {
+      // Pin prior-round agents first (preserving their order), then append
+      // any new planner picks. Deduplication keeps the prior order stable.
+      const unioned: ReviewerAgent[] = [...priorAgents];
+      for (const agent of resolved) {
+        if (!unioned.some(u => u.name === agent.name)) unioned.push(agent);
+      }
       // Core inviolability: CORE_AGENTS are always present regardless of
       // teamSizeOverride, so the final roster may exceed that value.
-      const final = injectMissingCoreAgents(resolved, pool);
+      const final = injectMissingCoreAgents(unioned, pool);
+      logPinAudit(final, priorNames);
 
       let level: 'trivial' | 'small' | 'medium' | 'large';
       if (final.length === 1) level = 'small';
@@ -153,8 +204,6 @@ export function selectTeam(
     teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
   }
 
-  const pool = buildAgentPool(customReviewers);
-
   // Core agents always included
   const selected: ReviewerAgent[] = CORE_AGENTS.map(i => pool[i]);
 
@@ -162,6 +211,15 @@ export function selectTeam(
   for (const custom of (customReviewers || [])) {
     if (!selected.some(s => s.name === custom.name)) {
       selected.push(custom);
+    }
+  }
+
+  // Pin prior-round agents into the heuristic team so monotonic team growth
+  // holds even when no planner picks are available (e.g., review_level !=
+  // 'auto' or planner failure).
+  for (const agent of priorAgents) {
+    if (!selected.some(s => s.name === agent.name)) {
+      selected.push(agent);
     }
   }
 
@@ -202,6 +260,7 @@ export function selectTeam(
     selected.push(...additional);
   }
 
+  logPinAudit(selected, priorNames);
   return { level, agents: selected, lineCount };
 }
 
@@ -519,10 +578,32 @@ export async function runPlanner(
   }
 }
 
-function heuristicFallback(diff: ParsedDiff, config: ReviewConfig): TeamRoster {
-  const team = selectTeam(diff, config, config.reviewers);
+function heuristicFallback(
+  diff: ParsedDiff,
+  config: ReviewConfig,
+  priorRoundAgents?: string[],
+): TeamRoster {
+  const team = selectTeam(diff, config, config.reviewers, undefined, undefined, priorRoundAgents);
   core.info(`Review team (${team.level}): ${team.agents.map(a => a.name).join(', ')}`);
   return team;
+}
+
+// Collects the union of agent names that participated in any prior round of
+// this PR. Used to pin the team across rounds so the roster grows
+// monotonically: an agent that flagged something earlier reviews later rounds.
+function collectPriorRoundAgents(priorRounds?: HandoverRound[]): string[] {
+  if (!priorRounds || priorRounds.length === 0) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const round of priorRounds) {
+    for (const name of round.agents ?? []) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        out.push(name);
+      }
+    }
+  }
+  return out;
 }
 
 /** Minimum dismissed-finding sample size required before a 100% dismiss rate triggers an effort downgrade. */
@@ -573,6 +654,7 @@ export async function runReview(
 ): Promise<ReviewResult> {
   const priorRoundHints = buildPlannerHints(priorRounds);
   const provenanceMap = computeProvenanceMap(priorRounds, rawDiff);
+  const priorRoundAgents = collectPriorRoundAgents(priorRounds);
   let team: TeamRoster;
   let plannerResult: PlannerResult | null = null;
 
@@ -587,7 +669,7 @@ export async function runReview(
       if (plannerResult.agents && priorRoundHints.length > 0) {
         applyEffortDowngrade(plannerResult.agents, priorRoundHints);
       }
-      team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize, plannerResult.agents);
+      team = selectTeam(diff, config, config.reviewers, plannerResult.teamSize, plannerResult.agents, priorRoundAgents);
       core.info(`Planner: ${plannerResult.teamSize} agents, reviewer: ${plannerResult.reviewerEffort}, judge: ${plannerResult.judgeEffort} (${plannerResult.prType})`);
       if (plannerResult.teamSize === 1) {
         const totalLines = diff.totalAdditions + diff.totalDeletions;
@@ -597,10 +679,10 @@ export async function runReview(
         onProgress({ phase: 'planning', rawFindingCount: 0, plannerResult, plannerDurationMs });
       }
     } else {
-      team = heuristicFallback(diff, config);
+      team = heuristicFallback(diff, config, priorRoundAgents);
     }
   } else {
-    team = heuristicFallback(diff, config);
+    team = heuristicFallback(diff, config, priorRoundAgents);
   }
 
   const memoryContext = memory ? buildMemoryContext(memory) : '';

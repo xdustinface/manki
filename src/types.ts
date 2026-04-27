@@ -108,6 +108,13 @@ export interface HandoverRound {
   timestamp: string;
   findings: HandoverFinding[];
   judgeSummary?: string;
+  /**
+   * Names of the reviewer agents that participated in this round. Used by
+   * later rounds to pin the team across rounds (monotonic growth): an agent
+   * present in any prior round is always carried forward. Optional so older
+   * serialized handovers without this field still parse.
+   */
+  agents?: string[];
 }
 
 /** Per-PR cross-round state stored at `{targetRepo}/prs/{prNumber}/handover.json`. */
