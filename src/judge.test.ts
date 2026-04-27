@@ -1267,6 +1267,10 @@ describe('runJudgeAgent', () => {
     expect(result.threadEvaluations).toEqual([
       { threadId: 'PRRT_a', status: 'addressed', reason: 'Fixed in latest push' },
     ]);
+    const [, userMessage] = mockSendMessage.mock.calls[0];
+    expect(userMessage).toContain('## Inter-Round Diff');
+    expect(userMessage).toContain('Inter-round diff unavailable (compare API error)');
+    expect(userMessage).not.toContain('No code changes since prior review (commit SHA unchanged or identical tree)');
   });
 
   it('forces all threadEvaluations to not_addressed when inter-round diff is empty', async () => {
