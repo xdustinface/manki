@@ -2444,7 +2444,7 @@ describe('runFullReview orchestration', () => {
         file: 'src/app.ts',
         line: 2,
         severity: 'suggestion',
-        currentCode: '(file removed)',
+        currentCode: '(file content unavailable)',
       },
     ]);
   });
