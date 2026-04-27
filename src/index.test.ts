@@ -150,7 +150,7 @@ jest.mock('./state', () => ({
   resolveStaleThreads: jest.fn().mockResolvedValue(0),
 }));
 
-import { run, runFullReview, handlePullRequest, handleCommentTrigger, handleInteraction, handleIssueInteraction, handleReviewCommentInteraction, handleReviewStateCheck, main, _resetOctokitCache } from './index';
+import { run, runFullReview, handlePullRequest, handleCommentTrigger, handleInteraction, handleIssueInteraction, handleReviewCommentInteraction, handleReviewStateCheck, main, _resetOctokitCache, extractCurrentCodeWindow } from './index';
 import { FORCE_REVIEW_MARKER } from './github';
 import * as interaction from './interaction';
 import * as ghUtils from './github';
@@ -2449,6 +2449,66 @@ describe('runFullReview orchestration', () => {
     ]);
   });
 
+  it('deduplicates open-thread file paths against changed files when fetching contents', async () => {
+    const changedFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [changedFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([changedFile]);
+
+    // Two open threads: one in a changed file (must NOT duplicate) and one in
+    // an unchanged file (must be added to the fetch list).
+    const previousFindings = [
+      { title: 'Issue in changed', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_dup' },
+      { title: 'Issue in unchanged', file: 'src/other.ts', line: 5, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_new' },
+    ];
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings,
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchFileContents)).toHaveBeenCalledTimes(1);
+    const fetchCall = jest.mocked(ghUtils.fetchFileContents).mock.calls[0];
+    const requestedPaths = fetchCall[4];
+    // Both files present, no duplicate of `src/app.ts`
+    expect(requestedPaths).toContain('src/app.ts');
+    expect(requestedPaths).toContain('src/other.ts');
+    expect(requestedPaths.filter(p => p === 'src/app.ts')).toHaveLength(1);
+  });
+
+  it('skips deleted changed files but still fetches open-thread files', async () => {
+    const deletedFile = {
+      path: 'src/gone.ts', changeType: 'deleted' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 0, newLines: 0, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [deletedFile], totalAdditions: 0, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([deletedFile]);
+
+    const previousFindings = [
+      { title: 'Live thread', file: 'src/live.ts', line: 1, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_live' },
+    ];
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings,
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchFileContents)).toHaveBeenCalledTimes(1);
+    const requestedPaths = jest.mocked(ghUtils.fetchFileContents).mock.calls[0][4];
+    expect(requestedPaths).not.toContain('src/gone.ts');
+    expect(requestedPaths).toContain('src/live.ts');
+  });
+
   it('includes planner info in dashboard when planner result is available', async () => {
     jest.useFakeTimers();
     const testFile = {
@@ -3066,5 +3126,65 @@ describe('force review checkbox', () => {
     // Unchecked checkbox should not trigger a review
     expect(mockPullsGet).not.toHaveBeenCalled();
     expect(jest.mocked(ghUtils.reactToIssueComment)).not.toHaveBeenCalled();
+  });
+});
+
+describe('extractCurrentCodeWindow', () => {
+  function makeFile(lineCount: number): string {
+    return Array.from({ length: lineCount }, (_, i) => `line ${i + 1}`).join('\n');
+  }
+
+  it('returns a windowed snippet with `>>>` marker on the flagged line', () => {
+    const fileContents = new Map([['src/a.ts', makeFile(20)]]);
+    const out = extractCurrentCodeWindow(fileContents, 'src/a.ts', 10);
+    expect(out).toContain('>>> 10: line 10');
+    // line 10 ± 5 inclusive
+    expect(out).toContain('   5: line 5');
+    expect(out).toContain('   15: line 15');
+    // outside the window
+    expect(out).not.toContain('line 4');
+    expect(out).not.toContain('line 16');
+  });
+
+  it('clamps the window start at line 1 for early flagged lines', () => {
+    const fileContents = new Map([['src/a.ts', makeFile(20)]]);
+    const out = extractCurrentCodeWindow(fileContents, 'src/a.ts', 1);
+    const lines = out.split('\n');
+    expect(lines[0]).toBe('>>> 1: line 1');
+    // Window upper bound is line 1 + 5 = 6
+    expect(out).toContain('   6: line 6');
+    expect(out).not.toContain('line 7');
+  });
+
+  it('clamps the window end at the last line for late flagged lines', () => {
+    const fileContents = new Map([['src/a.ts', makeFile(8)]]);
+    const out = extractCurrentCodeWindow(fileContents, 'src/a.ts', 8);
+    const lines = out.split('\n');
+    expect(lines[lines.length - 1]).toBe('>>> 8: line 8');
+    // Window lower bound is 8 - 5 = 3
+    expect(out).toContain('   3: line 3');
+    expect(out).not.toContain('line 2');
+  });
+
+  it('returns `(file content unavailable)` when the file is missing from the map', () => {
+    const fileContents = new Map<string, string>();
+    expect(extractCurrentCodeWindow(fileContents, 'src/missing.ts', 5)).toBe('(file content unavailable)');
+  });
+
+  it('returns `(file content unavailable)` when fileContents is undefined', () => {
+    expect(extractCurrentCodeWindow(undefined, 'src/a.ts', 5)).toBe('(file content unavailable)');
+  });
+
+  it('returns empty string for invalid line numbers', () => {
+    const fileContents = new Map([['src/a.ts', makeFile(10)]]);
+    expect(extractCurrentCodeWindow(fileContents, 'src/a.ts', 0)).toBe('');
+    expect(extractCurrentCodeWindow(fileContents, 'src/a.ts', -3)).toBe('');
+    expect(extractCurrentCodeWindow(fileContents, 'src/a.ts', NaN)).toBe('');
+    expect(extractCurrentCodeWindow(fileContents, 'src/a.ts', Infinity)).toBe('');
+  });
+
+  it('returns empty string for empty file path', () => {
+    const fileContents = new Map([['src/a.ts', makeFile(10)]]);
+    expect(extractCurrentCodeWindow(fileContents, '', 5)).toBe('');
   });
 });
