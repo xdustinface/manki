@@ -92,13 +92,14 @@ function injectMissingCoreAgents(
 function resolvePriorRoundAgents(
   priorRoundAgents: string[],
   pool: ReviewerAgent[],
+  silent?: boolean,
 ): ReviewerAgent[] {
   const poolMap = new Map(pool.map(a => [a.name, a]));
   const resolved: ReviewerAgent[] = [];
   for (const name of priorRoundAgents) {
     const agent = poolMap.get(name);
     if (!agent) {
-      core.warning(`prior-round agent "${name}" no longer exists in the pool; skipping`);
+      if (!silent) core.warning(`prior-round agent "${name}" no longer exists in the pool; skipping`);
       continue;
     }
     if (!resolved.some(r => r.name === agent.name)) {
@@ -110,8 +111,8 @@ function resolvePriorRoundAgents(
 
 // Logs a one-line audit message distinguishing agents inherited from a prior
 // round from agents newly added in the current round.
-function logPinAudit(final: ReviewerAgent[], priorNames: Set<string>): void {
-  if (priorNames.size === 0) return;
+function logPinAudit(final: ReviewerAgent[], priorNames: Set<string>, silent?: boolean): void {
+  if (priorNames.size === 0 || silent) return;
   const inherited: string[] = [];
   const added: string[] = [];
   for (const agent of final) {
@@ -128,6 +129,7 @@ export function selectTeam(
   teamSizeOverride?: 1 | 2 | 3 | 4 | 5 | 6 | 7,
   agentPicks?: AgentPick[],
   priorRoundAgents?: string[],
+  silent?: boolean,
 ): TeamRoster {
   const lineCount = diff.totalAdditions + diff.totalDeletions;
 
@@ -146,7 +148,7 @@ export function selectTeam(
 
   const pool = buildAgentPool(customReviewers);
   const priorAgents = priorRoundAgents && priorRoundAgents.length > 0
-    ? resolvePriorRoundAgents(priorRoundAgents, pool)
+    ? resolvePriorRoundAgents(priorRoundAgents, pool, silent)
     : [];
   const priorNames = new Set(priorAgents.map(a => a.name));
 
@@ -171,7 +173,7 @@ export function selectTeam(
       // Core inviolability: CORE_AGENTS are always present regardless of
       // teamSizeOverride, so the final roster may exceed that value.
       const final = injectMissingCoreAgents(unioned, pool);
-      logPinAudit(final, priorNames);
+      logPinAudit(final, priorNames, silent);
 
       let level: 'trivial' | 'small' | 'medium' | 'large';
       if (final.length === 1) level = 'small';
@@ -204,22 +206,22 @@ export function selectTeam(
     teamSize = level === 'small' ? 3 : level === 'medium' ? 5 : 7;
   }
 
-  // Core agents always included
+  // Core agents always included, then prior-round agents (so prior order matches
+  // the planner path: prior-first, new additions last), then custom reviewers.
   const selected: ReviewerAgent[] = CORE_AGENTS.map(i => pool[i]);
+
+  // Pin prior-round agents next so the heuristic path preserves the same
+  // "prior first, new last" insertion order as the planner path.
+  for (const agent of priorAgents) {
+    if (!selected.some(s => s.name === agent.name)) {
+      selected.push(agent);
+    }
+  }
 
   // Custom reviewers always included (they were explicitly configured)
   for (const custom of (customReviewers || [])) {
     if (!selected.some(s => s.name === custom.name)) {
       selected.push(custom);
-    }
-  }
-
-  // Pin prior-round agents into the heuristic team so monotonic team growth
-  // holds even when no planner picks are available (e.g., review_level !=
-  // 'auto' or planner failure).
-  for (const agent of priorAgents) {
-    if (!selected.some(s => s.name === agent.name)) {
-      selected.push(agent);
     }
   }
 
@@ -260,7 +262,7 @@ export function selectTeam(
     selected.push(...additional);
   }
 
-  logPinAudit(selected, priorNames);
+  logPinAudit(selected, priorNames, silent);
   return { level, agents: selected, lineCount };
 }
 

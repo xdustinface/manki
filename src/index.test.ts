@@ -2125,6 +2125,59 @@ describe('runFullReview orchestration', () => {
     expect(priorRoundAgentsArg).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
   });
 
+  it('reconciles non-planner dashboard with pinned agents after runReview', async () => {
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    // Non-planner path: review_level is explicitly 'small', not 'auto'.
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'small',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+
+    const priorRounds = [{
+      round: 1,
+      commitSha: 'abc',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [],
+      agents: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+    }];
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+    });
+
+    const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'];
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok',
+      findings: [], highlights: [], reviewComplete: true,
+      agentNames: resolvedNames,
+    });
+
+    await callRunFullReview();
+
+    // The final completeDashboard passed to updateProgressComment must include the pinned agents.
+    const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+    expect(progressCommentCalls.length).toBeGreaterThan(0);
+    const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+    expect(finalDashboard.agentCount).toBe(4);
+    expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(
+      expect.arrayContaining(resolvedNames),
+    );
+  });
+
   it('does not load or write handover when memory is disabled', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,

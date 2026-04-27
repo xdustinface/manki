@@ -3822,6 +3822,39 @@ describe('runReview', () => {
       expect(userMessage).not.toContain('factual note');
     }
   });
+
+  it('passes prior-round agents through to selectTeam when priorRounds carries agents', async () => {
+    const priorRounds: HandoverRound[] = [
+      {
+        round: 1,
+        commitSha: 'sha1',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Testing & Coverage'],
+      },
+      {
+        round: 2,
+        commitSha: 'sha2',
+        timestamp: '2025-01-02T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Maintainability & Readability'],
+      },
+    ];
+    const clients = makeClients();
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined,
+      false, [], [], priorRounds,
+    );
+
+    // collectPriorRoundAgents merges: Security, Testing, Maintainability
+    expect(result.agentNames).toEqual(
+      expect.arrayContaining(['Security & Safety', 'Testing & Coverage', 'Maintainability & Readability']),
+    );
+  });
 });
 
 describe('runPlanner', () => {
@@ -4441,6 +4474,27 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(roster.agents.map(a => a.name)).toContain('Maintainability & Readability');
   });
 
+  it('heuristic path places prior agents before heuristic fills', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    // Include Security & Safety (a core agent) alongside Maintainability & Readability
+    // so we can confirm core agents appear before the non-core prior agent.
+    const priorWithCore = ['Security & Safety', 'Maintainability & Readability'];
+    const roster = selectTeam(diff, config, undefined, undefined, undefined, priorWithCore);
+    const names = roster.agents.map(a => a.name);
+    const secIdx = names.indexOf('Security & Safety');
+    const maintIdx = names.indexOf('Maintainability & Readability');
+    expect(maintIdx).toBeGreaterThan(-1);
+    // Security & Safety is a core agent and must come before Maintainability & Readability.
+    expect(secIdx).toBeLessThan(maintIdx);
+    // Heuristic fills (agents not in the prior list and not core) come after prior agents.
+    const coreAndPrior = new Set(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Maintainability & Readability']);
+    const firstHeuristicFill = names.findIndex(n => !coreAndPrior.has(n));
+    if (firstHeuristicFill !== -1) {
+      expect(maintIdx).toBeLessThan(firstHeuristicFill);
+    }
+  });
+
   it('skips unknown prior-round agent name and warns', () => {
     const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
     const config = makeConfig();
@@ -4476,6 +4530,28 @@ describe('selectTeam with teamSizeOverride', () => {
       expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('pinned team:'));
     } finally {
       infoSpy.mockRestore();
+    }
+  });
+
+  it('suppresses logPinAudit and unknown-agent warning when silent is true', () => {
+    const diff = makeDiff({ totalAdditions: 50, totalDeletions: 20 });
+    const config = makeConfig();
+    const prior = ['Bogus Agent', 'Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+    const picks: AgentPick[] = [
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+      { name: 'Correctness & Logic', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks, prior, true);
+      expect(roster.agents.map(a => a.name)).not.toContain('Bogus Agent');
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('pinned team:'));
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('prior-round agent'));
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
     }
   });
 

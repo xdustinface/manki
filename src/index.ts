@@ -567,7 +567,7 @@ async function runFullReview(
               judgeEffort: progress.plannerResult.judgeEffort,
               prType: progress.plannerResult.prType,
             };
-            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize, progress.plannerResult.agents, priorRoundAgents);
+            const plannerTeam = selectTeam(diff, config, config.reviewers, progress.plannerResult.teamSize, progress.plannerResult.agents, priorRoundAgents, true);
             dashboard.agentCount = plannerTeam.agents.length;
             dashboard.agentProgress = plannerTeam.agents.map(a => ({ name: a.name, status: 'reviewing' as const }));
             dashboard.plannerDurationMs = progress.plannerDurationMs;
@@ -846,6 +846,15 @@ async function runFullReview(
       };
       dashboard.agentCount = result.agentNames?.length ?? dashboard.agentCount;
       dashboard.agentProgress = result.agentNames?.map(name => {
+        const existing = dashboard.agentProgress?.find(a => a.name === name);
+        return existing ?? { name, status: 'done' as const };
+      });
+    } else if (priorRoundAgents.length > 0 && result.agentNames) {
+      // Non-planner path: reconcile the dashboard with the actual resolved team.
+      // The initial dashboard was built without priorRoundAgents (not yet loaded),
+      // so on round 2+ it would show a stale, too-small agent list.
+      dashboard.agentCount = result.agentNames.length;
+      dashboard.agentProgress = result.agentNames.map(name => {
         const existing = dashboard.agentProgress?.find(a => a.name === name);
         return existing ?? { name, status: 'done' as const };
       });
