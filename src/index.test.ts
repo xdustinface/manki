@@ -1331,6 +1331,10 @@ describe('postCleanup (via main dispatch)', () => {
 });
 
 describe('runFullReview orchestration', () => {
+  // Index of the `interRoundDiff` parameter in the `runReview` argument list.
+  // Mirrors the trailing slot in `runReview`'s signature in `src/review.ts`.
+  const RUN_REVIEW_INTER_ROUND_DIFF_ARG = 15;
+
   beforeEach(() => {
     jest.clearAllMocks();
     _resetOctokitCache();
@@ -2639,7 +2643,7 @@ describe('runFullReview orchestration', () => {
 
     expect(jest.mocked(ghUtils.fetchInterRoundDiff)).toHaveBeenCalledTimes(1);
     const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const passedInterRoundDiff = runReviewArgs[runReviewArgs.length - 1];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
     expect(passedInterRoundDiff).toBe('');
 
     expect(mockGraphql).not.toHaveBeenCalledWith(
@@ -2699,7 +2703,7 @@ describe('runFullReview orchestration', () => {
 
     expect(jest.mocked(ghUtils.fetchInterRoundDiff)).not.toHaveBeenCalled();
     const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const passedInterRoundDiff = runReviewArgs[runReviewArgs.length - 1];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
     expect(passedInterRoundDiff).toBe('');
   });
 
@@ -2759,7 +2763,7 @@ describe('runFullReview orchestration', () => {
 
     expect(jest.mocked(ghUtils.fetchInterRoundDiff)).toHaveBeenCalledTimes(1);
     const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
-    const passedInterRoundDiff = runReviewArgs[runReviewArgs.length - 1];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
     expect(passedInterRoundDiff).toBe(
       'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n',
     );
