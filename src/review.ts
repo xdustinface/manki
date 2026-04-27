@@ -99,7 +99,7 @@ function resolvePriorRoundAgents(
   for (const name of priorRoundAgents) {
     const agent = poolMap.get(name);
     if (!agent) {
-      if (!silent) core.warning(`prior-round agent "${name}" no longer exists in the pool; skipping`);
+      if (!silent) core.warning(`prior-round agent "${name.replace(/[\r\n]/g, ' ')}" no longer exists in the pool; skipping`);
       continue;
     }
     if (!resolved.some(r => r.name === agent.name)) {
