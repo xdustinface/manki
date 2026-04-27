@@ -2066,6 +2066,22 @@ describe('runFullReview orchestration', () => {
       expect(agentsArg).toEqual(resolvedNames);
     });
 
+    it('filters TRIVIAL_VERIFIER_AGENT name from agents persisted to handover', async () => {
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue(null);
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: [reviewModule.TRIVIAL_VERIFIER_AGENT.name],
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+      const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+      const { 8: agentsArg } = appendCall;
+      expect(agentsArg).toEqual([]);
+    });
+
     it('forwards prior-round agents through to the dashboard selectTeam call', async () => {
       const priorRounds = [{
         round: 1,
@@ -2115,6 +2131,60 @@ describe('runFullReview orchestration', () => {
       expect(planningCall).toBeDefined();
       const { 5: priorRoundAgentsArg } = planningCall!;
       expect(priorRoundAgentsArg).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
+    });
+
+    it('reconciles planner-path dashboard with prior-round agents after runReview', async () => {
+      // Planner path: review_level is 'auto' (set by beforeEach) and prior rounds exist.
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Architecture & Design'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+      jest.mocked(reviewModule.runReview).mockImplementation(async (_clients, _config, _diff, _rawDiff, _ctx, _mem, _files, _pr, _issues, onProgress) => {
+        onProgress?.({
+          phase: 'planning',
+          rawFindingCount: 0,
+          plannerResult: {
+            teamSize: 3,
+            reviewerEffort: 'medium',
+            judgeEffort: 'medium',
+            prType: 'feature',
+            agents: [
+              { name: 'Security & Safety', effort: 'high' },
+              { name: 'Architecture & Design', effort: 'medium' },
+              { name: 'Correctness & Logic', effort: 'medium' },
+            ],
+          },
+          plannerDurationMs: 100,
+        });
+        return {
+          verdict: 'APPROVE', summary: 'ok',
+          findings: [], highlights: [], reviewComplete: true,
+          agentNames: resolvedNames,
+          plannerResult: {
+            teamSize: 3,
+            reviewerEffort: 'medium',
+            judgeEffort: 'medium',
+            prType: 'feature',
+            agents: [],
+          },
+        };
+      });
+
+      await callRunFullReview();
+
+      const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+      expect(progressCommentCalls.length).toBeGreaterThan(0);
+      const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+      expect(finalDashboard.agentCount).toBe(3);
+      expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
     });
 
     it('reconciles non-planner dashboard with pinned agents after runReview', async () => {

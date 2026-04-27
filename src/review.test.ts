@@ -4480,7 +4480,7 @@ describe('selectTeam with teamSizeOverride', () => {
       const roster = selectTeam(diff, config, undefined, undefined, undefined, prior);
       expect(roster.agents.map(a => a.name)).toContain('Maintainability & Readability');
       expect(infoSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/^pinned team: inherited \[.*\], added \[.*\]$/),
+        'pinned team: inherited [Security & Safety, Architecture & Design, Correctness & Logic, Maintainability & Readability], added []',
       );
     } finally {
       infoSpy.mockRestore();
