@@ -5,6 +5,13 @@ All notable changes to Manki will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.1] - 2026-04-27
+
+### Fixed
+
+- Judge thread auto-resolution now grounds its addressed/not-addressed decision in the inter-round diff plus the current code at each thread region, preventing zero-diff force-pushes (rebases with identical trees) from auto-resolving open warnings (#624)
+- Verdict layer now blocks `APPROVE` when a prior-round `warning` or `blocker` is still unresolved (no `agree` reply, thread not resolved on GitHub), surfacing the new `prior_unaddressed` reason. Multi-round priors are deduped by fingerprint with the latest round winning (#625)
+
 ## [4.6.0] - 2026-04-27
 
 ### Added
@@ -390,6 +397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic review posting with inline comments
 - Configuration via `.manki.yml`
 
+[4.6.1]: https://github.com/manki-review/manki/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/manki-review/manki/compare/v4.5.3...v4.6.0
 [4.5.3]: https://github.com/manki-review/manki/compare/v4.5.2...v4.5.3
 [4.5.2]: https://github.com/manki-review/manki/compare/v4.5.1...v4.5.2
