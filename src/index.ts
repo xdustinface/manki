@@ -7,6 +7,7 @@ import { loadConfig, resolveModel } from './config';
 import { extractCurrentCodeWindow } from './code-window';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isLLMAccessAllowed } from './interaction';
+import { isEmptyInterRoundDiff } from './judge';
 import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
@@ -756,7 +757,7 @@ async function runFullReview(
     // any `addressed` evaluation here as a second layer. `undefined` is the
     // unknown sentinel (compare-API failure) and must not trigger the guard.
     const hasPriorRounds = (handover?.rounds.length ?? 0) > 0;
-    const interRoundDiffKnownEmpty = hasPriorRounds && interRoundDiff !== undefined && interRoundDiff.trim().length === 0;
+    const interRoundDiffKnownEmpty = hasPriorRounds && isEmptyInterRoundDiff(interRoundDiff);
     if (result.threadEvaluations && result.threadEvaluations.length > 0) {
       const knownThreadIds = new Set(openThreads.map(t => t.threadId));
       for (const { threadId, status, reason } of result.threadEvaluations) {

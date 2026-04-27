@@ -209,6 +209,16 @@ const IN_PR_SUPPRESSION_LINE_TOLERANCE = 5;
 /** Cap on inter-round diff size embedded in the judge user message, to keep prompts bounded on large rebases. */
 const MAX_INTER_ROUND_DIFF_CHARS = 20000;
 
+/**
+ * Whether the inter-round diff is known to be empty, meaning prior rounds exist
+ * but the tree is unchanged (force-pushed rebase, branch reset, identical
+ * resync). `undefined` is the unknown sentinel (e.g., compare-API failure) and
+ * does not count as empty. Callers must additionally gate on `hasPriorRounds`.
+ */
+export function isEmptyInterRoundDiff(interRoundDiff: string | undefined): boolean {
+  return interRoundDiff !== undefined && interRoundDiff.trim().length === 0;
+}
+
 export interface JudgeInput {
   findings: Finding[];
   diff: ParsedDiff;
@@ -803,7 +813,7 @@ export async function runJudgeAgent(
   // `undefined` is the "unknown" sentinel (e.g., compare-API failure upstream)
   // and must not trigger the override. Falling through lets the LLM evaluate
   // each thread on whatever evidence it does have.
-  const interRoundDiffEmpty = hasPriorRounds && interRoundDiff !== undefined && interRoundDiff.trim().length === 0;
+  const interRoundDiffEmpty = hasPriorRounds && isEmptyInterRoundDiff(interRoundDiff);
 
   const codeContextMap = new Map<string, string>();
   for (const f of findings) {
