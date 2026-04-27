@@ -95,6 +95,18 @@ export function selectTeam(
     }
 
     if (resolved.length > 0) {
+      const missingCore: ReviewerAgent[] = [];
+      for (const i of CORE_AGENTS) {
+        const coreAgent = pool[i];
+        if (!resolved.some(r => r.name === coreAgent.name)) {
+          missingCore.push(coreAgent);
+          core.info(`planner omitted core agent "${coreAgent.name}"; injecting`);
+        }
+      }
+      if (missingCore.length > 0) {
+        resolved.unshift(...missingCore);
+      }
+
       let level: 'trivial' | 'small' | 'medium' | 'large';
       if (resolved.length === 1) level = 'small';
       else if (resolved.length <= 3) level = 'small';
