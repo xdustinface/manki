@@ -75,8 +75,10 @@ export async function fetchPRDiff(octokit: Octokit, owner: string, repo: string,
  * Used to ground the judge's per-thread evaluation in actual code changes
  * since the prior review round, distinguishing real fixes from no-op pushes
  * (force-pushed rebases, branch resets) where every open thread should remain
- * unresolved. Returns an empty string on failure or when the comparison
- * yields zero changed files.
+ * unresolved. Returns an empty string when `base === head` or when the
+ * comparison yields a non-string payload. Throws on API failure so the caller
+ * can distinguish "no changes" (empty string) from "unknown" (caught error,
+ * leaves the diff undefined upstream).
  */
 export async function fetchInterRoundDiff(
   octokit: Octokit,
@@ -98,7 +100,7 @@ export async function fetchInterRoundDiff(
     return typeof diff === 'string' ? diff : '';
   } catch (error) {
     core.debug(`Failed to fetch inter-round diff ${base}..${head}: ${error}`);
-    return '';
+    throw error;
   }
 }
 

@@ -785,11 +785,14 @@ export async function runJudgeAgent(
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
   const hasPriorRounds = (priorRounds?.length ?? 0) > 0;
-  // Empty inter-round diff with prior rounds means the tree is unchanged since
-  // the last review (force-pushed rebase, branch reset, or identical resync).
-  // No thread can be addressed in that case — synthesize a not-addressed
-  // evaluation for every open thread and ignore whatever the LLM returns.
-  const interRoundDiffEmpty = hasPriorRounds && (interRoundDiff?.trim().length ?? 0) === 0;
+  // Known-empty inter-round diff with prior rounds means the tree is unchanged
+  // since the last review (force-pushed rebase, branch reset, or identical
+  // resync). No thread can be addressed in that case, so synthesize a
+  // not-addressed evaluation for every open thread and ignore the LLM result.
+  // `undefined` is the "unknown" sentinel (e.g., compare-API failure upstream)
+  // and must NOT trigger the override. Falling through lets the LLM evaluate
+  // each thread on whatever evidence it does have.
+  const interRoundDiffEmpty = hasPriorRounds && interRoundDiff !== undefined && interRoundDiff.trim().length === 0;
 
   const codeContextMap = new Map<string, string>();
   for (const f of findings) {
