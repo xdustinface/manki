@@ -456,6 +456,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -480,6 +481,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -506,6 +508,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -532,6 +535,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -558,6 +562,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -582,6 +587,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -597,6 +603,7 @@ describe('postReview generalFindings', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -621,6 +628,7 @@ describe('postReview generalFindings', () => {
       ],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -731,6 +739,7 @@ describe('postReview with stats', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
     const stats: ReviewStats = {
       model: 'claude-sonnet-4-20250514',
@@ -765,6 +774,7 @@ describe('postReview with stats', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -795,6 +805,7 @@ describe('postReview partialNote', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
       partialNote: '4 of 5 agents completed (Correctness & Logic failed after 2 attempts)',
     };
 
@@ -812,6 +823,7 @@ describe('postReview partialNote', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -2432,6 +2444,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     const reviewId = await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -2463,6 +2476,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     const reviewId = await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -2492,6 +2506,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     const reviewId = await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result);
@@ -2518,6 +2533,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await expect(postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result)).rejects.toThrow('API error');
@@ -2548,6 +2564,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result, diff);
@@ -2586,6 +2603,7 @@ describe('postReview fallback paths', () => {
       }],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     };
 
     await postReview(mockOctokit, 'owner', 'repo', 1, 'sha', result, diff);

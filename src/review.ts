@@ -1019,6 +1019,7 @@ export async function runReview(
         findings: [],
         highlights: [],
         reviewComplete: false,
+        agentNames: team.agents.map(a => a.name),
         failedAgents,
       };
     }
@@ -1123,6 +1124,7 @@ export async function runReview(
       findings: [],
       highlights: [],
       reviewComplete: false,
+      agentNames: team.agents.map(a => a.name),
     };
   }
 

@@ -404,6 +404,7 @@ async function runFullReview(
         findings: [],
         highlights: [],
         reviewComplete: true,
+        agentNames: [] as string[],
       };
       // Dismiss stale CHANGES_REQUESTED reviews before posting the skip comment
       try {
@@ -427,6 +428,7 @@ async function runFullReview(
         findings: [],
         highlights: [],
         reviewComplete: true,
+        agentNames: [] as string[],
       };
       await dismissPreviousReviews(octokit, owner, repo, prNumber);
       await postReview(octokit, owner, repo, prNumber, commitSha, result, diff);
@@ -679,7 +681,7 @@ async function runFullReview(
     }
 
     // Per-agent metrics: count raw and kept findings per agent
-    const agentNames = result.agentNames ?? [];
+    const agentNames = result.agentNames;
     const allJudged = result.allJudgedFindings ?? [];
     const rawFindings = result.rawFindings ?? allJudged;
     const agentMetrics = agentNames.length > 0
@@ -739,7 +741,7 @@ async function runFullReview(
       diffAdditions: diff.totalAdditions,
       diffDeletions: diff.totalDeletions,
       filesReviewed: filteredFiles.length,
-      agents: result.agentNames ?? [],
+      agents: result.agentNames,
       findingsRaw: result.rawFindingCount ?? result.findings.length,
       findingsKept: result.findings.length,
       findingsDropped: (result.rawFindingCount ?? result.findings.length) - result.findings.length,
@@ -826,7 +828,7 @@ async function runFullReview(
             result.findings,
             recap.previousFindings,
             result.summary,
-            result.agentNames ?? [],
+            result.agentNames,
             fingerprintFinding,
             classifyAuthorReply,
             handover,
@@ -844,12 +846,12 @@ async function runFullReview(
         judgeEffort: result.plannerResult.judgeEffort,
         prType: result.plannerResult.prType,
       };
-      dashboard.agentCount = result.agentNames?.length ?? dashboard.agentCount;
-      dashboard.agentProgress = result.agentNames?.map(name => {
+      dashboard.agentCount = result.agentNames.length;
+      dashboard.agentProgress = result.agentNames.map(name => {
         const existing = dashboard.agentProgress?.find(a => a.name === name);
         return existing ?? { name, status: 'done' as const };
       });
-    } else if (priorRoundAgents.length > 0 && result.agentNames) {
+    } else if (priorRoundAgents.length > 0) {
       // Non-planner path: reconcile the dashboard with the actual resolved team.
       // The initial dashboard was built without priorRoundAgents (not yet loaded),
       // so on round 2+ it would show a stale, too-small agent list.
@@ -911,7 +913,7 @@ async function runFullReview(
         judgeModel,
         reviewLevel: team.level,
         reviewLevelReason: `auto, ${diff.totalAdditions + diff.totalDeletions} lines`,
-        teamAgents: result.agentNames ?? team.agents.map(a => a.name),
+        teamAgents: result.agentNames,
         memoryEnabled: config.memory?.enabled ?? false,
         memoryRepo: config.memory?.repo ?? '',
         nitHandling,

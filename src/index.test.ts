@@ -111,6 +111,7 @@ jest.mock('./review', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     }),
     determineVerdict: jest.fn().mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' }),
     selectTeam: jest.fn().mockReturnValue({ level: 'standard', agents: [{ name: 'general' }] }),
@@ -1363,6 +1364,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
     jest.mocked(reviewModule.selectTeam).mockReturnValue({ level: 'standard' as 'small', agents: [{ name: 'general', focus: '' }], lineCount: 0 });
@@ -1512,6 +1514,7 @@ describe('runFullReview orchestration', () => {
       findings,
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'REQUEST_CHANGES', verdictReason: 'novel_suggestion' });
@@ -1814,6 +1817,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1854,6 +1858,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1888,6 +1893,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Review incomplete',
       findings: [], highlights: [], reviewComplete: false,
+      agentNames: [],
     });
 
     await callRunFullReview();
@@ -1944,6 +1950,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Issues',
       findings: [finding2], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
 
     await callRunFullReview();
@@ -2173,9 +2180,7 @@ describe('runFullReview orchestration', () => {
     expect(progressCommentCalls.length).toBeGreaterThan(0);
     const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
     expect(finalDashboard.agentCount).toBe(4);
-    expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(
-      expect.arrayContaining(resolvedNames),
-    );
+    expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
   });
 
   it('does not load or write handover when memory is disabled', async () => {
@@ -2233,6 +2238,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Nits',
       findings: [finding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(memoryModule.applyEscalations).mockReturnValue([escalated]);
@@ -2266,6 +2272,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
@@ -2295,6 +2302,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Suggestions',
       findings: [finding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'COMMENT', verdictReason: 'only_nit_or_suggestion' });
@@ -2358,6 +2366,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2414,6 +2423,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2460,6 +2470,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2502,6 +2513,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2562,6 +2574,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'COMMENT', summary: 'Issues found',
           findings: [finding1, finding2], highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2800,6 +2813,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
       ],
@@ -2860,6 +2874,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
       ],
@@ -2920,6 +2935,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in latest push' },
       ],
@@ -2965,6 +2981,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
         { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
@@ -3018,6 +3035,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_known', status: 'addressed', reason: 'Legit fix' },
         { threadId: 'PRRT_unknown', status: 'addressed', reason: 'Injected by adversary' },
@@ -3093,6 +3111,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_fail', status: 'addressed', reason: 'Should fail' },
       ],

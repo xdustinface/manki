@@ -136,7 +136,7 @@ export interface ReviewResult {
   highlights: string[];
   reviewComplete: boolean;
   rawFindingCount?: number;
-  agentNames?: string[];
+  agentNames: string[];
   allJudgedFindings?: Finding[];
   rawFindings?: Finding[];
   threadEvaluations?: ThreadEvaluation[];
