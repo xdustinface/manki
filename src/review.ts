@@ -1016,7 +1016,7 @@ export async function runReview(
   }
 
   const priorFindingsFlat: HandoverFinding[] = (priorRounds ?? []).flatMap(r => r.findings);
-  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat, openThreads, judgeThreadEvaluations);
+  const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat, openThreads);
 
   const summary = judgeSummary;
 
@@ -1366,10 +1366,16 @@ function dedupePriorFindings(priorRounds: HandoverFinding[]): HandoverFinding[] 
  *   4. otherwise (only suggestions/nitpicks / previously-dismissed warnings / empty) → APPROVE / only_nit_or_suggestion
  *
  * A prior `warning`/`blocker` is "unresolved" when the author has not agreed to
- * dismiss it (`authorReply !== 'agree'`), the underlying GitHub thread is still
- * in `openThreads`, and the judge did not mark it `addressed` in the current
- * round's `threadEvaluations`. A prior finding without a `threadId` is treated
- * as unresolved, which conservatively blocks APPROVE for older handover formats.
+ * dismiss it (`authorReply !== 'agree'`) and the underlying GitHub thread is
+ * still in `openThreads`. A prior finding without a `threadId` is treated as
+ * unresolved, which conservatively blocks APPROVE for older handover formats.
+ *
+ * The judge's `threadEvaluations.status === 'addressed'` is intentionally not
+ * consulted here. That signal is LLM-derived and could be flipped by prompt
+ * injection in prior-round source or comments, allowing an attacker to
+ * unblock APPROVE on an unaddressed warning. Resolution must come from the
+ * GitHub thread state (`openThreads`) or from an explicit author agreement
+ * captured in `authorReply`.
  *
  * Multi-round priors are collapsed to one entry per `threadId` (or per
  * fingerprint when no `threadId` is recorded), keeping the most recent
@@ -1393,7 +1399,6 @@ export function determineVerdict(
   findings: Finding[],
   priorRounds?: HandoverFinding[],
   openThreads?: OpenThread[],
-  threadEvaluations?: ThreadEvaluation[],
 ): { verdict: ReviewVerdict; verdictReason: VerdictReason } {
   if (findings.some(f => f.severity === 'blocker')) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'required_present' };
@@ -1408,16 +1413,11 @@ export function determineVerdict(
   }
 
   const openThreadIds = new Set((openThreads ?? []).map(t => t.threadId));
-  const addressedThreadIds = new Set(
-    (threadEvaluations ?? []).filter(e => e.status === 'addressed').map(e => e.threadId),
-  );
   const hasUnresolvedPrior = prior.some(p => {
     if (p.severity !== 'warning' && p.severity !== 'blocker') return false;
     if (p.authorReply === 'agree') return false;
     if (!p.threadId) return true;
-    if (!openThreadIds.has(p.threadId)) return false;
-    if (addressedThreadIds.has(p.threadId)) return false;
-    return true;
+    return openThreadIds.has(p.threadId);
   });
   if (hasUnresolvedPrior) {
     return { verdict: 'REQUEST_CHANGES', verdictReason: 'prior_unaddressed' };

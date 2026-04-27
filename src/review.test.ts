@@ -24,7 +24,7 @@ import {
 } from './review';
 import * as core from '@actions/core';
 import { LinkedIssue, titleToSlug } from './github';
-import { Finding, HandoverFinding, HandoverRound, OpenThread, ThreadEvaluation, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
+import { Finding, HandoverFinding, HandoverRound, OpenThread, ReviewerAgent, ReviewConfig, ParsedDiff, DiffFile, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
 import { runJudgeAgent, computeProvenanceMap } from './judge';
 import { applySuppressions } from './memory';
 
@@ -593,7 +593,7 @@ describe('determineVerdict', () => {
     it('blocks APPROVE on a nit-only round when a prior warning is still open', () => {
       const priors = [makePriorWarning()];
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], priors, open, []);
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
@@ -601,46 +601,28 @@ describe('determineVerdict', () => {
     it('approves when the prior warning was author-agreed', () => {
       const priors = [makePriorWarning({ authorReply: 'agree' })];
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], priors, open, []);
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
 
     it('approves when the prior thread is no longer in openThreads (resolved on GitHub)', () => {
       const priors = [makePriorWarning()];
-      const result = determineVerdict([nitpick], priors, [], []);
+      const result = determineVerdict([nitpick], priors, []);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
-    });
-
-    it('approves when the judge marked the prior thread addressed in this round', () => {
-      const priors = [makePriorWarning()];
-      const open = [makeOpenThread()];
-      const evals: ThreadEvaluation[] = [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }];
-      const result = determineVerdict([nitpick], priors, open, evals);
-      expect(result.verdict).toBe('APPROVE');
-      expect(result.verdictReason).toBe('only_nit_or_suggestion');
-    });
-
-    it('still blocks when the judge marked the prior thread not_addressed or uncertain', () => {
-      const priors = [makePriorWarning()];
-      const open = [makeOpenThread()];
-      const notAddressed: ThreadEvaluation[] = [{ threadId: 'T1', status: 'not_addressed', reason: 'still missing' }];
-      expect(determineVerdict([nitpick], priors, open, notAddressed).verdictReason).toBe('prior_unaddressed');
-      const uncertain: ThreadEvaluation[] = [{ threadId: 'T1', status: 'uncertain', reason: 'cannot tell' }];
-      expect(determineVerdict([nitpick], priors, open, uncertain).verdictReason).toBe('prior_unaddressed');
     });
 
     it('blocks APPROVE on an unresolved prior blocker', () => {
       const priors = [makePriorWarning({ severity: 'blocker' })];
       const open = [makeOpenThread({ severity: 'blocker' })];
-      const result = determineVerdict([nitpick], priors, open, []);
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
 
     it('first review round (no priors) falls through to existing rules', () => {
-      const result = determineVerdict([nitpick], [], [], []);
+      const result = determineVerdict([nitpick], [], []);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
@@ -648,7 +630,7 @@ describe('determineVerdict', () => {
     it('treats a prior warning without threadId as unresolved (conservative default)', () => {
       const priors = [makePriorWarning({ threadId: undefined })];
       const open = [makeOpenThread({ threadId: 'OTHER' })];
-      const result = determineVerdict([nitpick], priors, open, []);
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
@@ -659,7 +641,7 @@ describe('determineVerdict', () => {
       };
       const priors = [makePriorWarning()];
       const open = [makeOpenThread()];
-      const result = determineVerdict([novelWarning], priors, open, []);
+      const result = determineVerdict([novelWarning], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('novel_suggestion');
     });
@@ -667,7 +649,7 @@ describe('determineVerdict', () => {
     it('ignores prior findings that are not warning or blocker (e.g. suggestion)', () => {
       const priorSuggestion = makePriorWarning({ severity: 'suggestion' });
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], [priorSuggestion], open, []);
+      const result = determineVerdict([nitpick], [priorSuggestion], open);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
@@ -675,7 +657,7 @@ describe('determineVerdict', () => {
     it('treats prior findings with severity "unknown" as non-blocking (falls through to APPROVE)', () => {
       const priorUnknown = makePriorWarning({ severity: 'unknown' });
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], [priorUnknown], open, []);
+      const result = determineVerdict([nitpick], [priorUnknown], open);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
@@ -686,7 +668,7 @@ describe('determineVerdict', () => {
       };
       const priors = [makePriorWarning()];
       const open = [makeOpenThread()];
-      const result = determineVerdict([blocker], priors, open, []);
+      const result = determineVerdict([blocker], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('required_present');
     });
@@ -694,7 +676,7 @@ describe('determineVerdict', () => {
     it.each(['disagree', 'partial'] as const)('blocks APPROVE when authorReply is %s', (reply) => {
       const priors = [makePriorWarning({ authorReply: reply })];
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], priors, open, []);
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
@@ -703,8 +685,20 @@ describe('determineVerdict', () => {
       const resolved = makePriorWarning({ threadId: 'T_RESOLVED', authorReply: 'agree' });
       const unresolved = makePriorWarning({ threadId: 'T_OPEN' });
       const open = [makeOpenThread({ threadId: 'T_OPEN' })];
-      const evals: ThreadEvaluation[] = [{ threadId: 'T_RESOLVED', status: 'addressed', reason: 'fixed' }];
-      const result = determineVerdict([nitpick], [resolved, unresolved], open, evals);
+      const result = determineVerdict([nitpick], [resolved, unresolved], open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('does not unblock APPROVE on a judge-addressed signal alone (resolution must come from `openThreads` or `authorReply`)', () => {
+      // The judge's `threadEvaluations` is LLM-derived and could be flipped by
+      // prompt injection in prior-round source or comments. `determineVerdict`
+      // intentionally only consults `openThreads` and `authorReply`, so a
+      // still-open thread with no author agreement remains `prior_unaddressed`
+      // even when the judge claims it is `addressed`.
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
@@ -720,7 +714,7 @@ describe('determineVerdict', () => {
       const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
       const open = [makeOpenThread()];
       // Flat priors come in chronological order (round 1 first, round 2 last).
-      const result = determineVerdict([nitpick], [round1, round2], open, []);
+      const result = determineVerdict([nitpick], [round1, round2], open);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
@@ -733,7 +727,7 @@ describe('determineVerdict', () => {
         authorReply: 'none',
       };
       const round2: HandoverFinding = { ...round1, authorReply: 'agree' };
-      const result = determineVerdict([nitpick], [round1, round2], [], []);
+      const result = determineVerdict([nitpick], [round1, round2], []);
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
@@ -748,7 +742,7 @@ describe('determineVerdict', () => {
       };
       const round2: HandoverFinding = { ...round1, authorReply: 'none' };
       const open = [makeOpenThread()];
-      const result = determineVerdict([nitpick], [round1, round2], open, []);
+      const result = determineVerdict([nitpick], [round1, round2], open);
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
@@ -2336,11 +2330,60 @@ describe('runReview', () => {
     expect(result.reviewComplete).toBe(true);
   });
 
-  it('returns APPROVE / only_nit_or_suggestion when judge marks the prior thread addressed', async () => {
+  it('returns APPROVE / only_nit_or_suggestion when the prior thread is no longer open on GitHub, ignoring the judge addressed signal', async () => {
     const clients = makeClients('[]');
     const config = makeConfig();
     const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
 
+    // Judge claims the thread is addressed, but `determineVerdict` only trusts
+    // GitHub thread state. The empty `openThreads` below is what actually
+    // unblocks APPROVE.
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'Prior thread addressed.',
+      threadEvaluations: [{ threadId: 'T1', status: 'addressed', reason: 'fixed in diff' }],
+    });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'sha1',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'T1',
+      }],
+    }];
+    const openThreads: OpenThread[] = [];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns REQUEST_CHANGES / prior_unaddressed when the GitHub thread is still open even if the judge says addressed', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // The judge's `addressed` signal is LLM-derived and could be flipped by
+    // prompt injection. `determineVerdict` no longer consults it, so an
+    // attacker who tricks the judge cannot bypass an open GitHub thread.
     mockedRunJudgeAgent.mockResolvedValue({
       findings: [],
       summary: 'Prior thread addressed.',
@@ -2380,8 +2423,8 @@ describe('runReview', () => {
       priorRounds,
     );
 
-    expect(result.verdict).toBe('APPROVE');
-    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
     expect(result.reviewComplete).toBe(true);
   });
 
