@@ -397,6 +397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic review posting with inline comments
 - Configuration via `.manki.yml`
 
+[4.6.1]: https://github.com/manki-review/manki/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/manki-review/manki/compare/v4.5.3...v4.6.0
 [4.5.3]: https://github.com/manki-review/manki/compare/v4.5.2...v4.5.3
 [4.5.2]: https://github.com/manki-review/manki/compare/v4.5.1...v4.5.2
