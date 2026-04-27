@@ -748,6 +748,15 @@ async function runFullReview(
     // Resolve threads the judge marked `addressed`. Other statuses
     // (`not_addressed`, `uncertain`) are logged for audit but never trigger a
     // resolveReviewThread mutation. Unknown thread IDs are filtered.
+    //
+    // Defense-in-depth: when the inter-round diff is known-empty (force-pushed
+    // rebase to identical tree), no thread can be addressed. The judge already
+    // synthesizes `not_addressed` for every thread in this case, but a future
+    // refactor that bypasses `runJudgeAgent` would lose that guarantee. Drop
+    // any `addressed` evaluation here as a second layer. `undefined` is the
+    // unknown sentinel (compare-API failure) and must not trigger the guard.
+    const hasPriorRounds = (handover?.rounds.length ?? 0) > 0;
+    const interRoundDiffKnownEmpty = hasPriorRounds && interRoundDiff !== undefined && interRoundDiff.trim().length === 0;
     if (result.threadEvaluations && result.threadEvaluations.length > 0) {
       const knownThreadIds = new Set(openThreads.map(t => t.threadId));
       for (const { threadId, status, reason } of result.threadEvaluations) {
@@ -757,6 +766,10 @@ async function runFullReview(
         }
         core.info(`Thread ${threadId}: ${status} — ${reason}`);
         if (status !== 'addressed') continue;
+        if (interRoundDiffKnownEmpty) {
+          core.info(`Thread ${threadId}: ignoring 'addressed' verdict — inter-round diff is empty`);
+          continue;
+        }
         try {
           await octokit.graphql(`mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }`, { threadId });
           core.info(`Judge resolved: "${reason}" — thread ${threadId}`);

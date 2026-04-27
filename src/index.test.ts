@@ -2623,14 +2623,15 @@ describe('runFullReview orchestration', () => {
     // compare API yields no patch between prior and current head.
     jest.mocked(ghUtils.fetchInterRoundDiff).mockResolvedValue('');
 
-    // Whatever runReview returns: simulate a runReview that produced
-    // not_addressed verdicts (matches the synthetic override behavior of the
-    // judge for empty inter-round diff).
+    // Mock returns `addressed` to honour the test title "even if LLM claimed
+    // addressed". The judge-level synthetic override is bypassed here because
+    // `runReview` is mocked, so the assertion that no resolveReviewThread
+    // mutation fires proves the index.ts-level defense-in-depth guard works.
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
       threadEvaluations: [
-        { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
+        { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
       ],
     });
 
