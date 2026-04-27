@@ -1015,7 +1015,9 @@ export async function runReview(
     };
   }
 
-  const priorFindingsFlat: HandoverFinding[] = (priorRounds ?? []).flatMap(r => r.findings);
+  const priorFindingsFlat: HandoverFinding[] = [...(priorRounds ?? [])]
+    .sort((a, b) => a.round - b.round)
+    .flatMap(r => r.findings);
   const { verdict, verdictReason } = determineVerdict(finalFindings, priorFindingsFlat, openThreads);
 
   const summary = judgeSummary;
