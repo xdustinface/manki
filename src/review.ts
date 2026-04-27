@@ -63,6 +63,29 @@ export function buildAgentPool(customReviewers?: ReviewerAgent[]): ReviewerAgent
   return pool;
 }
 
+// Ensures all CORE_AGENTS are present in the resolved team. Returns the agents
+// reordered so that core agents come first in CORE_AGENTS order (injecting any
+// that the planner omitted), followed by non-core planner picks in their
+// original planner order. Core inviolability supersedes teamSizeOverride.
+// The final roster may exceed the planner-requested size.
+function injectMissingCoreAgents(
+  resolved: ReviewerAgent[],
+  pool: ReviewerAgent[],
+): ReviewerAgent[] {
+  const coreSet = new Set(CORE_AGENTS.map(i => pool[i].name));
+  const orderedCore: ReviewerAgent[] = CORE_AGENTS.map(i => {
+    const coreAgent = pool[i];
+    const plannerPicked = resolved.find(r => r.name === coreAgent.name);
+    if (plannerPicked) {
+      return plannerPicked;
+    }
+    core.info(`planner omitted core agent "${coreAgent.name}"; injecting`);
+    return coreAgent;
+  });
+  const nonCore = resolved.filter(r => !coreSet.has(r.name));
+  return [...orderedCore, ...nonCore];
+}
+
 export function selectTeam(
   diff: ParsedDiff,
   config: ReviewConfig,
@@ -95,30 +118,16 @@ export function selectTeam(
     }
 
     if (resolved.length > 0) {
-      // Reconstruct order: all CORE_AGENTS first (in CORE_AGENTS order, injecting any missing),
-      // then non-core planner picks in their original planner order.
-      const coreSet = new Set(CORE_AGENTS.map(i => pool[i].name));
-      const orderedCore: ReviewerAgent[] = [];
-      for (const i of CORE_AGENTS) {
-        const coreAgent = pool[i];
-        const plannerPicked = resolved.find(r => r.name === coreAgent.name);
-        if (plannerPicked) {
-          orderedCore.push(plannerPicked);
-        } else {
-          orderedCore.push(coreAgent);
-          core.info(`planner omitted core agent "${coreAgent.name}"; injecting`);
-        }
-      }
-      const nonCore = resolved.filter(r => !coreSet.has(r.name));
-      resolved.length = 0;
-      resolved.push(...orderedCore, ...nonCore);
+      // Core inviolability: CORE_AGENTS are always present regardless of
+      // teamSizeOverride, so the final roster may exceed that value.
+      const final = injectMissingCoreAgents(resolved, pool);
 
       let level: 'trivial' | 'small' | 'medium' | 'large';
-      if (resolved.length === 1) level = 'small';
-      else if (resolved.length <= 3) level = 'small';
-      else if (resolved.length <= 5) level = 'medium';
+      if (final.length === 1) level = 'small';
+      else if (final.length <= 3) level = 'small';
+      else if (final.length <= 5) level = 'medium';
       else level = 'large';
-      return { level, agents: resolved, lineCount };
+      return { level, agents: final, lineCount };
     }
     // If resolution failed entirely, fall through to heuristic
   }

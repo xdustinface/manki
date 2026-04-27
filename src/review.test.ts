@@ -3868,6 +3868,30 @@ describe('selectTeam with teamSizeOverride', () => {
       infoSpy.mockRestore();
     }
   });
+
+  it('reorders core agents to CORE_AGENTS sequence when planner picks them out of order', () => {
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+    const config = makeConfig();
+    const picks: AgentPick[] = [
+      { name: 'Correctness & Logic', effort: 'low' },
+      { name: 'Security & Safety', effort: 'high' },
+      { name: 'Architecture & Design', effort: 'medium' },
+    ];
+    const infoSpy = jest.spyOn(core, 'info').mockImplementation(() => {});
+    try {
+      const roster = selectTeam(diff, config, undefined, 3, picks);
+      expect(roster.agents.map(a => a.name)).toEqual([
+        'Security & Safety',
+        'Architecture & Design',
+        'Correctness & Logic',
+      ]);
+      expect(roster.agents).toHaveLength(3);
+      expect(roster.level).toBe('small');
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining('planner omitted core agent'));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
 
 describe('buildPlannerHints', () => {
@@ -4499,7 +4523,7 @@ describe('selectTeam planner-driven path', () => {
       { name: 'Correctness & Logic', effort: 'low' },
     ];
     const roster = selectTeam(diff, config, undefined, 3, picks);
-    // Duplicate Security pick is dropped; Architecture is injected as missing core.
+    // Duplicate Security pick is dropped. Architecture is injected as missing core.
     // Core agents appear in CORE_AGENTS order (Security, Architecture, Correctness).
     expect(roster.agents).toHaveLength(3);
     expect(roster.agents.map(a => a.name)).toEqual([
