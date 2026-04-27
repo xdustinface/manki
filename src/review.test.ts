@@ -6,6 +6,7 @@ import {
   buildReviewerUserMessage,
   buildPlannerSystemPrompt,
   buildPlannerHints,
+  collectPriorRoundAgents,
   selectTeam,
   titlesMatch,
   truncateDiff,
@@ -4506,6 +4507,33 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(roster.agents).toHaveLength(1);
     expect(roster.agents[0]).toBe(TRIVIAL_VERIFIER_AGENT);
     expect(roster.level).toBe('trivial');
+  });
+});
+
+describe('collectPriorRoundAgents', () => {
+  it('returns empty array for no rounds', () => {
+    expect(collectPriorRoundAgents(undefined)).toEqual([]);
+    expect(collectPriorRoundAgents([])).toEqual([]);
+  });
+
+  it('deduplicates overlapping agents across rounds preserving first-seen order', () => {
+    const rounds: HandoverRound[] = [
+      { round: 1, commitSha: 'a', timestamp: '2025-01-01T00:00:00Z', findings: [], agents: ['Security & Safety', 'Architecture & Design'] },
+      { round: 2, commitSha: 'b', timestamp: '2025-01-02T00:00:00Z', findings: [], agents: ['Security & Safety', 'Correctness & Logic'] },
+    ];
+    expect(collectPriorRoundAgents(rounds)).toEqual([
+      'Security & Safety',
+      'Architecture & Design',
+      'Correctness & Logic',
+    ]);
+  });
+
+  it('handles rounds with no agents field', () => {
+    const rounds: HandoverRound[] = [
+      { round: 1, commitSha: 'a', timestamp: '2025-01-01T00:00:00Z', findings: [] },
+      { round: 2, commitSha: 'b', timestamp: '2025-01-02T00:00:00Z', findings: [], agents: ['Security & Safety'] },
+    ];
+    expect(collectPriorRoundAgents(rounds)).toEqual(['Security & Safety']);
   });
 });
 
