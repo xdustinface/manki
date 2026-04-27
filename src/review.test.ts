@@ -4502,6 +4502,8 @@ describe('selectTeam with teamSizeOverride', () => {
     expect(secIdx).toBeLessThan(maintIdx);
     // Heuristic fills (agents not in the prior list and not core) come after prior agents.
     const coreAndPrior = new Set(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Maintainability & Readability']);
+    // Guard: the heuristic must add at least one agent beyond core+prior for the ordering assertion below to be meaningful.
+    expect(names.length).toBeGreaterThan(coreAndPrior.size);
     const firstHeuristicFill = names.findIndex(n => !coreAndPrior.has(n));
     expect(firstHeuristicFill).toBeGreaterThan(-1);
     expect(maintIdx).toBeLessThan(firstHeuristicFill);

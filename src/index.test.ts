@@ -2147,6 +2147,14 @@ describe('runFullReview orchestration', () => {
       });
 
       const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+      // Override selectTeam so the planning-phase callback seeds the dashboard with the
+      // actual resolved agent names; this lets agent-complete metrics be preserved through
+      // the reconcileDashboardAgents call.
+      jest.mocked(reviewModule.selectTeam).mockReturnValue({
+        level: 'standard' as 'small',
+        agents: resolvedNames.map(n => ({ name: n, focus: '' })),
+        lineCount: 0,
+      });
       jest.mocked(reviewModule.runReview).mockImplementation(async (_clients, _config, _diff, _rawDiff, _ctx, _mem, _files, _pr, _issues, onProgress) => {
         onProgress?.({
           phase: 'planning',
@@ -2163,6 +2171,16 @@ describe('runFullReview orchestration', () => {
             ],
           },
           plannerDurationMs: 100,
+        });
+        onProgress?.({
+          phase: 'agent-complete',
+          agentName: 'Security & Safety',
+          agentFindingCount: 3,
+          agentDurationMs: 1200,
+          agentStatus: 'success',
+          rawFindingCount: 3,
+          completedAgents: 1,
+          totalAgents: 3,
         });
         return {
           verdict: 'APPROVE', summary: 'ok',
@@ -2185,6 +2203,10 @@ describe('runFullReview orchestration', () => {
       const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
       expect(finalDashboard.agentCount).toBe(3);
       expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
+      // Verify reconcileDashboardAgents preserves metrics from prior agent-complete callbacks.
+      const secEntry = finalDashboard.agentProgress?.find((a: { name: string }) => a.name === 'Security & Safety');
+      expect(secEntry?.findingCount).toBe(3);
+      expect(secEntry?.durationMs).toBe(1200);
     });
 
     it('reconciles non-planner dashboard with pinned agents after runReview', async () => {
@@ -2222,6 +2244,47 @@ describe('runFullReview orchestration', () => {
       const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
       expect(finalDashboard.agentCount).toBe(4);
       expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
+    });
+
+    it('silently drops unknown prior-round agent from non-planner dashboard without error', async () => {
+      // Non-planner path with a prior-round agent name not present in the agent pool.
+      // The pool-check guard in runFullReview silently omits the unknown agent from the
+      // dashboard; selectTeam already warns for this case so no duplicate warning is needed.
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+        reviewers: [], instructions: '', review_level: 'small',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+      });
+
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Bogus Unknown Agent'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      const resolvedNames = ['Security & Safety'];
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: resolvedNames,
+      });
+
+      await expect(callRunFullReview()).resolves.not.toThrow();
+
+      const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+      expect(progressCommentCalls.length).toBeGreaterThan(0);
+      const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+      // Unknown agent must not appear in the dashboard.
+      const agentNames = finalDashboard.agentProgress?.map((a: { name: string }) => a.name) ?? [];
+      expect(agentNames).not.toContain('Bogus Unknown Agent');
+      // agentCount reflects only known-pool agents that were reconciled.
+      expect(finalDashboard.agentCount).toBe(resolvedNames.length);
     });
   });
 
