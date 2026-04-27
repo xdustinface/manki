@@ -2234,6 +2234,51 @@ describe('runReview', () => {
     expect(result.reviewComplete).toBe(true);
   });
 
+  it('returns REQUEST_CHANGES / prior_unaddressed when a prior warning thread is still open', async () => {
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    // Judge returns no current-round findings, but reports no per-thread evaluations.
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const priorRounds: HandoverRound[] = [{
+      round: 1,
+      commitSha: 'sha1',
+      timestamp: '2025-01-01T00:00:00Z',
+      findings: [{
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'T1',
+      }],
+    }];
+    const openThreads: OpenThread[] = [{
+      threadId: 'T1',
+      title: 'Old issue',
+      file: 'src/x.ts',
+      line: 10,
+      severity: 'warning',
+    }];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      undefined, undefined, undefined, undefined, undefined, undefined,
+      openThreads,
+      undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('REQUEST_CHANGES');
+    expect(result.verdictReason).toBe('prior_unaddressed');
+    expect(result.reviewComplete).toBe(true);
+  });
+
   it('uses planner result to set team size and effort when planner client is provided', async () => {
     const plannerResponse = JSON.stringify({
       teamSize: 5,
