@@ -1695,6 +1695,17 @@ describe('applyInPrSuppression', () => {
     expect(result.findings[0].originalSeverity).toBe('nitpick');
   });
 
+  // Pin that the only protected severity is `blocker`. A regression that
+  // accidentally broadens the guard (e.g. to `blocker | warning`) would
+  // otherwise slip through unnoticed.
+  it('suppresses a warning-severity finding', () => {
+    const findings = [makeFinding({ severity: 'warning' })];
+    const result = applyInPrSuppression(findings, [makeSuppression()]);
+    expect(result.count).toBe(1);
+    expect(result.findings[0].severity).toBe('ignore');
+    expect(result.findings[0].originalSeverity).toBe('warning');
+  });
+
   it('does not suppress blocker findings even on fingerprint match', () => {
     // Mirrors the cross-round ratchet guard: a prior resolved or author-agreed
     // thread must never silently drop a current `blocker` finding (regression
