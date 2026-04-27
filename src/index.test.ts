@@ -2008,8 +2008,9 @@ describe('runFullReview orchestration', () => {
     // Write path: appendHandoverRound must be called once with the loaded handover
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
     const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
-    // existingHandover param (index 11) should be the already-loaded handover, not re-fetched
-    expect(appendCall[11]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+    const { 8: agentsArg, 11: existingHandoverArg } = appendCall;
+    // agents param carries the resolved team; existingHandover param should be the already-loaded handover, not re-fetched
+    expect(existingHandoverArg).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
   });
 
   it('persists the resolved team names on the new handover round', async () => {
@@ -2046,8 +2047,9 @@ describe('runFullReview orchestration', () => {
 
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
     const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
-    // agents param (index 8) carries the resolved team into the new round
-    expect(appendCall[8]).toEqual(resolvedNames);
+    const { 8: agentsArg } = appendCall;
+    // agents param carries the resolved team into the new round
+    expect(agentsArg).toEqual(resolvedNames);
   });
 
   it('forwards prior-round agents through to the dashboard selectTeam call', async () => {
@@ -2113,9 +2115,13 @@ describe('runFullReview orchestration', () => {
     // The dashboard selectTeam call inside the planning callback receives the
     // prior-round agents as the 6th positional argument.
     const calls = jest.mocked(reviewModule.selectTeam).mock.calls;
-    const planningCall = calls.find(c => c[3] === 3 && c[4]);
+    // Identify the planning-phase call by the exact agent picks the planner emitted.
+    const planningCall = calls.find(c =>
+      Array.isArray(c[4]) && c[4].length === 3 && c[4][0]?.name === 'Security & Safety',
+    );
     expect(planningCall).toBeDefined();
-    expect(planningCall![5]).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
+    const { 5: priorRoundAgentsArg } = planningCall!;
+    expect(priorRoundAgentsArg).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
   });
 
   it('does not load or write handover when memory is disabled', async () => {
