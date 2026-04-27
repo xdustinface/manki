@@ -671,6 +671,35 @@ describe('determineVerdict', () => {
       expect(result.verdict).toBe('APPROVE');
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
+
+    it('current-round blocker takes precedence over unresolved prior (required_present wins)', () => {
+      const blocker: Finding = {
+        severity: 'blocker', title: 'Critical', file: 'src/z.ts', line: 1, description: 'd', reviewers: ['r'],
+      };
+      const priors = [makePriorWarning()];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([blocker], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('required_present');
+    });
+
+    it.each(['disagree', 'partial'] as const)('blocks APPROVE when authorReply is %s', (reply) => {
+      const priors = [makePriorWarning({ authorReply: reply })];
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], priors, open, []);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
+
+    it('blocks when at least one of multiple priors is still unresolved', () => {
+      const resolved = makePriorWarning({ threadId: 'T_RESOLVED', authorReply: 'agree' });
+      const unresolved = makePriorWarning({ threadId: 'T_OPEN' });
+      const open = [makeOpenThread({ threadId: 'T_OPEN' })];
+      const evals: ThreadEvaluation[] = [{ threadId: 'T_RESOLVED', status: 'addressed', reason: 'fixed' }];
+      const result = determineVerdict([nitpick], [resolved, unresolved], open, evals);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('prior_unaddressed');
+    });
   });
 });
 
