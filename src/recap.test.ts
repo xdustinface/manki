@@ -1027,6 +1027,13 @@ describe('collectInPrSuppressions', () => {
     });
   });
 
+  // Note: `fetchReviewThreads` always classifies a thread with at least one
+  // non-bot reply as `replied`, so a PreviousFinding with `status: 'open'`
+  // and a non-empty `authorReplyText` is not produced today. The `open+...`
+  // cases below pin that `inPrSuppressionReasonFor` is status-agnostic for
+  // the agree-reply branch (the gate is login + classification, not status),
+  // so the same logic continues to apply if the status taxonomy ever changes.
+  // The realistic production cases are covered by the `replied+...` tests.
   it('suppresses open threads whose latest author reply is agree from PR author', () => {
     const result = collectInPrSuppressions([
       makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'Fixed, thanks!', authorReplyLogin: 'pr-author' }),
