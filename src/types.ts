@@ -132,7 +132,7 @@ export interface ReviewResult {
   agentNames?: string[];
   allJudgedFindings?: Finding[];
   rawFindings?: Finding[];
-  resolveThreads?: Array<{ threadId: string; reason: string }>;
+  threadEvaluations?: ThreadEvaluation[];
   plannerResult?: PlannerResult;
   failedAgents?: string[];
   agentFailureReasons?: Record<string, string>;
@@ -261,6 +261,25 @@ export interface OpenThread {
   file: string;
   line: number;
   severity: FindingSeverity | 'unknown';
+  /**
+   * Snippet of the current source around `line` (line ± a small window). Lets
+   * the judge ground its addressed/not-addressed decision in the actual code,
+   * not just the thread title. `'(file removed)'` when the file no longer
+   * exists at the head commit.
+   */
+  currentCode?: string;
+}
+
+/**
+ * Per-thread judgment from the LLM judge on whether an open review thread has
+ * been addressed by the latest changes. Only `status === 'addressed'` triggers
+ * a `resolveReviewThread` mutation downstream; `'uncertain'` is treated as
+ * not-addressed (insufficient evidence).
+ */
+export interface ThreadEvaluation {
+  threadId: string;
+  status: 'addressed' | 'not_addressed' | 'uncertain';
+  reason: string;
 }
 
 

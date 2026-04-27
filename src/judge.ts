@@ -11,10 +11,10 @@ import {
   Suppression,
   RepoMemory,
 } from './memory';
-import { LinkedIssue, titleToSlug } from './github';
+import { LinkedIssue, safeTruncate, titleToSlug } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, IN_PR_SUPPRESSED_TAG, InPrSuppression, OpenThread, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext } from './types';
+import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, IN_PR_SUPPRESSED_TAG, InPrSuppression, OpenThread, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext, ThreadEvaluation } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
@@ -206,6 +206,9 @@ export function computeProvenanceMap(
 /** Line drift tolerance when matching a current finding against an in-PR thread fingerprint. */
 const IN_PR_SUPPRESSION_LINE_TOLERANCE = 5;
 
+/** Cap on inter-round diff size embedded in the judge user message, to keep prompts bounded on large rebases. */
+const MAX_INTER_ROUND_DIFF_CHARS = 20000;
+
 export interface JudgeInput {
   findings: Finding[];
   diff: ParsedDiff;
@@ -221,6 +224,13 @@ export interface JudgeInput {
   inPrSuppressions?: InPrSuppression[];
   effort?: 'low' | 'medium' | 'high';
   provenanceMap?: ProvenanceEntry[];
+  /**
+   * Unified diff between the prior round's `commitSha` and the current head.
+   * Empty string means no code changes since the prior review (e.g.,
+   * force-pushed rebase with identical tree). Undefined when there is no
+   * prior round to compare against (first round of a PR).
+   */
+  interRoundDiff?: string;
 }
 
 export interface JudgedFinding {
@@ -232,15 +242,10 @@ export interface JudgedFinding {
   reachabilityReasoning?: string;
 }
 
-export interface ResolveThread {
-  threadId: string;
-  reason: string;
-}
-
 export interface JudgeResult {
   summary: string;
   findings: JudgedFinding[];
-  resolveThreads?: ResolveThread[];
+  threadEvaluations?: ThreadEvaluation[];
 }
 
 const CONTEXT_LINES = 10;
@@ -434,16 +439,25 @@ Respond with ONLY a JSON object (no markdown fences, no explanation):
       "reachabilityReasoning": "Required when reachability is 'hypothetical'. One sentence explaining why no current caller triggers the failure"
     }
   ]${hasOpenThreads ? `,
-  "resolveThreads": [
+  "threadEvaluations": [
     {
       "threadId": "PRRT_xxx",
-      "reason": "Brief reason why this thread should be resolved"
+      "status": "addressed" | "not_addressed" | "uncertain",
+      "reason": "Brief explanation citing evidence from the inter-round diff or current code"
     }
   ]` : ''}
 }
 \`\`\`
 ${hasOpenThreads ? `
-The \`resolveThreads\` array is optional. Include it only if you determine that open review threads from the previous review have been addressed by the new changes. Use the thread IDs provided in the open threads section below.
+## Open Thread Evaluation
+
+Return one \`threadEvaluations\` entry for every open review thread listed in the user message. Status values:
+
+- **addressed**: explicit evidence in the inter-round diff or the current code at the flagged region resolves the thread's concern. Do not pick this when the inter-round diff is empty or contains no changes touching the thread's file or region.
+- **not_addressed**: the inter-round diff and current code show the concern still applies (or no relevant change was made).
+- **uncertain**: insufficient evidence to decide. The downstream resolver treats this as not-addressed, so prefer it over a speculative \`addressed\`.
+
+Resolution requires concrete evidence. Cite the changed lines or current-code excerpt that supports your call in \`reason\`. Use the thread IDs provided in the open threads section below.
 ` : ''}
 The findings array may be shorter than the input when duplicates are merged. Preserve the order of first appearance.`;
 
@@ -463,6 +477,7 @@ export function buildJudgeUserMessage(
   changedFiles?: DiffFile[],
   openThreads?: OpenThread[],
   priorRounds?: HandoverRound[],
+  interRoundDiff?: string,
 ): string {
   const parts: string[] = [];
 
@@ -474,12 +489,37 @@ export function buildJudgeUserMessage(
 
   if (openThreads && openThreads.length > 0) {
     parts.push(`## Open Review Threads\n`);
-    parts.push('These are unresolved review threads from the previous review. If the new changes address any of them, include them in `resolveThreads`.\n');
+    parts.push('These are unresolved review threads from the previous review. Decide for each whether it has been addressed using the inter-round diff and current code regions below, then return one entry per thread in `threadEvaluations`.\n');
     for (const t of openThreads) {
       const linkSuffix = t.threadUrl ? ` ([view](${t.threadUrl}))` : '';
       parts.push(`- **${t.threadId}**${linkSuffix}: [${t.severity}] "${sanitize(t.title)}" at ${sanitize(t.file)}:${t.line}`);
     }
     parts.push('');
+
+    if (priorRounds && priorRounds.length > 0) {
+      parts.push(`## Inter-Round Diff\n`);
+      const trimmed = interRoundDiff?.trim() ?? '';
+      if (trimmed.length === 0) {
+        parts.push('_No code changes since prior review (commit SHA unchanged or identical tree)._');
+      } else {
+        parts.push('Unified diff between the prior round\'s commit and the current head. Use this as the primary signal when judging whether each open thread is addressed.\n');
+        parts.push('```diff');
+        parts.push(safeTruncate(interRoundDiff!, MAX_INTER_ROUND_DIFF_CHARS));
+        parts.push('```');
+      }
+      parts.push('');
+    }
+
+    parts.push(`## Open Thread Code Regions\n`);
+    parts.push('Current source around each open thread\'s flagged line. Use this together with the inter-round diff above to verify whether the concern still applies.\n');
+    for (const t of openThreads) {
+      parts.push(`### ${t.threadId} — ${sanitize(t.file)}:${t.line}`);
+      const snippet = t.currentCode && t.currentCode.length > 0 ? t.currentCode : '(no current code available)';
+      parts.push('```');
+      parts.push(snippet);
+      parts.push('```');
+      parts.push('');
+    }
   }
 
   if (priorRounds && priorRounds.length > 0) {
@@ -676,18 +716,22 @@ export function parseJudgeResponse(responseText: string): JudgeResult {
         };
       });
 
-    // New object format with summary + findings + resolveThreads
+    // New object format with summary + findings + threadEvaluations
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const findings = Array.isArray(parsed.findings) ? parseFindings(parsed.findings) : [];
       const summary = typeof parsed.summary === 'string' && parsed.summary
         ? parsed.summary
         : 'Review complete.';
-      const resolveThreads = Array.isArray(parsed.resolveThreads)
-        ? (parsed.resolveThreads as Array<Record<string, unknown>>)
-          .filter(t => typeof t.threadId === 'string' && typeof t.reason === 'string')
-          .map(t => ({ threadId: String(t.threadId), reason: String(t.reason) }))
+      const threadEvaluations = Array.isArray(parsed.threadEvaluations)
+        ? (parsed.threadEvaluations as Array<Record<string, unknown>>)
+          .filter(t => typeof t.threadId === 'string' && t.threadId.length > 0)
+          .map(t => ({
+            threadId: String(t.threadId),
+            status: validateThreadStatus(t.status),
+            reason: typeof t.reason === 'string' ? t.reason : '',
+          }))
         : undefined;
-      return { summary, findings, resolveThreads };
+      return { summary, findings, threadEvaluations };
     }
 
     // Backward compat: plain JSON array
@@ -710,6 +754,13 @@ function validateConfidence(value: unknown): 'high' | 'medium' | 'low' {
   return 'medium';
 }
 
+function validateThreadStatus(value: unknown): ThreadEvaluation['status'] {
+  if (value === 'addressed' || value === 'not_addressed' || value === 'uncertain') {
+    return value;
+  }
+  return 'not_addressed';
+}
+
 function validateReachability(value: unknown): FindingReachability | undefined {
   if (value === 'reachable' || value === 'hypothetical' || value === 'unknown') {
     return value;
@@ -724,15 +775,21 @@ export async function runJudgeAgent(
 ): Promise<{
   findings: Finding[];
   summary: string;
-  resolveThreads?: ResolveThread[];
+  threadEvaluations?: ThreadEvaluation[];
   crossRoundSuppressed?: number;
   crossRoundDemoted?: number;
   inPrSuppressedCount?: number;
 }> {
-  const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, inPrSuppressions } = input;
+  const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, inPrSuppressions, interRoundDiff } = input;
   const provenanceMap = input.provenanceMap ?? (rawDiff ? computeProvenanceMap(priorRounds, rawDiff) : []);
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
+  const hasPriorRounds = (priorRounds?.length ?? 0) > 0;
+  // Empty inter-round diff with prior rounds means the tree is unchanged since
+  // the last review (force-pushed rebase, branch reset, or identical resync).
+  // No thread can be addressed in that case — synthesize a not-addressed
+  // evaluation for every open thread and ignore whatever the LLM returns.
+  const interRoundDiffEmpty = hasPriorRounds && (interRoundDiff?.trim().length ?? 0) === 0;
 
   const codeContextMap = new Map<string, string>();
   for (const f of findings) {
@@ -749,10 +806,20 @@ export async function runJudgeAgent(
   const changedFiles = diff.files;
 
   const systemPrompt = buildJudgeSystemPrompt(config, agentCount, isFollowUp, hasOpenThreads);
-  const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads, priorRounds);
+  const userMessage = buildJudgeUserMessage(findings, codeContextMap, memoryContext, prContext, linkedIssues, changedFiles, openThreads, priorRounds, interRoundDiff);
 
   const response = await client.sendMessage(systemPrompt, userMessage, { effort: input.effort ?? 'high' });
   const judgeResult = parseJudgeResponse(response.content);
+
+  // Defense-in-depth: when the inter-round diff is empty, force every open
+  // thread to `not_addressed` regardless of what the LLM returned.
+  const threadEvaluations = interRoundDiffEmpty && hasOpenThreads
+    ? openThreads!.map(t => ({
+      threadId: t.threadId,
+      status: 'not_addressed' as const,
+      reason: 'No code changes since prior review',
+    }))
+    : judgeResult.threadEvaluations;
 
   if (judgeResult.findings.length === 0) {
     if (findings.length > 0) {
@@ -766,7 +833,7 @@ export async function runJudgeAgent(
     return {
       findings: earlySuppressedInPr,
       summary: judgeResult.summary,
-      resolveThreads: judgeResult.resolveThreads,
+      threadEvaluations,
       ...(earlySuppress.suppressedCount > 0 && { crossRoundSuppressed: earlySuppress.suppressedCount }),
       ...(earlySuppress.demotedCount > 0 && { crossRoundDemoted: earlySuppress.demotedCount }),
       ...(earlyInPrCount > 0 && { inPrSuppressedCount: earlyInPrCount }),
@@ -780,7 +847,7 @@ export async function runJudgeAgent(
   return {
     findings: suppressed,
     summary: judgeResult.summary,
-    resolveThreads: judgeResult.resolveThreads,
+    threadEvaluations,
     ...(suppression.suppressedCount > 0 && { crossRoundSuppressed: suppression.suppressedCount }),
     ...(suppression.demotedCount > 0 && { crossRoundDemoted: suppression.demotedCount }),
     ...(inPrCount > 0 && { inPrSuppressedCount: inPrCount }),

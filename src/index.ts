@@ -16,6 +16,7 @@ import {
   fetchRepoContext,
   fetchSubdirClaudeMd,
   fetchFileContents,
+  fetchInterRoundDiff,
   postProgressComment,
   updateProgressComment,
   updateProgressDashboard,
@@ -471,7 +472,7 @@ async function runFullReview(
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
 
     const isFollowUp = recap.previousFindings.length > 0;
-    const openThreads = recap.previousFindings
+    const baseOpenThreads = recap.previousFindings
       .filter(f => (f.status === 'open' || f.status === 'replied') && f.threadId)
       .map(f => ({
         threadId: f.threadId!,
@@ -482,15 +483,40 @@ async function runFullReview(
         severity: f.severity,
       }));
 
-    // Fetch full file contents for changed files so reviewers have surrounding context
-    const filePaths = filteredFiles
+    // Fetch full file contents for changed files so reviewers have surrounding context.
+    // Also fetch each open thread's file (if missing from changed files) so the judge
+    // can see the current code at the flagged region when deciding whether the
+    // thread is addressed.
+    const changedFilePaths = filteredFiles
       .filter(f => f.changeType !== 'deleted')
       .map(f => f.path);
+    const threadFilePaths = baseOpenThreads.map(t => t.file).filter(p => !changedFilePaths.includes(p));
+    const filePaths = [...changedFilePaths, ...threadFilePaths];
     let fileContents: Map<string, string> | undefined;
     try {
       fileContents = await fetchFileContents(octokit, owner, repo, commitSha, filePaths);
     } catch (error) {
       core.warning(`Failed to fetch file contents: ${error}`);
+    }
+
+    const openThreads = baseOpenThreads.map(t => ({
+      ...t,
+      currentCode: extractCurrentCodeWindow(fileContents, t.file, t.line),
+    }));
+
+    // Fetch inter-round diff (prior round commit -> current head) so the judge
+    // can ground per-thread resolution in actual changes since last review.
+    let interRoundDiff: string | undefined;
+    const lastPriorSha = handover?.rounds.at(-1)?.commitSha;
+    if (lastPriorSha && lastPriorSha !== commitSha) {
+      try {
+        interRoundDiff = await fetchInterRoundDiff(octokit, owner, repo, lastPriorSha, commitSha);
+      } catch (error) {
+        core.warning(`Failed to fetch inter-round diff: ${error}`);
+      }
+    } else if (lastPriorSha === commitSha) {
+      // Same SHA as last round (force-push to same tree, or replay) — empty diff.
+      interRoundDiff = '';
     }
 
     let linkedIssues;
@@ -583,6 +609,7 @@ async function runFullReview(
       recap.previousFindings,
       handover?.rounds,
       prAuthorLogin,
+      interRoundDiff,
     );
     const judgeEndTime = Date.now();
 
@@ -717,14 +744,18 @@ async function runFullReview(
       judgeModel,
     };
 
-    // Resolve threads the judge identified as addressed
-    if (result.resolveThreads && result.resolveThreads.length > 0) {
+    // Resolve threads the judge marked `addressed`. Other statuses
+    // (`not_addressed`, `uncertain`) are logged for audit but never trigger a
+    // resolveReviewThread mutation. Unknown thread IDs are filtered.
+    if (result.threadEvaluations && result.threadEvaluations.length > 0) {
       const knownThreadIds = new Set(openThreads.map(t => t.threadId));
-      for (const { threadId, reason } of result.resolveThreads) {
+      for (const { threadId, status, reason } of result.threadEvaluations) {
         if (!knownThreadIds.has(threadId)) {
           core.debug(`Skipping unknown thread ${threadId} — not in openThreads allowlist`);
           continue;
         }
+        core.info(`Thread ${threadId}: ${status} — ${reason}`);
+        if (status !== 'addressed') continue;
         try {
           await octokit.graphql(`mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } } }`, { threadId });
           core.info(`Judge resolved: "${reason}" — thread ${threadId}`);
@@ -1132,6 +1163,34 @@ function _resetOctokitCache(): void {
   octokitCache.instance = null;
   octokitCache.resolvedToken = null;
   octokitCache.identity = null;
+}
+
+const OPEN_THREAD_CODE_WINDOW = 5;
+
+/**
+ * Extract a small line window (line ± `OPEN_THREAD_CODE_WINDOW`) from the
+ * current source so the judge can evaluate whether an open thread's flagged
+ * region still exhibits the original concern. Returns `'(file removed)'` when
+ * the file is not present in the fetched contents map (e.g., deleted or never
+ * fetched), and an empty string for invalid inputs.
+ */
+function extractCurrentCodeWindow(
+  fileContents: Map<string, string> | undefined,
+  file: string,
+  line: number,
+): string {
+  if (!file || !Number.isFinite(line) || line < 1) return '';
+  const content = fileContents?.get(file);
+  if (content === undefined) return '(file removed)';
+  const lines = content.split('\n');
+  const start = Math.max(1, line - OPEN_THREAD_CODE_WINDOW);
+  const end = Math.min(lines.length, line + OPEN_THREAD_CODE_WINDOW);
+  const out: string[] = [];
+  for (let i = start; i <= end; i++) {
+    const marker = i === line ? '>>>' : '   ';
+    out.push(`${marker} ${i}: ${lines[i - 1] ?? ''}`);
+  }
+  return out.join('\n');
 }
 
 export { run, handlePullRequest, handleCommentTrigger, handleInteraction, handleIssueInteraction, handleReviewCommentInteraction, handleReviewStateCheck, runFullReview, main, _resetOctokitCache };
