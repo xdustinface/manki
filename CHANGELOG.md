@@ -5,13 +5,37 @@ All notable changes to Manki will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.6.0] - 2026-04-27
+
+### Added
+
+- Judge multi-round cross-round suppression: ratchet detector (won't re-raise findings the author has already addressed) and contradiction detector (demotes findings that contradict previously accepted guidance) (#561)
+- Judge cross-round state infrastructure: fingerprints and author-reply parsing for round-to-round comparison (#555)
+- Judge practical-reachability check: caps hypothetical findings at `nitpick` severity (#553)
+- Judge verdict approval ceiling: when all remaining findings are dismissed suggestions, returns `APPROVE` (#562)
+- Judge own-proposal caveat rule: demotes findings where the reviewer is flagging code it suggested itself (#566)
+- Planner per-round summary for agent budget allocation (#565)
+- Reviewer factual provenance note for prior-suggestion diff regions (#594)
+- Open-thread references rendered as clickable GitHub links in judge prompt (#610)
+- In-PR finding suppression: skips re-raising findings that match an already-resolved review thread or an author agree-reply (#584)
+- Warning banner on PR when the GitHub App is not installed (#541)
 
 ### Changed (BREAKING)
 
-- Renamed severity tiers from `required`/`suggestion`/`nit` to `blocker`/`warning`/`suggestion`/`nitpick` (#593). The `severity` field of every entry in the `findings_json` action output now uses the new values, and the `severity_counts` action output is now `{blocker, warning, suggestion, nitpick}`. Downstream workflow steps that switch on these values must be updated. Persisted handover and review markers from older versions are migrated automatically on read (`required` → `blocker`, `nit` → `nitpick`).
-- Replaced `<sub>[high confidence]</sub>` text with a traffic-light dot prefix in review comment headers: 🔴 (high), 🟠 (medium), 🟡 (low).
-- Updated `determineVerdict` so only `blocker` and `warning` trigger `REQUEST_CHANGES`; `suggestion` and `nitpick` produce `APPROVE`.
+- Renamed severity tiers from `required`/`suggestion`/`nit` to `blocker`/`warning`/`suggestion`/`nitpick` (#598). The `severity` field of every entry in the `findings_json` action output now uses the new values, and the `severity_counts` action output is now `{blocker, warning, suggestion, nitpick}`. Downstream workflow steps that switch on these values must be updated. Persisted handover and review markers from older versions are migrated automatically on read (`required` → `blocker`, `nit` → `nitpick`).
+- Replaced `<sub>[high confidence]</sub>` text with a traffic-light dot prefix in review comment headers: 🔴 (high), 🟠 (medium), 🟡 (low) (#598).
+- `determineVerdict` now only requests changes for `blocker` and `warning` findings; `suggestion` and `nitpick` findings produce `APPROVE` (#604, #612).
+
+### Changed
+
+- Default judge model updated to `claude-opus-4-7` (#606)
+
+### Fixed
+
+- Cancel in-progress review run when `@manki review` is re-requested (#542)
+- Guard all-ignore prior rounds in judge prompt (#591)
+- Restore review-in-progress tickbox for `@manki review` requests (#601)
+- `contradictionMatch` now cites the most-recent agreeing round rather than the earliest (#618)
 
 ## [4.5.3] - 2026-04-10
 
@@ -366,6 +390,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic review posting with inline comments
 - Configuration via `.manki.yml`
 
+[4.6.0]: https://github.com/manki-review/manki/compare/v4.5.3...v4.6.0
 [4.5.3]: https://github.com/manki-review/manki/compare/v4.5.2...v4.5.3
 [4.5.2]: https://github.com/manki-review/manki/compare/v4.5.1...v4.5.2
 [4.5.1]: https://github.com/manki-review/manki/compare/v4.5.0...v4.5.1
