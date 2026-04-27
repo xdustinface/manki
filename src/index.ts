@@ -4,8 +4,10 @@ import * as github from '@actions/github';
 import { createAuthenticatedOctokit, getMemoryToken } from './auth';
 import { ClaudeClient } from './claude';
 import { loadConfig, resolveModel } from './config';
+import { extractCurrentCodeWindow } from './code-window';
 import { parsePRDiff, filterFiles, isDiffTooLarge } from './diff';
 import { handleReviewCommentReply, handleReviewCommentCommand, handlePRComment, isReviewRequest, isBotMentionNonReview, hasBotMention, parseCommand, isLLMAccessAllowed } from './interaction';
+import { isEmptyInterRoundDiff } from './judge';
 import { appendHandoverRound, loadHandover, loadMemory, applyEscalations, updatePattern, RepoMemory } from './memory';
 import { classifyAuthorReply, fetchRecapState, fingerprintFinding } from './recap';
 import { runReview, determineVerdict, selectTeam } from './review';
@@ -16,6 +18,7 @@ import {
   fetchRepoContext,
   fetchSubdirClaudeMd,
   fetchFileContents,
+  fetchInterRoundDiff,
   postProgressComment,
   updateProgressComment,
   updateProgressDashboard,
@@ -471,7 +474,7 @@ async function runFullReview(
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');
 
     const isFollowUp = recap.previousFindings.length > 0;
-    const openThreads = recap.previousFindings
+    const baseOpenThreads = recap.previousFindings
       .filter(f => (f.status === 'open' || f.status === 'replied') && f.threadId)
       .map(f => ({
         threadId: f.threadId!,
@@ -482,15 +485,40 @@ async function runFullReview(
         severity: f.severity,
       }));
 
-    // Fetch full file contents for changed files so reviewers have surrounding context
-    const filePaths = filteredFiles
+    // Fetch full file contents for changed files so reviewers have surrounding context.
+    // Also fetch each open thread's file (if missing from changed files) so the judge
+    // can see the current code at the flagged region when deciding whether the
+    // thread is addressed.
+    const changedFilePaths = filteredFiles
       .filter(f => f.changeType !== 'deleted')
       .map(f => f.path);
+    const threadFilePaths = baseOpenThreads.map(t => t.file).filter(p => !changedFilePaths.includes(p));
+    const filePaths = [...changedFilePaths, ...threadFilePaths];
     let fileContents: Map<string, string> | undefined;
     try {
       fileContents = await fetchFileContents(octokit, owner, repo, commitSha, filePaths);
     } catch (error) {
       core.warning(`Failed to fetch file contents: ${error}`);
+    }
+
+    const openThreads = baseOpenThreads.map(t => ({
+      ...t,
+      currentCode: extractCurrentCodeWindow(fileContents, t.file, t.line),
+    }));
+
+    // Fetch inter-round diff (prior round commit -> current head) so the judge
+    // can ground per-thread resolution in actual changes since last review.
+    let interRoundDiff: string | undefined;
+    const lastPriorSha = handover?.rounds.at(-1)?.commitSha;
+    if (lastPriorSha && lastPriorSha !== commitSha) {
+      try {
+        interRoundDiff = await fetchInterRoundDiff(octokit, owner, repo, lastPriorSha, commitSha);
+      } catch (error) {
+        core.warning(`Failed to fetch inter-round diff: ${error}`);
+      }
+    } else if (lastPriorSha === commitSha) {
+      // Same SHA as last round (force-push to same tree, or replay) — empty diff.
+      interRoundDiff = '';
     }
 
     let linkedIssues;
@@ -583,6 +611,7 @@ async function runFullReview(
       recap.previousFindings,
       handover?.rounds,
       prAuthorLogin,
+      interRoundDiff,
     );
     const judgeEndTime = Date.now();
 
@@ -717,12 +746,29 @@ async function runFullReview(
       judgeModel,
     };
 
-    // Resolve threads the judge identified as addressed
-    if (result.resolveThreads && result.resolveThreads.length > 0) {
+    // Resolve threads the judge marked `addressed`. Other statuses
+    // (`not_addressed`, `uncertain`) are logged for audit but never trigger a
+    // resolveReviewThread mutation. Unknown thread IDs are filtered.
+    //
+    // Defense-in-depth: when the inter-round diff is known-empty (force-pushed
+    // rebase to identical tree), no thread can be addressed. The judge already
+    // synthesizes `not_addressed` for every thread in this case, but a future
+    // refactor that bypasses `runJudgeAgent` would lose that guarantee. Drop
+    // any `addressed` evaluation here as a second layer. `undefined` is the
+    // unknown sentinel (compare-API failure) and must not trigger the guard.
+    const hasPriorRounds = (handover?.rounds.length ?? 0) > 0;
+    const interRoundDiffKnownEmpty = hasPriorRounds && isEmptyInterRoundDiff(interRoundDiff);
+    if (result.threadEvaluations && result.threadEvaluations.length > 0) {
       const knownThreadIds = new Set(openThreads.map(t => t.threadId));
-      for (const { threadId, reason } of result.resolveThreads) {
+      for (const { threadId, status, reason } of result.threadEvaluations) {
         if (!knownThreadIds.has(threadId)) {
           core.debug(`Skipping unknown thread ${threadId} — not in openThreads allowlist`);
+          continue;
+        }
+        core.info(`Thread ${threadId}: ${status} — ${reason}`);
+        if (status !== 'addressed') continue;
+        if (interRoundDiffKnownEmpty) {
+          core.info(`Thread ${threadId}: ignoring 'addressed' verdict — inter-round diff is empty`);
           continue;
         }
         try {

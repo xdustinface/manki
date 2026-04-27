@@ -71,6 +71,40 @@ export async function fetchPRDiff(octokit: Octokit, owner: string, repo: string,
 }
 
 /**
+ * Fetch the unified diff between two commits via GitHub's compare API.
+ * Used to ground the judge's per-thread evaluation in actual code changes
+ * since the prior review round, distinguishing real fixes from no-op pushes
+ * (force-pushed rebases, branch resets) where every open thread should remain
+ * unresolved. Returns an empty string when `base === head` or when the
+ * comparison yields a non-string payload. Throws on API failure so the caller
+ * can distinguish "no changes" (empty string) from "unknown" (caught error,
+ * leaves the diff undefined upstream).
+ */
+export async function fetchInterRoundDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+): Promise<string> {
+  if (!base || !head || base === head) return '';
+  try {
+    const { data } = await octokit.rest.repos.compareCommits({
+      owner,
+      repo,
+      base,
+      head,
+      mediaType: { format: 'diff' },
+    });
+    const diff = data as unknown as string;
+    return typeof diff === 'string' ? diff : '';
+  } catch (error) {
+    core.debug(`Failed to fetch inter-round diff ${base}..${head}: ${error}`);
+    throw error;
+  }
+}
+
+/**
  * Fetch the config file content from the repo.
  */
 export async function fetchConfigFile(

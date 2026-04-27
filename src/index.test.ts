@@ -124,6 +124,7 @@ jest.mock('./github', () => ({
   fetchRepoContext: jest.fn().mockResolvedValue(''),
   fetchSubdirClaudeMd: jest.fn().mockResolvedValue(null),
   fetchFileContents: jest.fn().mockResolvedValue(new Map()),
+  fetchInterRoundDiff: jest.fn().mockResolvedValue(''),
   postProgressComment: jest.fn().mockResolvedValue(1),
   updateProgressComment: jest.fn().mockResolvedValue(undefined),
   updateProgressDashboard: jest.fn().mockResolvedValue(undefined),
@@ -1330,6 +1331,10 @@ describe('postCleanup (via main dispatch)', () => {
 });
 
 describe('runFullReview orchestration', () => {
+  // Index of the `interRoundDiff` parameter in the `runReview` argument list.
+  // Mirrors the trailing slot in `runReview`'s signature in `src/review.ts`.
+  const RUN_REVIEW_INTER_ROUND_DIFF_ARG = 15;
+
   beforeEach(() => {
     jest.clearAllMocks();
     _resetOctokitCache();
@@ -2436,8 +2441,107 @@ describe('runFullReview orchestration', () => {
 
     expect(isFollowUp).toBe(true);
     expect(openThreads).toEqual([
-      { threadId: 'PRRT_123', title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' },
+      {
+        threadId: 'PRRT_123',
+        threadUrl: undefined,
+        title: 'Bug B',
+        file: 'src/app.ts',
+        line: 2,
+        severity: 'suggestion',
+        currentCode: '(file content unavailable)',
+      },
     ]);
+  });
+
+  it('populates openThreads[].currentCode with a windowed snippet when file contents are available', async () => {
+    const threadFile = 'src/app.ts';
+    const fileText = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n');
+    const changedFile = {
+      path: threadFile, changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 20, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [changedFile], totalAdditions: 20, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([changedFile]);
+    jest.mocked(ghUtils.fetchFileContents).mockResolvedValue(new Map([[threadFile, fileText]]));
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: threadFile, line: 10, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_code' },
+      ],
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    const runReviewCall = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const openThreads = runReviewCall[11];
+    expect(openThreads).toHaveLength(1);
+    expect(openThreads![0].currentCode).toContain('>>> 10: line 10');
+    expect(openThreads![0].currentCode).toContain('   5: line 5');
+    expect(openThreads![0].currentCode).toContain('   15: line 15');
+  });
+
+  it('deduplicates open-thread file paths against changed files when fetching contents', async () => {
+    const changedFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [changedFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([changedFile]);
+
+    // Two open threads: one in a changed file (must not duplicate) and one in
+    // an unchanged file (must be added to the fetch list).
+    const previousFindings = [
+      { title: 'Issue in changed', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_dup' },
+      { title: 'Issue in unchanged', file: 'src/other.ts', line: 5, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_new' },
+    ];
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings,
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchFileContents)).toHaveBeenCalledTimes(1);
+    const fetchCall = jest.mocked(ghUtils.fetchFileContents).mock.calls[0];
+    const requestedPaths = fetchCall[4];
+    // Both files present, no duplicate of `src/app.ts`
+    expect(requestedPaths).toContain('src/app.ts');
+    expect(requestedPaths).toContain('src/other.ts');
+    expect(requestedPaths.filter(p => p === 'src/app.ts')).toHaveLength(1);
+  });
+
+  it('skips deleted changed files but still fetches open-thread files', async () => {
+    const deletedFile = {
+      path: 'src/gone.ts', changeType: 'deleted' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 0, newLines: 0, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [deletedFile], totalAdditions: 0, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([deletedFile]);
+
+    const previousFindings = [
+      { title: 'Live thread', file: 'src/live.ts', line: 1, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_live' },
+    ];
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings,
+      recapContext: '',
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchFileContents)).toHaveBeenCalledTimes(1);
+    const requestedPaths = jest.mocked(ghUtils.fetchFileContents).mock.calls[0][4];
+    expect(requestedPaths).not.toContain('src/gone.ts');
+    expect(requestedPaths).toContain('src/live.ts');
   });
 
   it('includes planner info in dashboard when planner result is available', async () => {
@@ -2482,7 +2586,197 @@ describe('runFullReview orchestration', () => {
     });
   });
 
-  it('resolves threads the judge identified as addressed', async () => {
+  it('does not resolve any thread when inter-round diff is empty even if LLM claimed addressed', async () => {
+    // Force-pushed rebase with identical tree: every open thread must remain
+    // unresolved regardless of what the LLM-driven judge reports.
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_a' },
+      ],
+      recapContext: 'previous context',
+    });
+
+    // Enable memory so loadHandover runs and fetchInterRoundDiff is invoked
+    // with a prior-round SHA distinct from the current commit.
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 42, repo: 'test-repo', rounds: [{
+        round: 1, commitSha: 'prior-sha', timestamp: '2025-01-01T00:00:00Z', findings: [],
+      }],
+    });
+    // fetchInterRoundDiff returns '' to simulate a force-pushed rebase whose
+    // compare API yields no patch between prior and current head.
+    jest.mocked(ghUtils.fetchInterRoundDiff).mockResolvedValue('');
+
+    // Mock returns `addressed` to honour the test title "even if LLM claimed
+    // addressed". The judge-level synthetic override is bypassed here because
+    // `runReview` is mocked, so the assertion that no resolveReviewThread
+    // mutation fires proves the index.ts-level defense-in-depth guard works.
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
+      highlights: [], reviewComplete: true,
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchInterRoundDiff)).toHaveBeenCalledTimes(1);
+    const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
+    expect(passedInterRoundDiff).toBe('');
+
+    expect(mockGraphql).not.toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      expect.anything(),
+    );
+  });
+
+  it('sets interRoundDiff to empty string without API call when lastPriorSha equals commitSha', async () => {
+    // Force-push that lands on the same tree hash as the prior round: index.ts
+    // short-circuits the compare-API call and passes '' directly. Guards
+    // against an accidental `!==` inversion that would slip past the existing
+    // empty-diff test where prior and current SHAs differ.
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'warning' as const, status: 'open' as const, threadId: 'PRRT_a' },
+      ],
+      recapContext: 'previous context',
+    });
+
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+    // Prior round commit equals the current commitSha (`baseArgs.commitSha`).
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 42, repo: 'test-repo', rounds: [{
+        round: 1, commitSha: baseArgs.commitSha, timestamp: '2025-01-01T00:00:00Z', findings: [],
+      }],
+    });
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
+      highlights: [], reviewComplete: true,
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchInterRoundDiff)).not.toHaveBeenCalled();
+    const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
+    expect(passedInterRoundDiff).toBe('');
+  });
+
+  it('resolves addressed thread when prior rounds exist and inter-round diff is non-empty', async () => {
+    // End-to-end happy path for the post-#624 thread-resolution flow:
+    // memory enabled, `loadHandover` returns a prior round with a SHA distinct
+    // from the current commit, `fetchInterRoundDiff` returns a non-empty patch,
+    // and the LLM reports `addressed`. The judge-level empty-diff override is
+    // not engaged, so `resolveReviewThread` must fire for the addressed thread.
+    // Guards against a regression that flips `interRoundDiffKnownEmpty` to true
+    // for any non-empty diff.
+    const testFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+    jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+    jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+      files: [testFile], totalAdditions: 10, totalDeletions: 5,
+    });
+    jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+    jest.mocked(recapModule.fetchRecapState).mockResolvedValue({
+      previousFindings: [
+        { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'blocker' as const, status: 'open' as const, threadId: 'PRRT_abc' },
+      ],
+      recapContext: 'previous context',
+    });
+
+    jest.mocked(configModule.loadConfig).mockReturnValue({
+      auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+      reviewers: [], instructions: '', review_level: 'auto',
+      review_thresholds: { small: 200, medium: 800 },
+      memory: { enabled: true, repo: 'owner/memory' },
+    });
+    jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+    jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+      learnings: [], suppressions: [], patterns: [],
+    });
+    jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+      prNumber: 42, repo: 'test-repo', rounds: [{
+        round: 1, commitSha: 'prior-sha', timestamp: '2025-01-01T00:00:00Z', findings: [],
+      }],
+    });
+    jest.mocked(ghUtils.fetchInterRoundDiff).mockResolvedValue(
+      'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n',
+    );
+
+    jest.mocked(reviewModule.runReview).mockResolvedValue({
+      verdict: 'APPROVE', summary: 'ok', findings: [],
+      highlights: [], reviewComplete: true,
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in latest push' },
+      ],
+    });
+
+    await callRunFullReview();
+
+    expect(jest.mocked(ghUtils.fetchInterRoundDiff)).toHaveBeenCalledTimes(1);
+    const runReviewArgs = jest.mocked(reviewModule.runReview).mock.calls[0];
+    const passedInterRoundDiff = runReviewArgs[RUN_REVIEW_INTER_ROUND_DIFF_ARG];
+    expect(passedInterRoundDiff).toBe(
+      'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n',
+    );
+    expect(mockGraphql).toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_abc' },
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Judge resolved: "Fixed in latest push" — thread PRRT_abc',
+    );
+  });
+
+  it('resolves only threads with status addressed', async () => {
     const testFile = {
       path: 'src/app.ts', changeType: 'modified' as const,
       hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
@@ -2497,6 +2791,7 @@ describe('runFullReview orchestration', () => {
       previousFindings: [
         { title: 'Bug A', file: 'src/app.ts', line: 1, severity: 'blocker' as const, status: 'open' as const, threadId: 'PRRT_abc' },
         { title: 'Bug B', file: 'src/app.ts', line: 2, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_def' },
+        { title: 'Bug C', file: 'src/app.ts', line: 3, severity: 'suggestion' as const, status: 'open' as const, threadId: 'PRRT_ghi' },
       ],
       recapContext: 'previous context',
     });
@@ -2504,9 +2799,10 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_abc', reason: 'Fixed in new diff' },
-        { threadId: 'PRRT_def', reason: 'Addressed by refactoring' },
+      threadEvaluations: [
+        { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
+        { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
+        { threadId: 'PRRT_ghi', status: 'uncertain', reason: 'No clear evidence' },
       ],
     });
 
@@ -2516,12 +2812,22 @@ describe('runFullReview orchestration', () => {
       expect.stringContaining('resolveReviewThread'),
       { threadId: 'PRRT_abc' },
     );
-    expect(mockGraphql).toHaveBeenCalledWith(
+    expect(mockGraphql).not.toHaveBeenCalledWith(
       expect.stringContaining('resolveReviewThread'),
       { threadId: 'PRRT_def' },
     );
+    expect(mockGraphql).not.toHaveBeenCalledWith(
+      expect.stringContaining('resolveReviewThread'),
+      { threadId: 'PRRT_ghi' },
+    );
     expect(jest.mocked(core.info)).toHaveBeenCalledWith(
       'Judge resolved: "Fixed in new diff" — thread PRRT_abc',
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Thread PRRT_def: not_addressed — Still applies',
+    );
+    expect(jest.mocked(core.info)).toHaveBeenCalledWith(
+      'Thread PRRT_ghi: uncertain — No clear evidence',
     );
   });
 
@@ -2546,9 +2852,9 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_known', reason: 'Legit fix' },
-        { threadId: 'PRRT_unknown', reason: 'Injected by adversary' },
+      threadEvaluations: [
+        { threadId: 'PRRT_known', status: 'addressed', reason: 'Legit fix' },
+        { threadId: 'PRRT_unknown', status: 'addressed', reason: 'Injected by adversary' },
       ],
     });
 
@@ -2621,8 +2927,8 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      resolveThreads: [
-        { threadId: 'PRRT_fail', reason: 'Should fail' },
+      threadEvaluations: [
+        { threadId: 'PRRT_fail', status: 'addressed', reason: 'Should fail' },
       ],
     });
 
@@ -3008,3 +3314,4 @@ describe('force review checkbox', () => {
     expect(jest.mocked(ghUtils.reactToIssueComment)).not.toHaveBeenCalled();
   });
 });
+

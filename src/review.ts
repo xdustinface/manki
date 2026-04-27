@@ -1,11 +1,11 @@
 import * as core from '@actions/core';
 
 import { ClaudeClient } from './claude';
-import { runJudgeAgent, JudgeInput, ResolveThread, computeProvenanceMap } from './judge';
+import { runJudgeAgent, JudgeInput, computeProvenanceMap } from './judge';
 import { RepoMemory, applySuppressions, buildMemoryContext } from './memory';
 import { LinkedIssue, titleToSlug } from './github';
 import { collectInPrSuppressions, deduplicateFindings, llmDeduplicateFindings, PreviousFinding } from './recap';
-import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, OpenThread, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, PlannerRoundHint, SpecialistOutcome, EffortLevel, AgentPick, ProvenanceEntry, MAX_AGENT_RETRIES } from './types';
+import { ReviewConfig, ReviewerAgent, Finding, HandoverFinding, HandoverRound, OpenThread, ReviewResult, ReviewVerdict, VerdictReason, ParsedDiff, DiffFile, TeamRoster, PrContext, PlannerResult, PlannerRoundHint, SpecialistOutcome, EffortLevel, AgentPick, ProvenanceEntry, ThreadEvaluation, MAX_AGENT_RETRIES } from './types';
 import { extractJSON } from './json';
 
 const DISMISSED_LINE_TOLERANCE = 5;
@@ -542,6 +542,7 @@ export async function runReview(
   previousFindings?: PreviousFinding[],
   priorRounds?: HandoverRound[],
   prAuthorLogin?: string,
+  interRoundDiff?: string,
 ): Promise<ReviewResult> {
   const priorRoundHints = buildPlannerHints(priorRounds);
   const provenanceMap = computeProvenanceMap(priorRounds, rawDiff);
@@ -971,7 +972,7 @@ export async function runReview(
   let finalFindings: Finding[];
   let allJudgedFindings: Finding[] | undefined;
   let judgeSummary = 'Review complete.';
-  let judgeResolveThreads: ResolveThread[] | undefined;
+  let judgeThreadEvaluations: ThreadEvaluation[] | undefined;
   let judgeCrossRoundSuppressed: number | undefined;
   let judgeCrossRoundDemoted: number | undefined;
   let inPrSuppressedCount = 0;
@@ -992,11 +993,12 @@ export async function runReview(
       inPrSuppressions,
       effort: judgeEffort as 'low' | 'medium' | 'high',
       provenanceMap,
+      interRoundDiff,
     };
     const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
     judgeSummary = judgeResult.summary;
     allJudgedFindings = judgeResult.findings;
-    judgeResolveThreads = judgeResult.resolveThreads;
+    judgeThreadEvaluations = judgeResult.threadEvaluations;
     judgeCrossRoundSuppressed = judgeResult.crossRoundSuppressed;
     judgeCrossRoundDemoted = judgeResult.crossRoundDemoted;
     inPrSuppressedCount = judgeResult.inPrSuppressedCount ?? 0;
@@ -1041,7 +1043,7 @@ export async function runReview(
     agentNames: team.agents.map(a => a.name),
     allJudgedFindings,
     rawFindings: allFindings,
-    resolveThreads: judgeResolveThreads,
+    threadEvaluations: judgeThreadEvaluations,
     plannerResult: plannerResult ?? undefined,
     failedAgents: failedAgents.length > 0 ? failedAgents : undefined,
     partialReview: partialReview || undefined,
