@@ -1315,6 +1315,38 @@ describe('runJudgeAgent', () => {
     ]);
   });
 
+  it('does not override threadEvaluations when interRoundDiff is empty but no prior rounds exist', async () => {
+    // The empty-diff override must be guarded by `hasPriorRounds`. On a first-round
+    // review with no prior rounds, an empty `interRoundDiff` is not the
+    // "no code changed since prior review" signal and must not force every
+    // thread to `not_addressed`. The LLM evaluations must pass through.
+    const judgedResponse = JSON.stringify({
+      summary: 'Evaluated.',
+      findings: [],
+      threadEvaluations: [
+        { threadId: 'PRRT_a', status: 'addressed', reason: 'Fixed' },
+      ],
+    });
+    mockSendMessage.mockResolvedValue({ content: judgedResponse });
+
+    const result = await runJudgeAgent(mockClient, makeConfig(), {
+      findings: [],
+      diff: makeDiff(),
+      rawDiff: '',
+      repoContext: '',
+      agentCount: 1,
+      openThreads: [
+        { threadId: 'PRRT_a', title: 'Thread A', file: 'src/a.ts', line: 1, severity: 'suggestion' },
+      ],
+      // priorRounds intentionally omitted -> hasPriorRounds is false
+      interRoundDiff: '',
+    });
+
+    expect(result.threadEvaluations).toEqual([
+      { threadId: 'PRRT_a', status: 'addressed', reason: 'Fixed' },
+    ]);
+  });
+
   it('renders empty inter-round diff sentinel in user message', async () => {
     mockSendMessage.mockResolvedValue({ content: '{"summary":"x","findings":[]}' });
 
