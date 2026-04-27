@@ -746,6 +746,58 @@ describe('determineVerdict', () => {
       expect(result.verdict).toBe('REQUEST_CHANGES');
       expect(result.verdictReason).toBe('prior_unaddressed');
     });
+
+    it('collapses across rounds when only one round carries a threadId (older handover format on the other)', () => {
+      // Round 1 was written by an older handover format that did not record
+      // `threadId`, and authorReply was 'none'. Round 2 captured the same
+      // finding with a threadId and an 'agree' reply. The two must collapse
+      // to the round 2 entry so the agreement wins. If they did not collapse
+      // (e.g. when keyed by `threadId` vs fingerprint separately), the stale
+      // round 1 'none' entry would survive and falsely block APPROVE because
+      // its missing `threadId` is treated as unresolved.
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: 'old-issue' },
+        severity: 'warning',
+        title: 'Old issue',
+        authorReply: 'none',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'agree', threadId: 'T1' };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [round1, round2], open);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
+    it('dedup makes a current-round warning fire `novel_suggestion` when round 2 reopened a prior agree', () => {
+      // Round 1 captured an `agree` for the finding, round 2 re-raised it
+      // with `authorReply: 'none'`. Without dedup, the round 1 `agree`
+      // would still satisfy `wasDismissedInPriorRound` and the matching
+      // current-round warning would be treated as dismissed, suppressing
+      // `novel_suggestion`. With dedup keyed by fingerprint, the round 2
+      // `none` entry overwrites round 1, so the current-round warning is
+      // correctly reported as novel.
+      const title = 'Old issue';
+      const round1: HandoverFinding = {
+        fingerprint: { file: 'src/x.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug(title) },
+        severity: 'warning',
+        title,
+        authorReply: 'agree',
+        threadId: 'T1',
+      };
+      const round2: HandoverFinding = { ...round1, authorReply: 'none' };
+      const currentWarning: Finding = {
+        severity: 'warning',
+        title,
+        file: 'src/x.ts',
+        line: 10,
+        description: 'd',
+        reviewers: ['r'],
+      };
+      const open = [makeOpenThread()];
+      const result = determineVerdict([currentWarning], [round1, round2], open);
+      expect(result.verdict).toBe('REQUEST_CHANGES');
+      expect(result.verdictReason).toBe('novel_suggestion');
+    });
   });
 });
 
