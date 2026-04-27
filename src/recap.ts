@@ -1,9 +1,9 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { ClaudeClient } from './claude';
-import { titleToSlug } from './github';
+import { ACTIONS_BOT_LOGIN, BOT_LOGIN, titleToSlug } from './github';
 import { matchesSuppression, Suppression } from './memory';
-import { AuthorReplyClass, Finding, FindingFingerprint, FindingSeverity, migrateLegacySeverity, SEVERITY_TOKEN_PATTERN } from './types';
+import { AuthorReplyClass, Finding, FindingFingerprint, FindingSeverity, InPrSuppression, InPrSuppressionReason, migrateLegacySeverity, SEVERITY_TOKEN_PATTERN } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -108,6 +108,60 @@ interface PreviousFinding {
   threadId?: string;
   threadUrl?: string;
   authorReplyText?: string;
+  /** Login of the latest non-bot replier on this thread, if any. */
+  authorReplyLogin?: string;
+}
+
+/**
+ * Build suppression entries from the current PR's review threads. Returns one
+ * entry per manki-authored thread that is either resolved or whose latest
+ * author reply is classified `agree`. Threads without a parseable title
+ * (missing severity marker) are skipped.
+ *
+ * `agree-reply` suppressions only fire when the reply author matches
+ * `prAuthorLogin`. This prevents an arbitrary third-party commenter from
+ * silently dropping findings by posting "Fixed!" on a manki thread on a
+ * public repo. `resolved-thread` suppressions are unaffected because
+ * resolving a thread already requires repository write access.
+ */
+function collectInPrSuppressions(
+  previousFindings: PreviousFinding[],
+  prAuthorLogin?: string,
+): InPrSuppression[] {
+  const suppressions: InPrSuppression[] = [];
+  for (const pf of previousFindings) {
+    if (!pf.title || pf.title.length < 3) continue;
+    if (!pf.line) continue;
+    const reason = inPrSuppressionReasonFor(pf, prAuthorLogin);
+    if (!reason) continue;
+    const lineStart = pf.lineStart ?? pf.line;
+    const lineEnd = pf.line;
+    const entry: InPrSuppression = {
+      fingerprint: fingerprintFinding(pf.title, pf.file, lineStart, lineEnd),
+      reason,
+    };
+    if (reason === 'agree-reply' && pf.authorReplyLogin) {
+      entry.authorLogin = pf.authorReplyLogin;
+    }
+    suppressions.push(entry);
+  }
+  return suppressions;
+}
+
+function inPrSuppressionReasonFor(
+  pf: PreviousFinding,
+  prAuthorLogin?: string,
+): InPrSuppressionReason | undefined {
+  if (pf.status === 'resolved') return 'resolved-thread';
+  // Only honour agree-replies from the PR author. Without this gate, any
+  // third-party commenter on a public repo could suppress lower-severity
+  // findings by posting "Fixed!" on a manki thread.
+  if (
+    prAuthorLogin &&
+    pf.authorReplyLogin === prAuthorLogin &&
+    classifyAuthorReply(pf.authorReplyText) === 'agree'
+  ) return 'agree-reply';
+  return undefined;
 }
 
 interface RecapState {
@@ -123,6 +177,7 @@ async function fetchRecapState(
   owner: string,
   repo: string,
   prNumber: number,
+  prAuthorLogin?: string,
 ): Promise<RecapState> {
   const threads = await fetchReviewThreads(octokit, owner, repo, prNumber);
 
@@ -138,9 +193,26 @@ async function fetchRecapState(
       threadId: t.threadId,
       threadUrl: t.threadUrl,
       authorReplyText: t.authorReplyText,
+      authorReplyLogin: t.authorReplyLogin,
     }));
 
-  const resolved = previousFindings.filter(f => f.status === 'resolved');
+  // Mirror the `prAuthorLogin` gate from inPrSuppressionReasonFor: only the
+  // PR author's "agree" replies promote a thread to Resolved. Without this,
+  // any third-party commenter on a public repo could move a finding out of
+  // 'Still Open' in the LLM context by replying "Fixed!", even though
+  // applyInPrSuppression would correctly refuse to suppress it.
+  const resolved = previousFindings.filter(
+    f => f.status === 'resolved' ||
+    (
+      f.status === 'replied' &&
+      prAuthorLogin !== undefined &&
+      f.authorReplyLogin === prAuthorLogin &&
+      classifyAuthorReply(f.authorReplyText) === 'agree'
+    ),
+  );
+  // open-status findings (no human reply yet) stay in 'Still Open'. Only
+  // replied+agree threads are promoted to Resolved above; applyInPrSuppression
+  // handles post-LLM suppression for resolved-thread and agreed replied-thread fingerprints.
   const open = previousFindings.filter(f => f.status === 'open');
 
   let recapContext = '';
@@ -182,6 +254,7 @@ interface ReviewThread {
   lineStart: number;
   severity: FindingSeverity | 'unknown';
   authorReplyText?: string;
+  authorReplyLogin?: string;
 }
 
 async function fetchReviewThreads(
@@ -247,11 +320,18 @@ async function fetchReviewThreads(
       const firstComment = thread.comments.nodes[0];
       const isBotThread = firstComment?.body?.includes(BOT_MARKER) ?? false;
 
-      const firstNonBotReply = thread.comments.nodes.find((c, i) =>
-        i > 0 && c.author?.login !== 'github-actions[bot]'
+      // Use the latest non-bot reply so evolving threads (e.g. initial
+      // "Fixed!" followed by a retraction) classify by the author's current
+      // stance rather than their first reaction. The `comments(first: 10)`
+      // cap above means threads with more than 10 replies can still miss the
+      // true last reply.
+      const nonBotReplies = thread.comments.nodes.filter((c, i) =>
+        i > 0 && c.author?.login !== BOT_LOGIN && c.author?.login !== ACTIONS_BOT_LOGIN
       );
-      const hasHumanReply = firstNonBotReply !== undefined;
-      const authorReplyText = firstNonBotReply?.body;
+      const lastNonBotReply = nonBotReplies[nonBotReplies.length - 1];
+      const hasHumanReply = lastNonBotReply !== undefined;
+      const authorReplyText = lastNonBotReply?.body;
+      const authorReplyLogin = lastNonBotReply?.author?.login;
 
       const severityMatch = firstComment?.body?.match(new RegExp(`manki:(${SEVERITY_TOKEN_PATTERN}):`));
       const severity = (severityMatch?.[1]
@@ -276,6 +356,7 @@ async function fetchReviewThreads(
         lineStart,
         severity,
         authorReplyText,
+        authorReplyLogin,
       };
     });
   } catch (error) {
@@ -435,4 +516,4 @@ async function llmDeduplicateFindings(
   }
 }
 
-export { DuplicateMatch, PreviousFinding, RecapState, classifyAuthorReply, fingerprintFinding, fetchRecapState, deduplicateFindings, titlesOverlap, llmDeduplicateFindings };
+export { DuplicateMatch, PreviousFinding, RecapState, classifyAuthorReply, collectInPrSuppressions, fingerprintFinding, fetchRecapState, deduplicateFindings, titlesOverlap, llmDeduplicateFindings };

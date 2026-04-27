@@ -229,7 +229,7 @@ async function handlePullRequest(): Promise<void> {
     baseBranch: pr.base.ref,
   };
 
-  await runFullReview(owner, repo, prNumber, commitSha, pr.base.ref, prContext);
+  await runFullReview(owner, repo, prNumber, commitSha, pr.base.ref, prContext, pr.user?.login);
 }
 
 async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
@@ -290,7 +290,7 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
     baseBranch: pr.base.ref,
   };
 
-  await runFullReview(owner, repo, prNumber, pr.head.sha, pr.base.ref, prContext);
+  await runFullReview(owner, repo, prNumber, pr.head.sha, pr.base.ref, prContext, pr.user?.login);
 }
 
 async function runFullReview(
@@ -300,6 +300,7 @@ async function runFullReview(
   commitSha: string,
   baseRef: string,
   prContext?: PrContext,
+  prAuthorLogin?: string,
 ): Promise<void> {
   core.info(`Starting review for ${owner}/${repo}#${prNumber}`);
 
@@ -330,7 +331,7 @@ async function runFullReview(
   try {
     // Capture recap state before resolving stale threads so dedup sees
     // the original open/resolved status of each previous finding.
-    const recap = await fetchRecapState(octokit, owner, repo, prNumber);
+    const recap = await fetchRecapState(octokit, owner, repo, prNumber, prAuthorLogin);
 
     const staleCount = await resolveStaleThreads(octokit, owner, repo, prNumber, commitSha);
     if (staleCount > 0) {
@@ -581,6 +582,7 @@ async function runFullReview(
       openThreads,
       recap.previousFindings,
       handover?.rounds,
+      prAuthorLogin,
     );
     const judgeEndTime = Date.now();
 
@@ -668,11 +670,13 @@ async function runFullReview(
     const defensiveHardeningCount = allJudged.filter(f => f.tags?.includes(DEFENSIVE_HARDENING_TAG)).length;
     const crossRoundSuppressed = result.crossRoundSuppressed;
     const crossRoundDemoted = result.crossRoundDemoted;
+    const inPrSuppressedCount = result.inPrSuppressedCount ?? 0;
     const judgeMetrics: ReviewStats['judgeMetrics'] = {
       confidenceDistribution,
       severityChanges,
       mergedDuplicates,
       ...(defensiveHardeningCount > 0 && { defensiveHardeningCount }),
+      ...(inPrSuppressedCount > 0 && { inPrSuppressedCount }),
       verdictReason,
       ...(crossRoundSuppressed != null && crossRoundSuppressed > 0 && { crossRoundSuppressed }),
       ...(crossRoundDemoted != null && crossRoundDemoted > 0 && { crossRoundDemoted }),

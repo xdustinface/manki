@@ -1,6 +1,7 @@
 import { Finding } from './types';
 import { Suppression } from './memory';
-import { classifyAuthorReply, deduplicateFindings, fingerprintFinding, PreviousFinding, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
+import { classifyAuthorReply, collectInPrSuppressions, deduplicateFindings, fingerprintFinding, PreviousFinding, fetchRecapState, titlesOverlap, llmDeduplicateFindings } from './recap';
+import { titleToSlug } from './github';
 
 const makeFinding = (overrides: Partial<Finding> = {}): Finding => ({
   severity: 'suggestion',
@@ -734,7 +735,7 @@ describe('fetchRecapState', () => {
     expect(state.previousFindings[0].threadUrl).toBe('');
   });
 
-  it('treats first non-bot comment body as author reply text', async () => {
+  it('treats last non-bot comment body as author reply text', async () => {
     const octokit = mockOctokit([
       makeThread({
         id: 't1',
@@ -758,13 +759,62 @@ describe('fetchRecapState', () => {
     expect(state.previousFindings[0].authorReplyText).toBe('Fixed, done.');
   });
 
+  it('uses the latest non-bot reply when multiple human replies exist', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:required:Bug --> \u{1F6AB} **Required**: Bug found\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            {
+              body: 'Fixed, done.',
+              author: { login: 'developer' },
+            },
+            {
+              body: 'Actually, disagree -- reverting.',
+              author: { login: 'developer' },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyText).toBe('Actually, disagree -- reverting.');
+  });
+
   it('leaves authorReplyText undefined for threads with only bot comments', async () => {
     const octokit = mockOctokit([
       makeThread({ id: 't1' }),
+      makeThread({
+        id: 't2',
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:required:Bug --> \u{1F6AB} **Required**: Bug found\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            {
+              body: 'Follow-up bot reply from the App identity.',
+              author: { login: 'manki-review[bot]' },
+            },
+            {
+              body: 'Another follow-up from the Actions identity.',
+              author: { login: 'github-actions[bot]' },
+            },
+          ],
+        },
+      }),
     ]);
 
     const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
     expect(state.previousFindings[0].authorReplyText).toBeUndefined();
+    expect(state.previousFindings[1].authorReplyText).toBeUndefined();
+    expect(state.previousFindings[1].status).toBe('open');
   });
 
   it('populates lineStart from startLine when present for multi-line annotations', async () => {
@@ -804,6 +854,292 @@ describe('fetchRecapState', () => {
     const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
     expect(state.recapContext).not.toContain('Resolved');
     expect(state.recapContext).toContain('Still Open (1 findings');
+  });
+
+  it('includes replied+agree findings from the PR author in the resolved section of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Fixed, done.', author: { login: 'developer' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1, 'developer');
+    expect(state.recapContext).toContain('### Resolved');
+    expect(state.recapContext).toContain('Unused variable');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  // Mirrors the prAuthorLogin gate in inPrSuppressionReasonFor: a third-party
+  // commenter replying "Fixed!" must not be able to promote a finding to the
+  // Resolved section of recapContext. Without this gate, agents would stop
+  // re-flagging the issue even though applyInPrSuppression would (correctly)
+  // refuse to suppress it. replied threads land in neither section by design,
+  // matching the existing replied+disagree behaviour.
+  it('omits replied+agree findings from a third-party commenter from the Resolved section of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Fixed!', author: { login: 'random-user' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1, 'pr-author');
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  // When prAuthorLogin is undefined (e.g. PR author cannot be determined),
+  // replied+agree findings are not promoted to Resolved. This matches the
+  // conservative posture of inPrSuppressionReasonFor.
+  it('omits replied+agree findings from the Resolved section when prAuthorLogin is undefined', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Fixed, done.', author: { login: 'developer' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  // Locks in the invariant that open-status findings (no human reply yet) stay in
+  // 'Still Open' and are not promoted to Resolved. Only replied+agree threads are
+  // promoted; `applyInPrSuppression` handles any post-LLM suppression separately.
+  it('keeps open findings (no human reply) in Still Open section of recapContext (not Resolved)', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        path: 'src/foo.ts',
+        line: 10,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].status).toBe('open');
+    expect(state.recapContext).toContain('### Still Open');
+    expect(state.recapContext).toContain('Unused variable');
+    expect(state.recapContext).not.toContain('### Resolved');
+  });
+
+  // Locks in the invariant that replied+disagree (and replied+partial) findings
+  // appear in neither the Resolved nor the Still Open section of recapContext.
+  // They remain pending human resolution; surfacing them again would re-bias agents.
+  it('omits replied+disagree findings from both Resolved and Still Open sections of recapContext', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'I disagree, keeping as-is.', author: { login: 'developer' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].status).toBe('replied');
+    expect(state.recapContext).not.toContain('### Resolved');
+    expect(state.recapContext).not.toContain('### Still Open');
+  });
+
+  it('captures authorReplyLogin from the latest non-bot reply', async () => {
+    const octokit = mockOctokit([
+      makeThread({
+        id: 't1',
+        isResolved: false,
+        comments: {
+          nodes: [
+            {
+              body: '<!-- manki:suggestion:unused-var --> 💡 **Suggestion**: Unused variable\n\nDesc.',
+              author: { login: 'github-actions[bot]' },
+            },
+            { body: 'Working on it.', author: { login: 'someone-else' } },
+            { body: 'Fixed, done.', author: { login: 'pr-author' } },
+          ],
+        },
+      }),
+    ]);
+
+    const state = await fetchRecapState(octokit, 'owner', 'repo', 1);
+    expect(state.previousFindings[0].authorReplyLogin).toBe('pr-author');
+    expect(state.previousFindings[0].authorReplyText).toBe('Fixed, done.');
+  });
+});
+
+describe('collectInPrSuppressions', () => {
+  it('suppresses resolved threads regardless of reply', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Missing null check', file: 'src/a.ts', line: 10, status: 'resolved' }),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('resolved-thread');
+    expect(result[0].fingerprint).toEqual({
+      file: 'src/a.ts',
+      lineStart: 10,
+      lineEnd: 10,
+      slug: titleToSlug('Missing null check'),
+    });
+  });
+
+  // Note: `fetchReviewThreads` always classifies a thread with at least one
+  // non-bot reply as `replied`, so a PreviousFinding with `status: 'open'`
+  // and a non-empty `authorReplyText` is not produced today. The `open+...`
+  // cases below pin that `inPrSuppressionReasonFor` is status-agnostic for
+  // the agree-reply branch (the gate is login + classification, not status),
+  // so the same logic continues to apply if the status taxonomy ever changes.
+  // The realistic production cases are covered by the `replied+...` tests.
+  it('suppresses open threads whose latest author reply is agree from PR author', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'Fixed, thanks!', authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('agree-reply');
+    expect(result[0].authorLogin).toBe('pr-author');
+  });
+
+  it('suppresses replied threads whose author reply is agree from PR author', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Null check', file: 'src/a.ts', line: 10, status: 'replied', authorReplyText: 'Fixed, done.', authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('agree-reply');
+    expect(result[0].authorLogin).toBe('pr-author');
+  });
+
+  it('does not suppress agree-reply from a third-party commenter (different login than PR author)', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'Fixed!', authorReplyLogin: 'random-user' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress agree-reply when prAuthorLogin is undefined', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'Fixed!', authorReplyLogin: 'pr-author' }),
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('still suppresses resolved threads even when reply login does not match PR author', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Resolved by maintainer', file: 'src/a.ts', line: 10, status: 'resolved', authorReplyLogin: 'maintainer' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('resolved-thread');
+    expect(result[0].authorLogin).toBeUndefined();
+  });
+
+  it('does not suppress open threads whose author reply is disagree', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'I disagree, this is intentional.', authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress replied threads whose author reply is partial', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'replied', authorReplyText: 'Still working on it.', authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress open threads whose author reply is partial', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open', authorReplyText: 'Working on it.', authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress open threads with no author reply', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Unused var', file: 'src/a.ts', line: 10, status: 'open' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not suppress replied threads with no author reply', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Some issue', file: 'src/a.ts', line: 10, status: 'replied' }),
+    ], 'pr-author');
+    expect(result).toHaveLength(0);
+  });
+
+  it('skips file-level threads with no line anchor (line is 0 or null)', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'File-level note', file: 'src/a.ts', line: 0, status: 'resolved' }),
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('skips threads missing a parseable title', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: '', file: 'src/a.ts', line: 10, status: 'resolved' }),
+      makePrevious({ title: 'AB', file: 'src/a.ts', line: 11, status: 'resolved' }),
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('uses lineStart when present for multi-line annotations', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Range issue', file: 'src/a.ts', line: 44, lineStart: 40, status: 'resolved' }),
+    ]);
+    expect(result[0].fingerprint.lineStart).toBe(40);
+    expect(result[0].fingerprint.lineEnd).toBe(44);
+  });
+
+  it('collects a mix of resolved and agree-reply reasons in one pass', () => {
+    const result = collectInPrSuppressions([
+      makePrevious({ title: 'Resolved finding', file: 'f.ts', line: 1, status: 'resolved' }),
+      makePrevious({ title: 'Agreed finding', file: 'f.ts', line: 2, status: 'open', authorReplyText: 'addressed in a1b2c3d', authorReplyLogin: 'pr-author' }),
+      makePrevious({ title: 'Kept finding', file: 'f.ts', line: 3, status: 'open', authorReplyText: "no, keeping it", authorReplyLogin: 'pr-author' }),
+    ], 'pr-author');
+    expect(result.map(r => r.reason)).toEqual(['resolved-thread', 'agree-reply']);
   });
 });
 
