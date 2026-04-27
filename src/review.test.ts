@@ -606,6 +606,16 @@ describe('determineVerdict', () => {
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
 
+    it('approves when `openThreads` is undefined and a prior has a `threadId` (legacy two-arg callers)', () => {
+      // Pre-`openThreads` callers omit the third argument. The `?? []`
+      // fallback treats every prior as resolved on GitHub, which lets the
+      // verdict fall through to the existing `only_nit_or_suggestion` rule.
+      const priors = [makePriorWarning()];
+      const result = determineVerdict([nitpick], priors, undefined);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
     it('approves when the prior thread is no longer in openThreads (resolved on GitHub)', () => {
       const priors = [makePriorWarning()];
       const result = determineVerdict([nitpick], priors, []);
@@ -2412,6 +2422,45 @@ describe('runReview', () => {
 
     const priorRounds: HandoverRound[] = [buildPriorRound(1, [makePriorWarningFinding()])];
     const openThreads: OpenThread[] = [];
+
+    const result = await runReview(
+      clients, config, diff, 'raw diff', 'repo context',
+      /* memory */         undefined,
+      /* fileContents */   undefined,
+      /* prContext */      undefined,
+      /* linkedIssues */   undefined,
+      /* onProgress */     undefined,
+      /* isFollowUp */     undefined,
+      openThreads,
+      /* previousFindings */ undefined,
+      priorRounds,
+    );
+
+    expect(result.verdict).toBe('APPROVE');
+    expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    expect(result.reviewComplete).toBe(true);
+  });
+
+  it('returns APPROVE / only_nit_or_suggestion when `authorReply` is `agree` even with the prior thread still open', async () => {
+    // Covers the integration path where APPROVE is unblocked by `authorReply`
+    // rather than by the thread being absent from `openThreads`. Guards
+    // against the `authorReply` field being silently dropped or renamed
+    // somewhere in the `priorFindingsFlat` pipeline between `runReview` and
+    // `determineVerdict`.
+    const clients = makeClients('[]');
+    const config = makeConfig();
+    const diff = makeDiff({ totalAdditions: 10, totalDeletions: 5 });
+
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [],
+      summary: 'No new findings.',
+      threadEvaluations: [],
+    });
+
+    const priorRounds: HandoverRound[] = [
+      buildPriorRound(1, [makePriorWarningFinding({ authorReply: 'agree' })]),
+    ];
+    const openThreads: OpenThread[] = [makePriorOpenThread()];
 
     const result = await runReview(
       clients, config, diff, 'raw diff', 'repo context',
