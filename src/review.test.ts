@@ -672,6 +672,14 @@ describe('determineVerdict', () => {
       expect(result.verdictReason).toBe('only_nit_or_suggestion');
     });
 
+    it('treats prior findings with severity "unknown" as non-blocking (falls through to APPROVE)', () => {
+      const priorUnknown = makePriorWarning({ severity: 'unknown' });
+      const open = [makeOpenThread()];
+      const result = determineVerdict([nitpick], [priorUnknown], open, []);
+      expect(result.verdict).toBe('APPROVE');
+      expect(result.verdictReason).toBe('only_nit_or_suggestion');
+    });
+
     it('current-round blocker takes precedence over unresolved prior (required_present wins)', () => {
       const blocker: Finding = {
         severity: 'blocker', title: 'Critical', file: 'src/z.ts', line: 1, description: 'd', reviewers: ['r'],
