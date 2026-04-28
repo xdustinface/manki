@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { minimatch } from 'minimatch';
 
 import { ClaudeClient } from './claude';
 import { runJudgeAgent, JudgeInput, computeProvenanceMap } from './judge';
@@ -1085,6 +1086,14 @@ export async function runReview(
     core.info(`In-PR suppressions: ${inPrSuppressions.length} fingerprints (resolved or author-agreed)`);
   }
 
+  // Derive the set of currently-resolved thread IDs from the recap state. Used
+  // by `applyCrossRoundSuppression` (mechanism C) to ratchet down findings
+  // matching prior-round threads that have since been resolved.
+  const resolvedThreadIds = previousFindings
+    ? new Set(previousFindings.filter(f => f.status === 'resolved' && f.threadId).map(f => f.threadId!))
+    : new Set<string>();
+  const suppressResolvedThreads = config.convergence?.suppress_resolved_threads !== false;
+
   let finalFindings: Finding[];
   let allJudgedFindings: Finding[] | undefined;
   let judgeSummary = 'Review complete.';
@@ -1110,6 +1119,8 @@ export async function runReview(
       effort: judgeEffort as 'low' | 'medium' | 'high',
       provenanceMap,
       interRoundDiff,
+      resolvedThreadIds,
+      suppressResolvedThreads,
     };
     const judgeResult = await runJudgeAgent(clients.judge, config, judgeInput);
     judgeSummary = judgeResult.summary;
@@ -1132,6 +1143,27 @@ export async function runReview(
     };
   }
 
+  // Mechanism B: drop low-severity findings on test files starting at round 2.
+  // Test scaffolding nits are the most common runaway-feedback driver in late
+  // rounds. The filter runs post-judge so that any nit the judge escalates to
+  // warning/blocker is correctly preserved; only suggestion/nitpick are dropped.
+  let testNitSuppressedCount = 0;
+  const roundNumber = (priorRounds?.length ?? 0) + 1;
+  if (roundNumber >= 2) {
+    const patterns = config.convergence?.test_path_patterns ?? [];
+    if (patterns.length > 0) {
+      const before = finalFindings.length;
+      finalFindings = finalFindings.filter(f => {
+        if (f.severity !== 'suggestion' && f.severity !== 'nitpick') return true;
+        const onTestFile = patterns.some(p => minimatch(f.file, p));
+        if (onTestFile) {
+          core.info(`Test-nit suppression: dropping ${f.severity} "${f.title}" on ${f.file}:${f.line}`);
+        }
+        return !onTestFile;
+      });
+      testNitSuppressedCount = before - finalFindings.length;
+    }
+  }
   const priorFindingsFlat: HandoverFinding[] = [...(priorRounds ?? [])]
     .sort((a, b) => a.round - b.round)
     .flatMap(r => r.findings);
@@ -1174,6 +1206,7 @@ export async function runReview(
     agentResponseLengths,
     crossRoundSuppressed: judgeCrossRoundSuppressed,
     crossRoundDemoted: judgeCrossRoundDemoted,
+    ...(testNitSuppressedCount > 0 && { testNitSuppressedCount }),
   };
 }
 

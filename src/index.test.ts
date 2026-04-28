@@ -111,7 +111,7 @@ jest.mock('./review', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     }),
     determineVerdict: jest.fn().mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' }),
     selectTeam: jest.fn().mockReturnValue({ level: 'standard', agents: [{ name: 'general' }] }),
@@ -1366,7 +1366,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
     jest.mocked(reviewModule.selectTeam).mockReturnValue({ level: 'standard' as 'small', agents: [{ name: 'general', focus: '' }], lineCount: 0 });
@@ -1516,7 +1516,7 @@ describe('runFullReview orchestration', () => {
       findings,
       highlights: [],
       reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'REQUEST_CHANGES', verdictReason: 'novel_suggestion' });
@@ -1819,7 +1819,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1860,7 +1860,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1895,7 +1895,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Review incomplete',
       findings: [], highlights: [], reviewComplete: false,
-      agentNames: [],
+      agentNames: ['general'],
     });
 
     await callRunFullReview();
@@ -1952,7 +1952,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Issues',
       findings: [finding2], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
 
     await callRunFullReview();
@@ -2348,7 +2348,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Nits',
       findings: [finding], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(memoryModule.applyEscalations).mockReturnValue([escalated]);
@@ -2382,7 +2382,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
@@ -2412,7 +2412,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Suggestions',
       findings: [finding], highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'COMMENT', verdictReason: 'only_nit_or_suggestion' });
@@ -2923,7 +2923,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
       ],
@@ -2984,7 +2984,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
       ],
@@ -3045,7 +3045,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in latest push' },
       ],
@@ -3091,7 +3091,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
         { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
@@ -3145,7 +3145,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_known', status: 'addressed', reason: 'Legit fix' },
         { threadId: 'PRRT_unknown', status: 'addressed', reason: 'Injected by adversary' },
@@ -3221,7 +3221,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
-      agentNames: [],
+      agentNames: ['general'],
       threadEvaluations: [
         { threadId: 'PRRT_fail', status: 'addressed', reason: 'Should fail' },
       ],
@@ -3314,6 +3314,158 @@ describe('runFullReview orchestration', () => {
       expect.stringContaining('Failed to post app warning'),
     );
     expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
+  });
+
+  describe('convergence round-count cap', () => {
+    function memoryEnabledConfig(maxAutoRounds = 5): ReturnType<typeof configModule.loadConfig> {
+      return {
+        auto_review: true, auto_approve: false, max_diff_lines: 5000,
+        exclude_paths: [], nit_handling: 'issues',
+        reviewers: [], instructions: '', review_level: 'auto',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+        convergence: {
+          max_auto_rounds: maxAutoRounds,
+          test_path_patterns: ['**/*.test.*'],
+          suppress_resolved_threads: true,
+        },
+      };
+    }
+
+    function priorRounds(n: number): Array<{
+      round: number;
+      commitSha: string;
+      timestamp: string;
+      findings: never[];
+    }> {
+      return Array.from({ length: n }, (_, i) => ({
+        round: i + 1,
+        commitSha: `sha${i + 1}`,
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+      }));
+    }
+
+    const reviewableFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+
+    beforeEach(() => {
+      jest.mocked(authModule.getMemoryToken).mockReturnValue('mem-token');
+      jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+        learnings: [], suppressions: [], patterns: [],
+      });
+      jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+        files: [reviewableFile], totalAdditions: 5, totalDeletions: 5,
+      });
+      jest.mocked(diffModule.filterFiles).mockReturnValue([reviewableFile]);
+    });
+
+    it('runs review normally when prior rounds are below the cap', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(4),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('skips review and posts notice when prior rounds reach the cap on auto trigger', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+      expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: 'test-owner',
+          repo: 'test-repo',
+          issue_number: 42,
+          body: expect.stringContaining('Automatic review is paused'),
+        }),
+      );
+    });
+
+    it('bypasses the cap when forceReview is true', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+
+      await runFullReview(
+        baseArgs.owner, baseArgs.repo, baseArgs.prNumber,
+        baseArgs.commitSha, baseArgs.baseRef, baseArgs.prContext,
+        undefined, true,
+      );
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('does nothing when max_auto_rounds is 0 (cap disabled)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(0));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(20),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('cap never fires when memory is disabled (handover unavailable)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        ...memoryEnabledConfig(1),
+        memory: { enabled: false, repo: '' },
+      });
+
+      await callRunFullReview();
+
+      // loadHandover is never called when memory is disabled, so priorRoundCount
+      // stays 0 and the cap cannot trigger even with max_auto_rounds: 1.
+      expect(jest.mocked(memoryModule.loadHandover)).not.toHaveBeenCalled();
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('reproduces the round-9 nit-spam scenario by posting cap notice', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+      const testFile = {
+        path: 'src/foo.test.ts', changeType: 'modified' as const,
+        hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+      };
+      jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+        files: [testFile], totalAdditions: 5, totalDeletions: 5,
+      });
+      jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+      expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({ body: expect.stringContaining('Automatic review is paused') }),
+      );
+    });
+
+    it('runs review normally when below cap (test-nit suppression path exercises review.ts, not index.ts)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(1),
+      });
+
+      await callRunFullReview();
+
+      // Cap has not triggered (1 prior round < 5 max). runReview runs and test-nit
+      // suppression is exercised inside review.ts (tested in review.test.ts).
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
   });
 });
 

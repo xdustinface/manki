@@ -293,7 +293,7 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
     baseBranch: pr.base.ref,
   };
 
-  await runFullReview(owner, repo, prNumber, pr.head.sha, pr.base.ref, prContext, pr.user?.login);
+  await runFullReview(owner, repo, prNumber, pr.head.sha, pr.base.ref, prContext, pr.user?.login, forceReview);
 }
 
 function reconcileDashboardAgents(dashboard: DashboardData, names: string[]): void {
@@ -319,6 +319,7 @@ async function runFullReview(
   baseRef: string,
   prContext?: PrContext,
   prAuthorLogin?: string,
+  forceReview?: boolean,
 ): Promise<void> {
   core.info(`Starting review for ${owner}/${repo}#${prNumber}`);
 
@@ -489,6 +490,32 @@ async function runFullReview(
           core.warning(`Failed to load handover for PR #${prNumber}: ${error}`);
         }
       }
+    }
+
+    const priorRoundCount = handover?.rounds.length ?? 0;
+    const maxAutoRounds = config.convergence?.max_auto_rounds ?? 0;
+    if (
+      maxAutoRounds > 0 &&
+      priorRoundCount >= maxAutoRounds &&
+      !forceReview
+    ) {
+      core.info(`Round cap reached (${priorRoundCount} prior rounds >= max ${maxAutoRounds}) — skipping auto review`);
+      try {
+        await octokit.rest.issues.deleteComment({ owner, repo, comment_id: progressCommentId });
+      } catch (error) {
+        core.warning(`Failed to delete progress comment: ${error}`);
+      }
+      try {
+        await octokit.rest.issues.createComment({
+          owner,
+          repo,
+          issue_number: prNumber,
+          body: `${PROGRESS_MARKER}\nManki has completed ${priorRoundCount} review rounds on this PR. Automatic review is paused; comment \`@manki review\` to force another round.`,
+        });
+      } catch (error) {
+        core.warning(`Failed to post round-cap notice: ${error}`);
+      }
+      return;
     }
 
     const fullContext = [repoContext, recap.recapContext].filter(Boolean).join('\n\n');

@@ -23,6 +23,7 @@ export type FindingReachability = 'reachable' | 'hypothetical' | 'unknown';
 export const DEFENSIVE_HARDENING_TAG = 'defensive-hardening' as const;
 export const RATCHET_SUPPRESSED_TAG = 'suppressed-by-ratchet' as const;
 export const CONTRADICTION_TAG = 'contradicts-prior-round' as const;
+export const RESOLVED_THREAD_SUPPRESSED_TAG = 'suppressed-by-resolved-thread' as const;
 
 export const OWN_PROPOSAL_TAG = 'own-proposal-followup' as const;
 export const IN_PR_SUPPRESSED_TAG = 'suppressed-in-pr' as const;
@@ -152,6 +153,7 @@ export interface ReviewResult {
   agentResponseLengths?: Map<string, number>;
   crossRoundSuppressed?: number;
   crossRoundDemoted?: number;
+  testNitSuppressedCount?: number;
 }
 
 export interface ReviewerAgent {
@@ -228,6 +230,18 @@ export interface ReviewConfig {
   };
   nit_handling?: 'issues' | 'comments';
   review_passes?: number;
+  convergence?: {
+    /**
+     * Hard cap on the number of automatic review rounds per PR. Once exceeded,
+     * automatic review is paused; the author can re-trigger with `@manki review`.
+     * Set to `0` to disable the cap.
+     */
+    max_auto_rounds?: number;
+    /** Glob patterns for test files. Suggestion/nitpick findings on these paths are dropped on round 2+. */
+    test_path_patterns?: string[];
+    /** When true, a prior-round finding whose thread is currently resolved on GitHub suppresses matching current findings. */
+    suppress_resolved_threads?: boolean;
+  };
 }
 
 export interface DiffFile {
