@@ -42,6 +42,36 @@ describe('config', () => {
     it('has no default custom reviewers', () => {
       expect(DEFAULT_CONFIG.reviewers).toEqual([]);
     });
+
+    it('exposes default convergence settings', () => {
+      expect(DEFAULT_CONFIG.convergence?.max_auto_rounds).toBe(5);
+      expect(DEFAULT_CONFIG.convergence?.suppress_resolved_threads).toBe(true);
+      expect(DEFAULT_CONFIG.convergence?.test_path_patterns).toContain('**/*.test.*');
+      expect(DEFAULT_CONFIG.convergence?.test_path_patterns).toContain('**/__tests__/**');
+    });
+  });
+
+  describe('convergence config', () => {
+    it('merges user-provided convergence overrides with defaults', () => {
+      const config = loadConfigFromContent('convergence:\n  max_auto_rounds: 3\n');
+      expect(config.convergence?.max_auto_rounds).toBe(3);
+      expect(config.convergence?.suppress_resolved_threads).toBe(true);
+    });
+
+    it('rejects negative max_auto_rounds', () => {
+      expect(() => loadConfigFromContent('convergence:\n  max_auto_rounds: -1\n'))
+        .toThrow(/max_auto_rounds/);
+    });
+
+    it('rejects non-array test_path_patterns', () => {
+      expect(() => loadConfigFromContent('convergence:\n  test_path_patterns: "not-an-array"\n'))
+        .toThrow(/test_path_patterns/);
+    });
+
+    it('rejects non-boolean suppress_resolved_threads', () => {
+      expect(() => loadConfigFromContent('convergence:\n  suppress_resolved_threads: "yes"\n'))
+        .toThrow(/suppress_resolved_threads/);
+    });
   });
 
   describe('loadConfig', () => {

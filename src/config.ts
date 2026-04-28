@@ -28,6 +28,11 @@ export const DEFAULT_CONFIG: ReviewConfig = {
   },
   nit_handling: 'issues',
   review_passes: 1,
+  convergence: {
+    max_auto_rounds: 5,
+    test_path_patterns: ['**/*.test.*', '**/*.spec.*', '**/tests/**', '**/__tests__/**'],
+    suppress_resolved_threads: true,
+  },
 };
 
 const KNOWN_KEYS = new Set([
@@ -44,6 +49,7 @@ const KNOWN_KEYS = new Set([
   'planner',
   'nit_handling',
   'review_passes',
+  'convergence',
 ]);
 
 const REPO_FORMAT = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
@@ -181,6 +187,34 @@ function validateConfig(config: Record<string, unknown>): ConfigValidationResult
     }
   }
 
+  if ('convergence' in config) {
+    const convergence = config.convergence as Record<string, unknown>;
+    if (!convergence || typeof convergence !== 'object' || Array.isArray(convergence)) {
+      errors.push('`convergence` must be an object');
+    } else {
+      if ('max_auto_rounds' in convergence) {
+        if (
+          typeof convergence.max_auto_rounds !== 'number' ||
+          !Number.isInteger(convergence.max_auto_rounds) ||
+          convergence.max_auto_rounds < 0
+        ) {
+          errors.push('`convergence.max_auto_rounds` must be a non-negative integer');
+        }
+      }
+      if ('test_path_patterns' in convergence) {
+        if (
+          !Array.isArray(convergence.test_path_patterns) ||
+          !convergence.test_path_patterns.every(p => typeof p === 'string')
+        ) {
+          errors.push('`convergence.test_path_patterns` must be an array of strings');
+        }
+      }
+      if ('suppress_resolved_threads' in convergence && typeof convergence.suppress_resolved_threads !== 'boolean') {
+        errors.push('`convergence.suppress_resolved_threads` must be a boolean');
+      }
+    }
+  }
+
   if ('memory' in config) {
     const memory = config.memory as Record<string, unknown>;
     if (!memory || typeof memory !== 'object' || Array.isArray(memory)) {
@@ -216,6 +250,8 @@ function deepMerge(defaults: ReviewConfig, overrides: Record<string, unknown>): 
       result.planner = { ...defaults.planner, ...(value as Record<string, unknown>) } as ReviewConfig['planner'];
     } else if (key === 'review_thresholds' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
       result.review_thresholds = { ...defaults.review_thresholds, ...(value as Record<string, unknown>) } as ReviewConfig['review_thresholds'];
+    } else if (key === 'convergence' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      result.convergence = { ...defaults.convergence, ...(value as Record<string, unknown>) } as ReviewConfig['convergence'];
     } else {
       (result as Record<string, unknown>)[key] = value;
     }
