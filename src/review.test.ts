@@ -39,6 +39,11 @@ const makeConfig = (overrides: Partial<ReviewConfig> = {}): ReviewConfig => ({
   review_level: 'auto',
   review_thresholds: { small: 200, medium: 1000 },
   memory: { enabled: false, repo: '' },
+  convergence: {
+    max_auto_rounds: 5,
+    test_path_patterns: ['**/*.test.*', '**/*.spec.*', '**/tests/**', '**/__tests__/**'],
+    suppress_resolved_threads: true,
+  },
   ...overrides,
 });
 
@@ -3857,6 +3862,120 @@ describe('runReview', () => {
     expect(result.agentNames).toContain('Security & Safety');
     // No duplicates from the union of core and prior-round agents.
     expect(new Set(result.agentNames).size).toBe(result.agentNames.length);
+  });
+});
+
+describe('runReview test-file nit suppression', () => {
+  const mockedRunJudgeAgent = jest.mocked(runJudgeAgent);
+
+  function makeClients(): ReviewClients {
+    return {
+      reviewer: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '[]' }),
+      } as unknown as import('./claude').ClaudeClient,
+      judge: {
+        sendMessage: jest.fn().mockResolvedValue({ content: '{"summary":"ok","findings":[]}' }),
+      } as unknown as import('./claude').ClaudeClient,
+    };
+  }
+
+  function buildPriorRound(round: number): HandoverRound {
+    return {
+      round,
+      commitSha: `sha${round}`,
+      timestamp: `2025-01-0${round}T00:00:00Z`,
+      findings: [],
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(applySuppressions).mockReturnValue({ kept: [], suppressed: [] });
+  });
+
+  it('drops a suggestion finding on a test file in round 2', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'suggestion', file: 'src/foo.test.ts', title: 'Could simplify' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(), makeConfig(), makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, [buildPriorRound(1)],
+    );
+    expect(result.findings).toHaveLength(0);
+    expect(result.testNitSuppressedCount).toBe(1);
+  });
+
+  it('keeps a suggestion finding on a test file in round 1', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'suggestion', file: 'src/foo.test.ts', title: 'Could simplify' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(), makeConfig(), makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx',
+    );
+    expect(result.findings).toHaveLength(1);
+    expect(result.testNitSuppressedCount).toBeUndefined();
+  });
+
+  it('keeps a blocker finding on a test file in round 2', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'blocker', file: 'src/foo.test.ts', title: 'Real bug in test' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(), makeConfig(), makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, [buildPriorRound(1)],
+    );
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].severity).toBe('blocker');
+  });
+
+  it('keeps a suggestion finding on a non-test file in round 2', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'suggestion', file: 'src/app.ts', title: 'Could simplify' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(), makeConfig(), makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, [buildPriorRound(1)],
+    );
+    expect(result.findings).toHaveLength(1);
+  });
+
+  it('honours configurable test_path_patterns', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'nitpick', file: 'spec/integration.rb', title: 'Style nit' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(),
+      makeConfig({ convergence: { test_path_patterns: ['spec/**'], suppress_resolved_threads: false } }),
+      makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, [buildPriorRound(1)],
+    );
+    expect(result.findings).toHaveLength(0);
+    expect(result.testNitSuppressedCount).toBe(1);
+  });
+
+  it('does not suppress when test_path_patterns is empty', async () => {
+    mockedRunJudgeAgent.mockResolvedValue({
+      findings: [makeFinding({ severity: 'suggestion', file: 'src/foo.test.ts', title: 'Could simplify' })],
+      summary: 'ok',
+    });
+    const result = await runReview(
+      makeClients(),
+      makeConfig({ convergence: { test_path_patterns: [], suppress_resolved_threads: false } }),
+      makeDiff({ totalAdditions: 5, totalDeletions: 0 }),
+      'raw', 'ctx', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, [buildPriorRound(1)],
+    );
+    expect(result.findings).toHaveLength(1);
   });
 });
 
