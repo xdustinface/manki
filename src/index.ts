@@ -564,7 +564,6 @@ async function runFullReview(
       for (const name of priorRoundAgents) {
         if (!inDashboard.has(name) && poolNames.has(name)) {
           dashboard.agentProgress.push({ name, status: 'reviewing' as const });
-          dashboard.agentCount++;
         }
       }
     }
