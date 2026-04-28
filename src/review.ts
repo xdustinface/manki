@@ -1145,7 +1145,8 @@ export async function runReview(
 
   // Mechanism B: drop low-severity findings on test files starting at round 2.
   // Test scaffolding nits are the most common runaway-feedback driver in late
-  // rounds; structural pre-filtering converges faster than asking the judge.
+  // rounds. The filter runs post-judge so that any nit the judge escalates to
+  // warning/blocker is correctly preserved; only suggestion/nitpick are dropped.
   let testNitSuppressedCount = 0;
   const roundNumber = (priorRounds?.length ?? 0) + 1;
   if (roundNumber >= 2) {
