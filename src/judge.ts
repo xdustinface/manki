@@ -14,7 +14,7 @@ import {
 import { dynamicFence, LinkedIssue, safeTruncate, titleToSlug } from './github';
 import { sanitize, titlesOverlap } from './recap';
 import { validateSeverity } from './review';
-import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, IN_PR_SUPPRESSED_TAG, InPrSuppression, OpenThread, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext, ThreadEvaluation } from './types';
+import { CONTRADICTION_TAG, DEFENSIVE_HARDENING_TAG, DiffFile, Finding, FindingReachability, FindingSeverity, HandoverFinding, HandoverRound, IN_PR_SUPPRESSED_TAG, InPrSuppression, OpenThread, OWN_PROPOSAL_TAG, ProvenanceEntry, RATCHET_SUPPRESSED_TAG, RESOLVED_THREAD_SUPPRESSED_TAG, ReviewConfig, ParsedDiff, PrContext, ThreadEvaluation } from './types';
 
 /** Cap on how many prior rounds we pass to the judge. */
 const PRIOR_ROUNDS_WINDOW = 3;
@@ -241,6 +241,10 @@ export interface JudgeInput {
    * prior round to compare against (first round of a PR).
    */
   interRoundDiff?: string;
+  /** IDs of prior-round threads currently resolved on GitHub. */
+  resolvedThreadIds?: Set<string>;
+  /** When true, resolved prior-round threads suppress matching findings. */
+  suppressResolvedThreads?: boolean;
 }
 
 export interface JudgedFinding {
@@ -801,7 +805,8 @@ export async function runJudgeAgent(
   crossRoundDemoted?: number;
   inPrSuppressedCount?: number;
 }> {
-  const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, inPrSuppressions, interRoundDiff } = input;
+  const { findings, diff, rawDiff, memory, prContext, linkedIssues, agentCount, isFollowUp, openThreads, priorRounds, inPrSuppressions, interRoundDiff, resolvedThreadIds, suppressResolvedThreads } = input;
+  const crossRoundOptions: CrossRoundSuppressionOptions = { resolvedThreadIds, suppressResolvedThreads };
   const provenanceMap = input.provenanceMap ?? (rawDiff ? computeProvenanceMap(priorRounds, rawDiff) : []);
 
   const hasOpenThreads = (openThreads?.length ?? 0) > 0;
@@ -852,7 +857,7 @@ export async function runJudgeAgent(
     const earlyWithProvenance = provenanceMap.length > 0
       ? findings.map(f => { const copy = { ...f }; applyOwnProposal(copy, provenanceMap); return copy; })
       : findings;
-    const earlySuppress = applyCrossRoundSuppression(earlyWithProvenance, priorRounds);
+    const earlySuppress = applyCrossRoundSuppression(earlyWithProvenance, priorRounds, crossRoundOptions);
     const { findings: earlySuppressedInPr, count: earlyInPrCount } = applyInPrSuppression(earlySuppress.findings, inPrSuppressions);
     return {
       findings: earlySuppressedInPr,
@@ -865,7 +870,7 @@ export async function runJudgeAgent(
   }
 
   const mapped = deduplicateFindings(mapJudgedToFindings(findings, judgeResult.findings, provenanceMap));
-  const suppression = applyCrossRoundSuppression(mapped, priorRounds);
+  const suppression = applyCrossRoundSuppression(mapped, priorRounds, crossRoundOptions);
   const { findings: suppressed, count: inPrCount } = applyInPrSuppression(suppression.findings, inPrSuppressions);
 
   return {
@@ -1065,30 +1070,63 @@ function mapMergedFindings(
 }
 
 /**
+ * Options for `applyCrossRoundSuppression` that broaden the suppression set
+ * beyond `authorReply === 'agree'` priors.
+ */
+export interface CrossRoundSuppressionOptions {
+  /**
+   * IDs of prior-round threads currently resolved on GitHub. Any prior finding
+   * whose `threadId` is in this set is treated as accepted regardless of how
+   * the thread was resolved (agree reply, manual resolve, etc.). Requires
+   * `suppressResolvedThreads` to be true.
+   */
+  resolvedThreadIds?: Set<string>;
+  /** When true, treat resolved prior-round threads as accepted priors. */
+  suppressResolvedThreads?: boolean;
+}
+
+/**
  * Apply cross-round suppression rules using prior-round handover state.
  *
  * Ratchet: if a prior finding with the same slug + file exists and the author
- * agreed, suppress the current finding unless it is `blocker`.
+ * agreed (or, when `suppressResolvedThreads` is true, the prior thread is
+ * resolved on GitHub), suppress the current finding unless it is `blocker`.
  *
  * Contradiction: if a prior finding with the same slug + file + line proximity
  * exists, the author agreed, and the current finding uses a reversal word,
  * demote `suggestion`/`warning` to `nitpick` and annotate `judgeNotes`. `blocker`
  * findings are intentionally excluded from contradiction demotion to prevent
  * prompt injection attacks where adversarial PR content could silently hide real bugs.
+ *
+ * Resolved-thread priors also match by fuzzy line proximity (±`LINE_WINDOW`)
+ * when slug differs, since reflowed code can shift line numbers and authors
+ * may have resolved the thread without a fingerprint-stable reply.
  */
 export function applyCrossRoundSuppression(
   findings: Finding[],
   priorRounds: HandoverRound[] | undefined,
+  options: CrossRoundSuppressionOptions = {},
 ): { findings: Finding[]; suppressedCount: number; demotedCount: number } {
   if (!priorRounds || priorRounds.length === 0) {
     return { findings, suppressedCount: 0, demotedCount: 0 };
   }
 
-  const acceptedPriors: Array<{ round: number; finding: HandoverFinding }> = [];
+  const { resolvedThreadIds, suppressResolvedThreads } = options;
+  const useResolved = suppressResolvedThreads === true && resolvedThreadIds !== undefined && resolvedThreadIds.size > 0;
+
+  type Prior = {
+    round: number;
+    finding: HandoverFinding;
+    /** 'agree' priors keep the existing contradiction-citation behaviour; 'resolved' priors only ratchet. */
+    source: 'agree' | 'resolved';
+  };
+  const acceptedPriors: Prior[] = [];
   for (const round of priorRounds) {
     for (const f of round.findings) {
       if (f.authorReply === 'agree') {
-        acceptedPriors.push({ round: round.round, finding: f });
+        acceptedPriors.push({ round: round.round, finding: f, source: 'agree' });
+      } else if (useResolved && f.threadId && resolvedThreadIds!.has(f.threadId)) {
+        acceptedPriors.push({ round: round.round, finding: f, source: 'resolved' });
       }
     }
   }
@@ -1115,8 +1153,11 @@ export function applyCrossRoundSuppression(
     // Contradiction is checked before ratchet for `warning`/`suggestion` findings only.
     // `blocker` and `nitpick` skip this branch: blocker is protected from any
     // silent demotion (prompt-injection guard); nitpick falls through to ratchet.
-    const contradictionMatch = acceptedPriors.find(({ finding: prior }) =>
-      prior.fingerprint.file === current.file
+    // Only `agree` priors trigger contradiction; resolved-thread priors do not
+    // imply the author articulated a position to contradict.
+    const contradictionMatch = acceptedPriors.find(({ finding: prior, source }) =>
+      source === 'agree'
+      && prior.fingerprint.file === current.file
       && prior.fingerprint.slug === slug
       && (
         current.line >= prior.fingerprint.lineStart - LINE_WINDOW
@@ -1133,12 +1174,21 @@ export function applyCrossRoundSuppression(
       return current;
     }
 
-    const ratchetMatch = acceptedPriors.find(({ finding: prior }) =>
-      prior.fingerprint.file === current.file && prior.fingerprint.slug === slug,
-    );
+    const ratchetMatch = acceptedPriors.find(({ finding: prior, source }) => {
+      if (prior.fingerprint.file !== current.file) return false;
+      if (prior.fingerprint.slug === slug) return true;
+      // Resolved-thread priors fall back to fuzzy line proximity when the slug
+      // differs, since refactors can shift line numbers and the same underlying
+      // concern may surface with a reworded title.
+      if (source !== 'resolved') return false;
+      return (
+        current.line >= prior.fingerprint.lineStart - LINE_WINDOW
+        && current.line <= prior.fingerprint.lineEnd + LINE_WINDOW
+      );
+    });
     if (ratchetMatch && current.severity !== 'blocker') {
       current.severity = 'ignore';
-      current.tags = addTag(current.tags, RATCHET_SUPPRESSED_TAG);
+      current.tags = addTag(current.tags, ratchetMatch.source === 'resolved' ? RESOLVED_THREAD_SUPPRESSED_TAG : RATCHET_SUPPRESSED_TAG);
       suppressedCount++;
       return current;
     }

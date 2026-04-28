@@ -3294,6 +3294,146 @@ describe('applyCrossRoundSuppression', () => {
     expect(result.findings[0].severity).toBe('ignore');
     expect(result.findings[0].tags).toContain('suppressed-by-ratchet');
   });
+
+  describe('resolved-thread cross-round suppression', () => {
+    it('suppresses a finding matching a prior thread that was resolved without an agree reply', () => {
+      const findings = [makeFinding({ title: 'Old issue', file: 'src/a.ts', line: 10, severity: 'suggestion' })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Old issue') },
+        severity: 'suggestion',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH1']),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(1);
+      expect(result.findings[0].severity).toBe('ignore');
+      expect(result.findings[0].tags).toContain('suppressed-by-resolved-thread');
+    });
+
+    it('preserves the agree-reply ratchet behaviour for non-resolved priors', () => {
+      const findings = [makeFinding({ title: 'Old issue', file: 'src/a.ts', line: 10, severity: 'suggestion' })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Old issue') },
+        severity: 'suggestion',
+        title: 'Old issue',
+        authorReply: 'agree',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(1);
+      expect(result.findings[0].severity).toBe('ignore');
+      expect(result.findings[0].tags).toContain('suppressed-by-ratchet');
+    });
+
+    it('does not suppress when the prior thread is unresolved and authorReply is not agree', () => {
+      const findings = [makeFinding({ title: 'Old issue', file: 'src/a.ts', line: 10, severity: 'suggestion' })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Old issue') },
+        severity: 'suggestion',
+        title: 'Old issue',
+        authorReply: 'disagree',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH-other']),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(0);
+      expect(result.findings[0].severity).toBe('suggestion');
+    });
+
+    it('matches by fuzzy line proximity when slug differs and the prior thread is resolved', () => {
+      const findings = [makeFinding({
+        title: 'Reworded title for same concern',
+        file: 'src/a.ts',
+        line: 13,
+        severity: 'suggestion',
+      })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Original concern') },
+        severity: 'suggestion',
+        title: 'Original concern',
+        authorReply: 'none',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH1']),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(1);
+      expect(result.findings[0].severity).toBe('ignore');
+    });
+
+    it('does not match when neither slug nor line proximity match the resolved prior', () => {
+      const findings = [makeFinding({
+        title: 'Different concern',
+        file: 'src/a.ts',
+        line: 100,
+        severity: 'suggestion',
+      })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Original concern') },
+        severity: 'suggestion',
+        title: 'Original concern',
+        authorReply: 'none',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH1']),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(0);
+      expect(result.findings[0].severity).toBe('suggestion');
+    });
+
+    it('does not suppress blocker findings even when matching a resolved prior', () => {
+      const findings = [makeFinding({ title: 'Old issue', file: 'src/a.ts', line: 10, severity: 'blocker' })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Old issue') },
+        severity: 'suggestion',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH1']),
+        suppressResolvedThreads: true,
+      });
+      expect(result.suppressedCount).toBe(0);
+      expect(result.findings[0].severity).toBe('blocker');
+    });
+
+    it('does nothing when suppressResolvedThreads is false', () => {
+      const findings = [makeFinding({ title: 'Old issue', file: 'src/a.ts', line: 10, severity: 'suggestion' })];
+      const prior = [makePriorRound([{
+        fingerprint: { file: 'src/a.ts', lineStart: 10, lineEnd: 10, slug: titleToSlug('Old issue') },
+        severity: 'suggestion',
+        title: 'Old issue',
+        authorReply: 'none',
+        threadId: 'TH1',
+      }])];
+
+      const result = applyCrossRoundSuppression(findings, prior, {
+        resolvedThreadIds: new Set(['TH1']),
+        suppressResolvedThreads: false,
+      });
+      expect(result.suppressedCount).toBe(0);
+      expect(result.findings[0].severity).toBe('suggestion');
+    });
+  });
 });
 
 describe('runJudgeAgent cross-round suppression', () => {
