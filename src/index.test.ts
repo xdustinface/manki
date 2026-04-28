@@ -3315,6 +3315,154 @@ describe('runFullReview orchestration', () => {
     );
     expect(jest.mocked(ghUtils.postProgressComment)).toHaveBeenCalled();
   });
+
+  describe('convergence round-count cap', () => {
+    function memoryEnabledConfig(maxAutoRounds = 5): ReturnType<typeof configModule.loadConfig> {
+      return {
+        auto_review: true, auto_approve: false, max_diff_lines: 5000,
+        exclude_paths: [], nit_handling: 'issues',
+        reviewers: [], instructions: '', review_level: 'auto',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+        convergence: {
+          max_auto_rounds: maxAutoRounds,
+          test_path_patterns: ['**/*.test.*'],
+          suppress_resolved_threads: true,
+        },
+      };
+    }
+
+    function priorRounds(n: number): Array<{
+      round: number;
+      commitSha: string;
+      timestamp: string;
+      findings: never[];
+    }> {
+      return Array.from({ length: n }, (_, i) => ({
+        round: i + 1,
+        commitSha: `sha${i + 1}`,
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+      }));
+    }
+
+    const reviewableFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+
+    beforeEach(() => {
+      jest.mocked(authModule.getMemoryToken).mockReturnValue('mem-token');
+      jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+        learnings: [], suppressions: [], patterns: [],
+      });
+      jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+        files: [reviewableFile], totalAdditions: 5, totalDeletions: 5,
+      });
+      jest.mocked(diffModule.filterFiles).mockReturnValue([reviewableFile]);
+    });
+
+    it('runs review normally when prior rounds are below the cap', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(4),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('skips review and posts notice when prior rounds reach the cap on auto trigger', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+      expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          owner: 'test-owner',
+          repo: 'test-repo',
+          issue_number: 42,
+          body: expect.stringContaining('Automatic review is paused'),
+        }),
+      );
+    });
+
+    it('bypasses the cap when forceReview is true', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+
+      await runFullReview(
+        baseArgs.owner, baseArgs.repo, baseArgs.prNumber,
+        baseArgs.commitSha, baseArgs.baseRef, baseArgs.prContext,
+        undefined, true,
+      );
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('does nothing when max_auto_rounds is 0 (cap disabled)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(0));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(20),
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('reproduces the round-9 nit-spam scenario by either capping or dropping test-file nits', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
+      });
+      const testFile = {
+        path: 'src/foo.test.ts', changeType: 'modified' as const,
+        hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+      };
+      jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+        files: [testFile], totalAdditions: 5, totalDeletions: 5,
+      });
+      jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'COMMENT', summary: 'nits',
+        findings: [
+          { severity: 'suggestion', title: 'Could simplify', file: 'src/foo.test.ts', line: 3, description: 'd', reviewers: ['Testing & Coverage'] },
+        ],
+        highlights: [], reviewComplete: true,
+      });
+
+      await callRunFullReview();
+
+      // Cap path: runReview should have been skipped, OR if runReview ran the
+      // test-nit suppression in review.ts would have stripped findings before
+      // they got here. The contract this test enforces is: at round 6 with
+      // nits-only on a test file, the system does not post fresh nit findings.
+      const runReviewCalled = jest.mocked(reviewModule.runReview).mock.calls.length > 0;
+      const postReviewCalls = jest.mocked(ghUtils.postReview).mock.calls;
+      if (!runReviewCalled) {
+        expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+          expect.objectContaining({ body: expect.stringContaining('Automatic review is paused') }),
+        );
+      } else {
+        for (const call of postReviewCalls) {
+          const result = call[5] as { findings: Array<{ severity: string; file: string }> };
+          for (const f of result.findings ?? []) {
+            const isLowSeverityTestNit = (f.severity === 'suggestion' || f.severity === 'nitpick')
+              && /\.test\.[a-z]+$/.test(f.file);
+            expect(isLowSeverityTestNit).toBe(false);
+          }
+        }
+      }
+    });
+  });
 });
 
 describe('handleInteraction', () => {
