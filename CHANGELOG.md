@@ -5,6 +5,17 @@ All notable changes to Manki will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] - 2026-04-28
+
+### Added
+
+- Review convergence mechanisms gated by a new `convergence` block in `ReviewConfig`. Round-count hard cap (`max_auto_rounds`, default 5) skips automatic re-reviews after the cap with a posted notice, while `@manki review` bypasses it. Test-file nit suppression (`test_path_patterns`) drops `suggestion` and `nitpick` findings on test files from round 2 onward, keeping `blocker` and `warning` findings. Resolved-thread cross-round suppression (`suppress_resolved_threads`) ratchets prior-round findings whose GitHub threads are now resolved to `ignore`, with `blocker` findings still protected (#646)
+- Review team is pinned across rounds with monotonic growth. Round 1's resolved agents persist on `HandoverRound.agents`, and from round 2 onward `selectTeam` unions prior-round agents with the planner's picks (or the heuristic team) before injecting core agents. The planner may add agents but never remove them, and the audit log distinguishes inherited from newly added agents (#643)
+
+### Fixed
+
+- `selectTeam` planner path now prepends any missing `CORE_AGENTS` (Security, Architecture, Correctness) to the resolved team in `CORE_AGENTS` order, fixing silent core-agent drops when the planner omitted them (#641)
+
 ## [4.6.1] - 2026-04-27
 
 ### Fixed
@@ -397,6 +408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic review posting with inline comments
 - Configuration via `.manki.yml`
 
+[4.7.0]: https://github.com/manki-review/manki/compare/v4.6.1...v4.7.0
 [4.6.1]: https://github.com/manki-review/manki/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/manki-review/manki/compare/v4.5.3...v4.6.0
 [4.5.3]: https://github.com/manki-review/manki/compare/v4.5.2...v4.5.3
