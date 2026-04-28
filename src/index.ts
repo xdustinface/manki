@@ -297,11 +297,18 @@ async function handleCommentTrigger(forceReview?: boolean): Promise<void> {
 }
 
 function reconcileDashboardAgents(dashboard: DashboardData, names: string[]): void {
-  dashboard.agentCount = names.length;
-  dashboard.agentProgress = names.map(name => {
-    const existing = dashboard.agentProgress?.find(a => a.name === name);
-    return existing ?? { name, status: 'done' as const };
-  });
+  const existingByName = new Map(dashboard.agentProgress?.map(a => [a.name, a]) ?? []);
+  const reconciled = names.map(name => existingByName.get(name) ?? { name, status: 'done' as const });
+  // Preserve entries for agents that have reported back (status is not the
+  // initial 'reviewing') but are not in the resolved name list. These agents
+  // participated and the dashboard should continue to surface their status.
+  for (const [name, entry] of existingByName) {
+    if (!names.includes(name) && entry.status !== 'reviewing') {
+      reconciled.push(entry);
+    }
+  }
+  dashboard.agentCount = reconciled.length;
+  dashboard.agentProgress = reconciled;
 }
 
 async function runFullReview(
