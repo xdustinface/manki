@@ -1045,7 +1045,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'def', [], previousFindings,
-      'No issues', noopFingerprint, classifyFn,
+      'No issues', [], noopFingerprint, classifyFn,
     );
 
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1075,7 +1075,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'def', [], previousFindings,
-      'No issues', noopFingerprint, classifyFn,
+      'No issues', [], noopFingerprint, classifyFn,
     );
 
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1109,7 +1109,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'def', [], previousFindings,
-      'No issues', noopFingerprint, classifyFn,
+      'No issues', [], noopFingerprint, classifyFn,
     );
 
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1132,7 +1132,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'sha1', [finding, findingWithFix], [],
-      'One issue found', noopFingerprint, noopClassify,
+      'One issue found', [], noopFingerprint, noopClassify,
     );
 
     const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1149,7 +1149,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'sha2', [], [],
-      'All clear', noopFingerprint, noopClassify, loaded,
+      'All clear', [], noopFingerprint, noopClassify, loaded,
     );
 
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1164,7 +1164,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'sha1', [finding], [],
-      'One issue found', noopFingerprint, noopClassify,
+      'One issue found', [], noopFingerprint, noopClassify,
     );
 
     const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1196,7 +1196,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'sha1', [], [],
-      'Summary', noopFingerprint, noopClassify, preLoaded,
+      'Summary', [], noopFingerprint, noopClassify, preLoaded,
     );
 
     // getContent is called at most once (for the SHA lookup), not twice (load + SHA)
@@ -1212,7 +1212,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'sha1', [], [],
-      'Summary', noopFingerprint, noopClassify, malformed,
+      'Summary', [], noopFingerprint, noopClassify, malformed,
     );
 
     expect(warnSpy).toHaveBeenCalledWith(
@@ -1256,7 +1256,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'def', [], previousFindings,
-      'No issues', noopFingerprint, classifyFn,
+      'No issues', [], noopFingerprint, classifyFn,
     );
 
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
@@ -1265,6 +1265,62 @@ describe('appendHandoverRound', () => {
     expect(round1Findings[0].authorReply).toBe('agree');
     expect(round1Findings[1].threadId).toBe('t2');
     expect(round1Findings[1].authorReply).toBe('agree');
+  });
+
+  it('persists the resolved team agents on the new round', async () => {
+    const octokit = mockJsonOctokit({});
+    const finding = makeFinding({ title: 'Null check', file: 'src/a.ts', line: 5 });
+    const agents = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'sha1', [finding], [],
+      'Summary', agents, noopFingerprint, noopClassify,
+    );
+
+    const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(loaded!.rounds[0].agents).toEqual(agents);
+  });
+
+  it('omits agents field when no agents are passed', async () => {
+    const octokit = mockJsonOctokit({});
+    const finding = makeFinding({ title: 'Null check', file: 'src/a.ts', line: 5 });
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'sha1', [finding], [],
+      'Summary', [], noopFingerprint, noopClassify,
+    );
+
+    const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(loaded!.rounds[0]).not.toHaveProperty('agents');
+  });
+
+  it('preserves prior-round agents while appending a new round', async () => {
+    const existing = makeHandover({
+      rounds: [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'],
+      }],
+    });
+    const octokit = mockJsonOctokit({ 'rust-dashcore/prs/106/handover.json': existing });
+
+    await appendHandoverRound(
+      octokit, 'owner/memory', 'rust-dashcore', 106,
+      'def', [], [],
+      'Round 2', ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+      noopFingerprint, noopClassify,
+    );
+
+    const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
+    expect(loaded!.rounds).toHaveLength(2);
+    expect(loaded!.rounds[0].agents).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic']);
+    expect(loaded!.rounds[1].agents).toEqual([
+      'Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage',
+    ]);
   });
 
   it('backfills threadId via fallback key when previousFinding has no title', async () => {
@@ -1287,7 +1343,7 @@ describe('appendHandoverRound', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 106,
       'def', [], previousFindings,
-      'No issues', noopFingerprint, () => 'agree',
+      'No issues', [], noopFingerprint, () => 'agree',
     );
     const reloaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 106);
     expect(reloaded!.rounds[0].findings[0].threadId).toBe('t1');
@@ -1343,7 +1399,7 @@ describe('appendHandoverRound suggestedFix sanitization', () => {
     await appendHandoverRound(
       octokit, 'owner/memory', 'rust-dashcore', 200,
       'sha1', [finding], [],
-      'Summary', noopFingerprint, noopClassify,
+      'Summary', [], noopFingerprint, noopClassify,
     );
 
     const loaded = await loadHandover(octokit, 'owner/memory', 'rust-dashcore', 200);

@@ -651,6 +651,7 @@ export async function appendHandoverRound(
   findings: Finding[],
   previousFindings: HandoverPreviousFinding[],
   judgeSummary: string,
+  agents: string[],
   fingerprintFn: (title: string, file: string, line: number) => HandoverFinding['fingerprint'],
   classifyFn: (text: string | undefined) => AuthorReplyClass,
   existingHandover?: PrHandover | null,
@@ -712,6 +713,7 @@ export async function appendHandoverRound(
     findings: roundFindings,
     judgeSummary,
   };
+  if (agents.length > 0) newRound.agents = [...agents];
   handover.rounds.push(newRound);
 
   await writeHandover(octokit, memoryRepo, targetRepo, prNumber, handover);

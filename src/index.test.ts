@@ -111,10 +111,14 @@ jest.mock('./review', () => {
       findings: [],
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     }),
     determineVerdict: jest.fn().mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' }),
     selectTeam: jest.fn().mockReturnValue({ level: 'standard', agents: [{ name: 'general' }] }),
     buildPlannerHints: actual.buildPlannerHints,
+    buildAgentPool: actual.buildAgentPool,
+    collectPriorRoundAgents: actual.collectPriorRoundAgents,
+    TRIVIAL_VERIFIER_AGENT: actual.TRIVIAL_VERIFIER_AGENT,
   };
 });
 
@@ -1362,6 +1366,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
     jest.mocked(reviewModule.selectTeam).mockReturnValue({ level: 'standard' as 'small', agents: [{ name: 'general', focus: '' }], lineCount: 0 });
@@ -1511,6 +1516,7 @@ describe('runFullReview orchestration', () => {
       findings,
       highlights: [],
       reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: findings, duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'REQUEST_CHANGES', verdictReason: 'novel_suggestion' });
@@ -1813,6 +1819,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1853,6 +1860,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Minor nits',
       findings: [nitFinding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({
       unique: [nitFinding], duplicates: [],
@@ -1887,6 +1895,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Review incomplete',
       findings: [], highlights: [], reviewComplete: false,
+      agentNames: [],
     });
 
     await callRunFullReview();
@@ -1943,6 +1952,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Issues',
       findings: [finding2], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
 
     await callRunFullReview();
@@ -2008,8 +2018,279 @@ describe('runFullReview orchestration', () => {
     // Write path: appendHandoverRound must be called once with the loaded handover
     expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
     const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
-    // existingHandover param (index 10) should be the already-loaded handover, not re-fetched
-    expect(appendCall[10]).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+    const { 11: existingHandoverArg } = appendCall;
+    // existingHandover param should be the already-loaded handover, not re-fetched
+    expect(existingHandoverArg).toEqual({ prNumber: 1, repo: 'test-repo', rounds: priorRounds });
+  });
+
+  describe('prior-round agent pinning', () => {
+    const pinTestFile = {
+      path: 'src/app.ts', changeType: 'modified' as const,
+      hunks: [{ oldStart: 1, oldLines: 5, newStart: 1, newLines: 10, content: 'code' }],
+    };
+
+    beforeEach(() => {
+      jest.mocked(diffModule.isDiffTooLarge).mockReturnValue(false);
+      jest.mocked(diffModule.parsePRDiff).mockReturnValue({
+        files: [pinTestFile], totalAdditions: 10, totalDeletions: 5,
+      });
+      jest.mocked(diffModule.filterFiles).mockReturnValue([pinTestFile]);
+      jest.mocked(authModule.getMemoryToken).mockReturnValue('token123');
+      jest.mocked(memoryModule.loadMemory).mockResolvedValue({
+        learnings: [], suppressions: [], patterns: [],
+      });
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+        reviewers: [], instructions: '', review_level: 'auto',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+      });
+    });
+
+    it('persists the resolved team names on the new handover round', async () => {
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue(null);
+
+      const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: resolvedNames,
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+      const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+      const { 8: agentsArg } = appendCall;
+      // agents param carries the resolved team into the new round
+      expect(agentsArg).toEqual(resolvedNames);
+    });
+
+    it('filters TRIVIAL_VERIFIER_AGENT name from agents persisted to handover', async () => {
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue(null);
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: [reviewModule.TRIVIAL_VERIFIER_AGENT.name],
+      });
+
+      await callRunFullReview();
+
+      expect(jest.mocked(memoryModule.appendHandoverRound)).toHaveBeenCalledTimes(1);
+      const appendCall = jest.mocked(memoryModule.appendHandoverRound).mock.calls[0];
+      const { 8: agentsArg } = appendCall;
+      expect(agentsArg).toEqual([]);
+    });
+
+    it('forwards prior-round agents through to the dashboard selectTeam call', async () => {
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      // Trigger the planning-phase progress callback so the dashboard selectTeam runs.
+      jest.mocked(reviewModule.runReview).mockImplementation(async (_clients, _config, _diff, _rawDiff, _ctx, _mem, _files, _pr, _issues, onProgress) => {
+        onProgress?.({
+          phase: 'planning',
+          rawFindingCount: 0,
+          plannerResult: {
+            teamSize: 3,
+            reviewerEffort: 'medium',
+            judgeEffort: 'medium',
+            prType: 'feature',
+            agents: [
+              { name: 'Security & Safety', effort: 'high' },
+              { name: 'Architecture & Design', effort: 'medium' },
+              { name: 'Correctness & Logic', effort: 'medium' },
+            ],
+          },
+          plannerDurationMs: 100,
+        });
+        return {
+          verdict: 'APPROVE', summary: 'ok',
+          findings: [], highlights: [], reviewComplete: true,
+          agentNames: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+        };
+      });
+
+      await callRunFullReview();
+
+      // The dashboard selectTeam call inside the planning callback receives the
+      // prior-round agents as the 6th positional argument.
+      const calls = jest.mocked(reviewModule.selectTeam).mock.calls;
+      // Identify the planning-phase call by the exact agent picks the planner emitted.
+      const planningCall = calls.find(c =>
+        Array.isArray(c[4]) && c[4].length === 3 && c[4][0]?.name === 'Security & Safety',
+      );
+      expect(planningCall).toBeDefined();
+      const { 5: priorRoundAgentsArg } = planningCall!;
+      expect(priorRoundAgentsArg).toEqual(['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage']);
+    });
+
+    it('reconciles planner-path dashboard with prior-round agents after runReview', async () => {
+      // Planner path: review_level is 'auto' (set by beforeEach) and prior rounds exist.
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Architecture & Design'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic'];
+      // Override selectTeam so the planning-phase callback seeds the dashboard with the
+      // actual resolved agent names; this lets agent-complete metrics be preserved through
+      // the reconcileDashboardAgents call.
+      jest.mocked(reviewModule.selectTeam).mockReturnValue({
+        level: 'standard' as 'small',
+        agents: resolvedNames.map(n => ({ name: n, focus: '' })),
+        lineCount: 0,
+      });
+      jest.mocked(reviewModule.runReview).mockImplementation(async (_clients, _config, _diff, _rawDiff, _ctx, _mem, _files, _pr, _issues, onProgress) => {
+        onProgress?.({
+          phase: 'planning',
+          rawFindingCount: 0,
+          plannerResult: {
+            teamSize: 3,
+            reviewerEffort: 'medium',
+            judgeEffort: 'medium',
+            prType: 'feature',
+            agents: [
+              { name: 'Security & Safety', effort: 'high' },
+              { name: 'Architecture & Design', effort: 'medium' },
+              { name: 'Correctness & Logic', effort: 'medium' },
+            ],
+          },
+          plannerDurationMs: 100,
+        });
+        onProgress?.({
+          phase: 'agent-complete',
+          agentName: 'Security & Safety',
+          agentFindingCount: 3,
+          agentDurationMs: 1200,
+          agentStatus: 'success',
+          rawFindingCount: 3,
+          completedAgents: 1,
+          totalAgents: 3,
+        });
+        return {
+          verdict: 'APPROVE', summary: 'ok',
+          findings: [], highlights: [], reviewComplete: true,
+          agentNames: resolvedNames,
+          plannerResult: {
+            teamSize: 3,
+            reviewerEffort: 'medium',
+            judgeEffort: 'medium',
+            prType: 'feature',
+            agents: [],
+          },
+        };
+      });
+
+      await callRunFullReview();
+
+      const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+      expect(progressCommentCalls.length).toBeGreaterThan(0);
+      const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+      expect(finalDashboard.agentCount).toBe(3);
+      expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
+      // Verify reconcileDashboardAgents preserves metrics from prior agent-complete callbacks.
+      const secEntry = finalDashboard.agentProgress?.find((a: { name: string }) => a.name === 'Security & Safety');
+      expect(secEntry?.findingCount).toBe(3);
+      expect(secEntry?.durationMs).toBe(1200);
+    });
+
+    it('reconciles non-planner dashboard with pinned agents after runReview', async () => {
+      // Non-planner path: review_level is explicitly 'small', not 'auto'.
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+        reviewers: [], instructions: '', review_level: 'small',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+      });
+
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      const resolvedNames = ['Security & Safety', 'Architecture & Design', 'Correctness & Logic', 'Testing & Coverage'];
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: resolvedNames,
+      });
+
+      await callRunFullReview();
+
+      // The final completeDashboard passed to updateProgressComment must include the pinned agents.
+      const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+      expect(progressCommentCalls.length).toBeGreaterThan(0);
+      const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+      expect(finalDashboard.agentCount).toBe(4);
+      expect(finalDashboard.agentProgress?.map((a: { name: string }) => a.name)).toEqual(resolvedNames);
+    });
+
+    it('silently drops unknown prior-round agent from non-planner dashboard without error', async () => {
+      // Non-planner path with a prior-round agent name not present in the agent pool.
+      // The pool-check guard in runFullReview silently omits the unknown agent from the
+      // dashboard; selectTeam already warns for this case so no duplicate warning is needed.
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        auto_review: true, auto_approve: false, exclude_paths: [], max_diff_lines: 10000,
+        reviewers: [], instructions: '', review_level: 'small',
+        review_thresholds: { small: 200, medium: 800 },
+        memory: { enabled: true, repo: 'owner/memory' },
+      });
+
+      const priorRounds = [{
+        round: 1,
+        commitSha: 'abc',
+        timestamp: '2025-01-01T00:00:00Z',
+        findings: [],
+        agents: ['Security & Safety', 'Bogus Unknown Agent'],
+      }];
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 1, repo: 'test-repo', rounds: priorRounds,
+      });
+
+      const resolvedNames = ['Security & Safety'];
+      jest.mocked(reviewModule.runReview).mockResolvedValue({
+        verdict: 'APPROVE', summary: 'ok',
+        findings: [], highlights: [], reviewComplete: true,
+        agentNames: resolvedNames,
+      });
+
+      await expect(callRunFullReview()).resolves.not.toThrow();
+
+      const progressCommentCalls = jest.mocked(ghUtils.updateProgressComment).mock.calls;
+      expect(progressCommentCalls.length).toBeGreaterThan(0);
+      const finalDashboard = progressCommentCalls[progressCommentCalls.length - 1][4];
+      // Unknown agent must not appear in the dashboard.
+      const agentNames = finalDashboard.agentProgress?.map((a: { name: string }) => a.name) ?? [];
+      expect(agentNames).not.toContain('Bogus Unknown Agent');
+      // agentCount reflects only known-pool agents that were reconciled.
+      expect(finalDashboard.agentCount).toBe(resolvedNames.length);
+      // The dashboard pre-population path silently skips unknown agents — no warning
+      // should fire for the unknown name here (selectTeam handles its own warning).
+      const bogusWarnings = jest.mocked(core.warning).mock.calls
+        .filter(c => String(c[0]).includes('Bogus Unknown Agent'));
+      expect(bogusWarnings).toHaveLength(0);
+    });
   });
 
   it('does not load or write handover when memory is disabled', async () => {
@@ -2067,6 +2348,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Nits',
       findings: [finding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(memoryModule.applyEscalations).mockReturnValue([escalated]);
@@ -2100,6 +2382,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'Looks good',
       findings: [], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'APPROVE', verdictReason: 'only_nit_or_suggestion' });
@@ -2129,6 +2412,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'Suggestions',
       findings: [finding], highlights: [], reviewComplete: true,
+      agentNames: [],
     });
     jest.mocked(recapModule.deduplicateFindings).mockReturnValue({ unique: [finding], duplicates: [] });
     jest.mocked(reviewModule.determineVerdict).mockReturnValue({ verdict: 'COMMENT', verdictReason: 'only_nit_or_suggestion' });
@@ -2192,6 +2476,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2248,6 +2533,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2294,6 +2580,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2336,6 +2623,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'APPROVE', summary: 'ok', findings: [],
           highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2396,6 +2684,7 @@ describe('runFullReview orchestration', () => {
         return {
           verdict: 'COMMENT', summary: 'Issues found',
           findings: [finding1, finding2], highlights: [], reviewComplete: true,
+          agentNames: [],
         };
       },
     );
@@ -2634,6 +2923,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'addressed', reason: 'LLM hallucination' },
       ],
@@ -2694,6 +2984,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'COMMENT', summary: 'No changes since last review', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_a', status: 'not_addressed', reason: 'No code changes since prior review' },
       ],
@@ -2754,6 +3045,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in latest push' },
       ],
@@ -2799,6 +3091,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_abc', status: 'addressed', reason: 'Fixed in new diff' },
         { threadId: 'PRRT_def', status: 'not_addressed', reason: 'Still applies' },
@@ -2852,6 +3145,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_known', status: 'addressed', reason: 'Legit fix' },
         { threadId: 'PRRT_unknown', status: 'addressed', reason: 'Injected by adversary' },
@@ -2927,6 +3221,7 @@ describe('runFullReview orchestration', () => {
     jest.mocked(reviewModule.runReview).mockResolvedValue({
       verdict: 'APPROVE', summary: 'ok', findings: [],
       highlights: [], reviewComplete: true,
+      agentNames: [],
       threadEvaluations: [
         { threadId: 'PRRT_fail', status: 'addressed', reason: 'Should fail' },
       ],
