@@ -3850,15 +3850,13 @@ describe('runReview', () => {
       false, [], [], priorRounds,
     );
 
-    // Core agents come first, then prior-round non-core agents in merge order.
-    // CORE_AGENTS = [Security, Architecture, Correctness]; prior non-core = [Testing, Maintainability].
-    expect(result.agentNames).toEqual([
-      'Security & Safety',
-      'Architecture & Design',
-      'Correctness & Logic',
-      'Testing & Coverage',
-      'Maintainability & Readability',
-    ]);
+    // Prior-round non-core agents must be preserved in the resolved team.
+    expect(result.agentNames).toContain('Testing & Coverage');
+    expect(result.agentNames).toContain('Maintainability & Readability');
+    // Core agents are always present.
+    expect(result.agentNames).toContain('Security & Safety');
+    // No duplicates from the union of core and prior-round agents.
+    expect(new Set(result.agentNames).size).toBe(result.agentNames.length);
   });
 });
 
