@@ -868,12 +868,12 @@ async function runFullReview(
         prType: result.plannerResult.prType,
       };
     }
-    if (result.plannerResult || priorRoundAgents.length > 0) {
-      // Reconcile the dashboard with the actual resolved team. On round 2+ the
-      // initial dashboard was built without priorRoundAgents (not yet loaded),
-      // so the agent list would otherwise show a stale, too-small count.
-      reconcileDashboardAgents(dashboard, result.agentNames);
-    }
+    // Reconcile the dashboard with the actual resolved team. On round 2+ the
+    // initial dashboard was built without priorRoundAgents (not yet loaded),
+    // so the agent list would otherwise show a stale, too-small count. On
+    // round 1 without a planner, agents may fail and drop out, so reconcile
+    // unconditionally to keep agentCount and agentProgress accurate.
+    reconcileDashboardAgents(dashboard, result.agentNames);
 
     const allJudgedForDashboard = result.allJudgedFindings || result.findings;
     const rawForLookup = result.rawFindings ?? allJudgedForDashboard;
