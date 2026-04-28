@@ -2285,6 +2285,11 @@ describe('runFullReview orchestration', () => {
       expect(agentNames).not.toContain('Bogus Unknown Agent');
       // agentCount reflects only known-pool agents that were reconciled.
       expect(finalDashboard.agentCount).toBe(resolvedNames.length);
+      // The dashboard pre-population path silently skips unknown agents — no warning
+      // should fire for the unknown name here (selectTeam handles its own warning).
+      const bogusWarnings = jest.mocked(core.warning).mock.calls
+        .filter(c => String(c[0]).includes('Bogus Unknown Agent'));
+      expect(bogusWarnings).toHaveLength(0);
     });
   });
 
