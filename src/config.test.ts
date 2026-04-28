@@ -63,6 +63,11 @@ describe('config', () => {
         .toThrow(/max_auto_rounds/);
     });
 
+    it('rejects non-integer max_auto_rounds', () => {
+      expect(() => loadConfigFromContent('convergence:\n  max_auto_rounds: 1.5\n'))
+        .toThrow(/max_auto_rounds/);
+    });
+
     it('rejects non-array test_path_patterns', () => {
       expect(() => loadConfigFromContent('convergence:\n  test_path_patterns: "not-an-array"\n'))
         .toThrow(/test_path_patterns/);

@@ -3418,7 +3418,21 @@ describe('runFullReview orchestration', () => {
       expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
     });
 
-    it('reproduces the round-9 nit-spam scenario by either capping or dropping test-file nits', async () => {
+    it('cap never fires when memory is disabled (handover unavailable)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue({
+        ...memoryEnabledConfig(1),
+        memory: { enabled: false, repo: '' },
+      });
+
+      await callRunFullReview();
+
+      // loadHandover is never called when memory is disabled, so priorRoundCount
+      // stays 0 and the cap cannot trigger even with max_auto_rounds: 1.
+      expect(jest.mocked(memoryModule.loadHandover)).not.toHaveBeenCalled();
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
+    });
+
+    it('reproduces the round-9 nit-spam scenario by posting cap notice', async () => {
       jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
       jest.mocked(memoryModule.loadHandover).mockResolvedValue({
         prNumber: 42, repo: 'test-repo', rounds: priorRounds(5),
@@ -3431,37 +3445,26 @@ describe('runFullReview orchestration', () => {
         files: [testFile], totalAdditions: 5, totalDeletions: 5,
       });
       jest.mocked(diffModule.filterFiles).mockReturnValue([testFile]);
-      jest.mocked(reviewModule.runReview).mockResolvedValue({
-        verdict: 'COMMENT', summary: 'nits',
-        findings: [
-          { severity: 'suggestion', title: 'Could simplify', file: 'src/foo.test.ts', line: 3, description: 'd', reviewers: ['Testing & Coverage'] },
-        ],
-        highlights: [], reviewComplete: true,
-        agentNames: ['general'],
+
+      await callRunFullReview();
+
+      expect(jest.mocked(reviewModule.runReview)).not.toHaveBeenCalled();
+      expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({ body: expect.stringContaining('Automatic review is paused') }),
+      );
+    });
+
+    it('runs review normally when below cap (test-nit suppression path exercises review.ts, not index.ts)', async () => {
+      jest.mocked(configModule.loadConfig).mockReturnValue(memoryEnabledConfig(5));
+      jest.mocked(memoryModule.loadHandover).mockResolvedValue({
+        prNumber: 42, repo: 'test-repo', rounds: priorRounds(1),
       });
 
       await callRunFullReview();
 
-      // Cap path: runReview should have been skipped, OR if runReview ran the
-      // test-nit suppression in review.ts would have stripped findings before
-      // they got here. The contract this test enforces is: at round 6 with
-      // nits-only on a test file, the system does not post fresh nit findings.
-      const runReviewCalled = jest.mocked(reviewModule.runReview).mock.calls.length > 0;
-      const postReviewCalls = jest.mocked(ghUtils.postReview).mock.calls;
-      if (!runReviewCalled) {
-        expect(mockOctokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
-          expect.objectContaining({ body: expect.stringContaining('Automatic review is paused') }),
-        );
-      } else {
-        for (const call of postReviewCalls) {
-          const result = call[5] as { findings: Array<{ severity: string; file: string }> };
-          for (const f of result.findings ?? []) {
-            const isLowSeverityTestNit = (f.severity === 'suggestion' || f.severity === 'nitpick')
-              && /\.test\.[a-z]+$/.test(f.file);
-            expect(isLowSeverityTestNit).toBe(false);
-          }
-        }
-      }
+      // Cap has not triggered (1 prior round < 5 max). runReview runs and test-nit
+      // suppression is exercised inside review.ts (tested in review.test.ts).
+      expect(jest.mocked(reviewModule.runReview)).toHaveBeenCalled();
     });
   });
 });
