@@ -503,7 +503,7 @@ async function runFullReview(
       try {
         await octokit.rest.issues.deleteComment({ owner, repo, comment_id: progressCommentId });
       } catch (error) {
-        core.debug(`Failed to delete progress comment: ${error}`);
+        core.warning(`Failed to delete progress comment: ${error}`);
       }
       try {
         await octokit.rest.issues.createComment({

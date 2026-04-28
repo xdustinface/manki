@@ -1179,8 +1179,10 @@ export function applyCrossRoundSuppression(
       if (prior.fingerprint.slug === slug) return true;
       // Resolved-thread priors fall back to fuzzy line proximity when the slug
       // differs, since refactors can shift line numbers and the same underlying
-      // concern may surface with a reworded title.
+      // concern may surface with a reworded title. Restricted to suggestion/nitpick
+      // to prevent proximity alone from silently suppressing higher-severity findings.
       if (source !== 'resolved') return false;
+      if (current.severity === 'warning') return false;
       return (
         current.line >= prior.fingerprint.lineStart - LINE_WINDOW
         && current.line <= prior.fingerprint.lineEnd + LINE_WINDOW
