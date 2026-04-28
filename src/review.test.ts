@@ -4623,6 +4623,14 @@ describe('collectPriorRoundAgents', () => {
     ];
     expect(collectPriorRoundAgents(rounds)).toEqual(['Security & Safety']);
   });
+
+  it('returns empty array when all rounds lack the agents field (legacy handovers)', () => {
+    const rounds: HandoverRound[] = [
+      { round: 1, commitSha: 'a', timestamp: '2025-01-01T00:00:00Z', findings: [] },
+      { round: 2, commitSha: 'b', timestamp: '2025-01-02T00:00:00Z', findings: [] },
+    ];
+    expect(collectPriorRoundAgents(rounds)).toEqual([]);
+  });
 });
 
 describe('buildPlannerHints', () => {
